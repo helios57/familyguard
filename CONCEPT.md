@@ -253,7 +253,8 @@ No Redis: nothing needed a cache or a bus once commands became database rows.
 
 ## 4. Android DPC
 
-Kotlin on Java 17, `minSdk 29`, `targetSdk 34`, `compileSdk 35`, package `io.github.helios57.familyguard`.
+Kotlin at `jvmTarget` 21, `minSdk 29`, `targetSdk 37`, `compileSdk 37`, package
+`io.github.helios57.familyguard`.
 
 minSdk is 29 rather than the 26 this section first named, because
 `DevicePolicyManager.setGlobalPrivateDnsModeSpecifiedHost` — the whole of FR-6.1 — arrived in API 29.

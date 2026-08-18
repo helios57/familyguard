@@ -54,20 +54,24 @@ android {
         }
     }
 
-    // 17, while the JDK that runs the build is the newest there is. The two are different questions
-    // and only one of them reaches the phone.
+    // 21 — the *bytecode* level, which is a different question from the JDK that runs the build, and
+    // the only one of the two that reaches a phone. The JDK is a build-time tool and is simply the
+    // newest measured to work (Temurin 26.0.2, and 25.0.4 as a fallback); see `JAVA_VERSION` in
+    // `.github/workflows/ci.yml`.
     //
-    // The JDK is a build-time tool: measured on 2026-08-18, `assembleDebug`, the unit suite and
-    // `assembleDebugAndroidTest` are all green under Temurin 26.0.2 and under 25.0.4, so CI pins the
-    // newest. This number is the *bytecode* level, and the floor it has to clear is a Galaxy S20 —
-    // Android 10, API 29. `dexBuilderDebug` accepts class files built at 21, so the build would go
-    // green either way; a green build is simply not evidence for the thing that matters here, which
-    // is whether the app still runs on API 29. That is what the instrumented layer measures, and it
-    // has not been run on an API 29 device yet. Raising this before then would be choosing a number
-    // over a measurement.
+    // The floor this number has to clear is a Galaxy S20 — Android 10, API 29 — and `dexBuilderDebug`
+    // accepts class files built at 21 regardless, so a green *build* is not evidence about it either
+    // way. Only running on the floor is. This sat at 17 until there was such a measurement, and now
+    // there is: on 2026-08-18 the instrumented layer ran against an API 29 emulator at 21, both
+    // passes — 16 testcases provisioned, 1 after a real reboot — plus 447 unit tests in 50 classes,
+    // all green. The number moved because the measurement moved, not the other way round.
+    //
+    // What that does NOT cover is a physical Galaxy S20: an emulator at API 29 runs the same ART and
+    // rejects the same class-file versions, but it is not the device. If one is ever in hand, this is
+    // the first thing worth re-running there.
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 
     testOptions {
@@ -84,7 +88,7 @@ android {
 
 kotlin {
     compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
+        jvmTarget.set(JvmTarget.JVM_21)
         // A deprecation warning on a DevicePolicyManager call means the platform changed the
         // contract under us, and that is exactly the class of change that shows up as a real phone
         // behaving differently from the emulator. It fails the build instead of scrolling past.
