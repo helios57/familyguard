@@ -81,14 +81,15 @@ as a real phone behaving differently from the emulator.
 
 Two version numbers here are separate decisions, and only one of them reaches a phone:
 
-- **The JDK that runs Gradle is 26** — the version CI pins. It is a build-time tool, so it is simply
-  the newest that was measured to work; Temurin 26.0.2 and 25.0.4 both build and test green. AGP
-  documents JDK 17 as its minimum, which is a floor and not a ceiling.
-- **The bytecode target is 17**, and stays there until something measures otherwise. Java 21 class
-  files dex without complaint, but D8 accepting them says nothing about whether the result runs on
-  API 29 — a Galaxy S20, the floor this project holds. That is what the instrumented layer is for,
-  and it has not been run on an API 29 device. Raising the number on the strength of a green build
-  would be choosing a number over a measurement.
+- **The JDK that runs Gradle** — `JAVA_VERSION` 26, the version CI pins. It is a build-time tool, so
+  it is simply the newest that was measured to work; Temurin 26.0.2 and 25.0.4 both build and test
+  green. AGP documents JDK 17 as its minimum, which is a floor and not a ceiling.
+- **The bytecode target** — `jvmTarget` 21, which is the number that reaches a phone. It sat at 17
+  until something measured otherwise, because Java 21 class files dex without complaint and D8
+  accepting them says nothing about whether the result *runs* on API 29 — a Galaxy S20, the floor
+  this project holds. The instrumented layer is what settles that, and on 2026-08-18 it ran at 21
+  against an API 29 emulator: both passes green, before and after a real reboot. A physical S20 is
+  still the instrument this has not been put in front of.
 
 ## Running the control plane locally
 
@@ -178,12 +179,16 @@ The e2e module has no dependencies at all and cannot import the server's package
 check the server against the server's own constants. Its ID tokens are signed with `crypto/rsa`
 rather than with the JWT library the server verifies with.
 
-Two guards inside `android-unit` are about the repository rather than the app.
+Three guards inside `android-unit` are about the repository rather than the app.
 `RequirementCitationsTest` holds every `FR-…`/`NFR-…` written anywhere to REQUIREMENTS.md in both
-directions, and `DocumentationLinksTest` holds every link between the Markdown documents to a file
-and a heading that exist. Both walk the tree from its root, which is why the Gradle line above
-carries `--rerun`: a Markdown-only edit leaves the test task *up to date*, and Gradle skips a guard
-exactly when you change the thing it watches.
+directions; `DocumentationLinksTest` holds every link between the Markdown documents to a file and a
+heading that exist; and `DocumentedVersionsTest` holds every version number the documents state to
+the build file that defines it — CONCEPT.md named 34 and 35 for `targetSdk` and `compileSdk` long
+after the build had moved to 37, and the `Prerequisites:` line above is the one a new contributor
+installs from. All three walk
+the tree from its root, which is why the Gradle line above carries `--rerun`: a Markdown-only edit
+leaves the test task *up to date*, and Gradle skips a guard exactly when you change the thing it
+watches.
 
 ### Test integrity
 

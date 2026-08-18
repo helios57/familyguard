@@ -53,8 +53,12 @@ whose steps all produce the same symptom is a runbook that has not been written 
 - **NFR-10's screen-off half.** The connection is one held-open stream rather than a poll loop, and
   location is one-shot with a 30 s budget, but nothing measures battery over a night. Owed a
   measurement, not a test.
-- **API 29 itself.** `minSdk` is 29 because `setGlobalPrivateDnsModeSpecifiedHost` is; nothing here
-  runs on a 29 device.
+- **A physical Galaxy S20.** API 29 itself is no longer on this list: the instrumented layer now runs
+  against an API 29 emulator, and doing so at the floor rather than at a convenient API level is what
+  found both defects in [7.6](#76--the-first-run-at-the-floor-and-the-two-things-it-found). What an
+  emulator cannot answer is the hardware half — a real modem, a real battery, a real vendor ROM with
+  its own restrictions. `jvmTarget` 21 was taken on the emulator's evidence and is the first thing
+  worth re-running if a device ever turns up.
 - **The release gate has been executed, but not from this repository.** `release.yml`'s three
   refusals and its digest check all behaved on their first real run during development; what did not
   was the step after them, and it failed twice for two unrelated reasons where only one was visible
@@ -90,7 +94,10 @@ for AGP"*, and that is now measurably false: on 2026-08-18 `:app:assembleDebug`,
 `:app:testDebugUnitTest` and `:app:assembleDebugAndroidTest` were all green under Temurin 26.0.2
 (1m13s) and under 25.0.4 (2m13s). AGP 9.3.1 documents JDK 17 as its minimum, which is a floor rather
 than a ceiling. An emulator on **API 29** is what the instrumented layer needs — that is the floor
-the project holds, so testing above it measures the wrong device.
+the project holds, so testing above it measures the wrong device. That emulator now exists
+(`familyguard29`), and it is also what made the bytecode level decidable: `jvmTarget` moved 17 → 21
+on 2026-08-18 only after both instrumented passes came back green **on it**, because D8 accepts
+21 class files either way and a green build was never evidence about the phone.
 
 ## Phase 1 — Repository skeleton
 
@@ -98,7 +105,7 @@ the project holds, so testing above it measures the wrong device.
 |---|---|
 | 1.1 | `.gitignore`, `README.md` describing what actually exists, `SECURITY.md` |
 | 1.2 | Go module `github.com/helios57/familyguard/backend`, `go.mod` with the minimum dependency set |
-| 1.3 | Gradle project: root build, version catalog, wrapper 9.7.0, `app` module targeting Java 17 |
+| 1.3 | Gradle project: root build, version catalog, wrapper 9.7.0, `app` module at `jvmTarget` 21 |
 | 1.4 | GitHub Actions: Go build/vet/test/gofmt, Android assemble + unit tests, e2e suite |
 
 Status: **done — 1.4 written and statically calibrated, never yet executed by GitHub.**
@@ -441,7 +448,7 @@ Status: **5.1–5.11 done and calibrated, on the JVM and on a real device.**
 The Gradle project builds (`:app:assembleDebug`, AGP 9.3.1 / Kotlin 2.4.10 / JDK 26) and
 `:app:testDebugUnitTest` ran **47 classes, 423 tests, 0 failures, 0 errors, 0 skipped** at the close
 of this phase. The current figure, after Phase 6 and the 2026-08-18 toolchain upgrade, is
-**50 classes, 447 tests, 0 failures, 0 errors, 0 skipped** — counted from
+**51 classes, 450 tests, 0 failures, 0 errors, 0 skipped** — counted from
 `app/build/test-results/testDebugUnitTest/*.xml`, not from Gradle's own summary line, which says
 `BUILD SUCCESSFUL` for a task that ran nothing. minSdk is **29**, not the 26 CONCEPT.md §5 first named:
 `setGlobalPrivateDnsModeSpecifiedHost` is API 29, so on 26–28 FR-6.1 cannot be met at all and the app
@@ -1531,25 +1538,26 @@ every one of the 9 methods `src/androidTest` declares. The Android unit numbers 
 `app/build/test-results/testDebugUnitTest/*.xml`, not from Gradle's summary line — `BUILD SUCCESSFUL`
 is what a task that ran nothing also prints.
 
-Last re-measured **2026-08-18**, all six layers:
+Last re-measured **2026-08-18**, all six layers, in one invocation with no layer named:
 
 | Layer | Result |
 |---|---|
+| `secret-scan` | PASS — gitleaks 8.30.1 over the full history, **0 findings, 0 allowlist entries** |
 | `backend` | PASS — build, vet, `vet -tags integration`, test, `gofmt` |
 | `image` | PASS — 12 assertions, 0 failed |
-| `e2e` | PASS — **24 tests**, 62.0 s, on `postgres:18.6`, the image the deployment runs ([6.11](#611--the-suite-was-proving-it-about-a-database-nobody-would-run)) |
-| `android-unit` | PASS — **431 tests in 49 classes**, the 49th being `DocumentationLinksTest` ([6.12](#612--fifty-links-between-eight-documents-and-nothing-checking-one-of-them)) |
-| `android-instrumented` | PASS — **8 tests provisioned, then 1 across a real `adb reboot`**, every method `src/androidTest` declares, on a freshly wiped AVD ([6.13](#613--a-device-owner-that-only-a-factory-reset-can-remove)) |
-| `secret-scan` | FAIL in this checkout, and the paragraph below is why |
+| `e2e` | PASS — **24 tests**, on `postgres:18.6`, the image the deployment runs ([6.11](#611--the-suite-was-proving-it-about-a-database-nobody-would-run)) |
+| `android-unit` | PASS — **450 tests in 51 classes**, the last three being the repository guards ([6.12](#612--fifty-links-between-eight-documents-and-nothing-checking-one-of-them), [6.15](#615--the-versions-the-documents-state-and-the-build-file-that-defines-them)) |
+| `android-instrumented` | PASS — **16 tests provisioned, then 1 across a real `adb reboot`**, on an **API 29** emulator, the floor ([7.6](#76--the-first-run-at-the-floor-and-the-two-things-it-found)) |
 
-`secret-scan` is the one layer whose result is a property of the *repository* rather than of
-the tree: it reads the full history, and in a checkout carrying the pre-rename history it reports
-the fixtures and draft documents that were secret-shaped at the commits that introduced them, all of
-which are absent from the tree. The same scan restricted to the working tree — `--no-git` — reports
-**0 findings**, re-calibrated on 2026-08-18 by planting a well-formed AWS key (1 finding, rc=1) and
-removing it again (0 findings, rc=0) — see [6.14](#614--the-calibration-probe-the-scanner-is-allowed-to-ignore)
-for the probe that did *not* work and why that mattered. This is the point of §6.9: the finding
-belongs to the commit, so the honest fix was never an allowlist.
+**`secret-scan` reads the repository, not the tree, and that is why it used to fail here.** In the
+checkout that carried the pre-rename history it reported the fixtures and draft documents that were
+secret-shaped at the commits that introduced them — every one of them absent from the working tree,
+so the same scan restricted to the tree (`--no-git`) reported 0. The finding belonged to the commit,
+which is why the honest fix was never an allowlist. This repository begins at one clean commit, so
+the distinction no longer bites and the full-history scan passes; the calibration is what keeps that
+meaningful — a planted, well-formed AWS key takes it to 1 finding and rc=1, removing it returns 0 and
+rc=0. See [6.14](#614--the-calibration-probe-the-scanner-is-allowed-to-ignore) for the probe that did
+*not* work and why that mattered more than the one that did.
 
 6.4's class-comparison check was itself found wrong during the 5.5 calibration and rewritten to
 compare against *declared classes* rather than file names; the three probes that now make its green
@@ -2110,6 +2118,89 @@ ignore.** Example credentials, `example.com`, `555` phone numbers, `test@test.co
 come to hand when you need something realistic-looking are exactly the values scanners, linters and
 validators carry exemptions for. Draw the probe from the shape of the thing, not from a document
 about it. And when a probe stays green, the first hypothesis is the probe.
+
+### 6.15 — the versions the documents state, and the build file that defines them
+
+Found by reconciling the docs against the toolchain rather than against each other, the same way
+[6.7](#67--fr-133-and-the-difference-between-a-manifest-and-an-install) was found. **CONCEPT.md said
+34 and 35 for `targetSdk` and `compileSdk`.** The build had been on 37 for as long as there was a 37,
+and nothing anywhere would ever have said so — a stale version in prose fails silently by
+construction, because prose is not compiled. It is not a cosmetic defect either: the README's
+`Prerequisites:` line is what a new contributor installs from, and a wrong number there costs an
+afternoon before it costs a build. The bytecode target had drifted the other way in the same session:
+three documents said 17 while the build had moved to 21, which is the same defect pointed at a number
+that *does* reach a phone.
+
+`DocumentedVersionsTest` is the third guard of the family that already holds
+[`RequirementCitationsTest`](#510--the-requirements-document-wired-to-the-code-that-claims-it) and
+[`DocumentationLinksTest`](#612--fifty-links-between-eight-documents-and-nothing-checking-one-of-them),
+and it asks the question neither of them does. Those two ask whether a reference *resolves*; this one
+asks whether a stated fact is still *true*. In all three the repository's own files are the authority
+and the document is what has to move.
+
+**Two mechanisms, because prose and code do not read the same.**
+
+- **Identifier-anchored** — wherever a document writes a build-file identifier next to a value
+  (`` `minSdk 29` ``, `` `jvmTarget` 21 ``, `targetSdk = 37`), the value must be the one the build
+  file holds. This cannot produce a false red: those identifiers appear in exactly one context. It is
+  also why several sentences were *edited to name the identifier* — "the bytecode target is 17" is
+  unguardable, "`jvmTarget` 21" is guarded by construction, and the edit is the cheap half.
+- **A registry of prose claims** — the sentences that state a version without naming an identifier:
+  the README's `Prerequisites:` line, `platform 37.1 and build-tools 37.0.0`, the Gradle/AGP/Kotlin
+  pins. Each is a regex pinned to the phrasing it guards, and **each must match at least once.** That
+  requirement is the whole value of the mechanism: a regex that quietly stops matching is a guard
+  that has been switched off, which is the failure this repository keeps finding. So rewording one of
+  those sentences turns the suite red on purpose — that is precisely the moment to re-check the
+  number, because it is the moment someone is already editing the line.
+
+What it deliberately does **not** do is hunt prose for version-shaped numbers in general. The README
+says AGP "documents JDK 17 as its minimum", which is a floor and is true; a scanner that saw `JDK 17`
+beside a pinned `JAVA_VERSION` of 26 would report it, and a checker that cries wolf gets its findings
+edited away rather than its bug fixed — [6.12](#612--fifty-links-between-eight-documents-and-nothing-checking-one-of-them)
+is the same lesson learned the expensive way. The blind spot is stated in the test's own header
+rather than papered over.
+
+**Calibration — 6 breaks, 6 red.** Each was applied, run, and reverted.
+
+| Break | Red test |
+|---|---|
+| CONCEPT.md's SDK line put back to the values it carried before the fix — the original defect | `every version a document states next to its identifier is the one the build uses` |
+| README's `Prerequisites:` changed to `JDK 25` | `every registered prose claim still matches, and still states the right version` |
+| *"The Gradle wrapper pins 9.7.0"* reworded to *"is pinned to 9.7.0"*, number untouched | the same test, on the **dead-claim** half — the reword, not the number |
+| `minSdk = 29` → `28` **in the build file**, docs untouched | the identifier test, naming all five doc sites at once |
+| the identifier pattern's value group replaced with one that matches nothing | `the scan read the build files and the documents` — 0 claims found |
+| the `jvmTarget` authority regex pointed at a symbol the build file does not contain | **all three** — a guard that cannot read its authority must not report agreement |
+| restored | none — 3 tests, 0 failures |
+
+**Its first real finding was in this section.** The full sweep that followed went red on six claims,
+every one of them in the prose describing the guard — here and in the README — because a document
+that records what a wrong version *looked like* has to quote one, and quoting one next to its
+identifier is indistinguishable from asserting it. The resolution is the one
+[6.9](#69--six-leaks-in-a-repository-that-has-no-secrets) reached for the secret scanner and for the
+same reason: **change the shape of the value, never add an exemption.** These sentences now name the
+numbers away from the identifier — *34 and 35 for `targetSdk` and `compileSdk`* rather than the
+identifier-then-number form the guard reads as a claim — which is both truthful about the past and
+unambiguous about the present. The sentence you are reading went red once more before it settled,
+because its first draft quoted that form as an example, which is the joke and also the evidence: the
+guard cannot tell a quotation from an assertion, and it should not try. An ignore-marker would have
+worked once and then become a place a genuinely stale version could sit forever. The guard still has zero exemptions, exactly as the secret scan does.
+
+Two notes on the calibration itself, both of which cost a pass.
+
+**The first attempt reported GREEN for two breaks `sed` had never applied.** The edits' regexes did
+not match, the run therefore measured the unbroken tree, and *green* is exactly what an unapplied
+break produces — indistinguishable from a guard that does not bind. The harness now refuses to
+report a result unless the break is verified present in the file first, and deletes the JUnit XML
+before each run so that a task which fails to execute reports **NOT MEASURED** rather than replaying
+the previous break's results. A calibration harness is a control, and it needs its own control.
+
+**The first form of the fourth break was rejected rather than counted.** Moving the build-tools pin
+to 37.0.1 moved the authority, but that version is not installed, so AGP failed at configuration and
+no test ran at all — NOT MEASURED, correctly, and it would have read as a pass
+in a harness that only checked for absent failures. `minSdk = 29 → 28` moves the authority without
+touching anything the build has to resolve, and it is the break that actually demonstrates the
+direction of the check: the build file moved, every document stayed still, and the guard named all
+five of them.
 
 ## Phase 7 — Deployment preparation (no deploy)
 

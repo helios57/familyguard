@@ -89,7 +89,18 @@ GitHub's, and the naive version of it is wrong — GitHub maps *each* space to i
 not collapse runs, so `## 6.6 — the row` is `#66--the-row`, double hyphen and all. That case is
 pinned in the test; a "tidier" slug function turns every such link red.
 
-Both guards run in the `android-unit` layer and scan the repository from its root, which means
+`DocumentedVersionsTest` is the third of the family, and it checks the other thing a document can be
+wrong about: not whether a reference resolves, but whether a stated fact is still true. Wherever a
+document writes a build-file identifier next to a value — `` `minSdk 29` ``, `` `jvmTarget` 21 `` —
+the value has to be the one the build file holds, and the build file always wins. It also carries a
+small registry of the sentences that state a version *without* naming an identifier (the README's
+`Prerequisites:` line, the Gradle/AGP/Kotlin pins), each pinned to its phrasing and each required to
+match at least once — so rewording one of those sentences turns the suite red on purpose. That is
+the moment to re-check the number, because it is the moment someone is already editing the line. If
+you are adding a version claim to a document, write the identifier next to it and it is guarded for
+free; the number on its own cannot be.
+
+All three guards run in the `android-unit` layer and scan the repository from its root, which means
 `tests/run_all.sh` invokes the Gradle task with `--rerun`. Without it, editing only Markdown leaves
 the test task **up to date** and Gradle skips it — a guard whose inputs Gradle cannot see is a guard
 that stops running exactly when you change what it watches.
@@ -140,7 +151,7 @@ compiled without the tag, so a type error inside one is invisible to a fully gre
 lands in CI instead.
 
 **Kotlin.** `./gradlew :app:assembleDebug :app:testDebugUnitTest` from `android-dpc/`. Built with
-JDK 26 — the version CI pins — and compiled to JVM 17 bytecode; those are separate decisions and
+JDK 26 — the version CI pins — and compiled at `jvmTarget` 21; those are separate decisions and
 only the second one reaches a phone, so see the README's *Building* section before changing either.
 `allWarningsAsErrors` is on, so a deprecation is a build failure rather than a line of scrollback.
 The DPC targets `minSdk 29`; an API newer than that needs a version guard and a note saying what
