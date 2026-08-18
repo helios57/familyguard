@@ -2445,6 +2445,16 @@ image runs a temporary server for `initdb` and `pg_isready` answers yes to it, w
 [6.8](#68--the-readiness-probe-that-was-measuring-a-server-about-to-be-destroyed) again in a
 different costume.
 
+**Then observed in the cluster**, which is a different claim from calibrated on a throwaway. The
+strengthened job ran against the live database at `20260818T234313Z`: 30238 bytes, 89 TOC entries
+read back, restored into a scratch database with `--exit-on-error`, and fifteen tables named with
+their counts on **both** sides — `app_rules audit_log blocked_domains children commands
+device_state devices families installed_apps locations parents policies recovery_events
+schema_migrations usage_samples`. Five had been listed by hand before; ten more exist. It closed
+with `(compared 3 rows)` rather than the zero-row refusal, and that is the half worth stating: the
+refusal and the count read the same query, so a run that printed a correct non-zero total is a run
+that exercised the input the refusal depends on.
+
 **A new `manifests` layer**, because Phase 7.4 recorded the render as calibrated once, by hand —
 true on one day and unchecked since. A manifest directory is the artifact most able to rot without a
 symptom here: no Go test compiles it, no suite applies it, and the failure surfaces in a cluster.
