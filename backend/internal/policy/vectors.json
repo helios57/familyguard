@@ -1,0 +1,810 @@
+{
+  "_comment": [
+    "Shared enforcement vectors. Replayed by backend/internal/policy (Go) and by the Android DPC's",
+    "enforcement engine (Kotlin). Two engines that disagree is the failure mode this file exists to",
+    "prevent, so neither side may edit it to make its own implementation pass.",
+    "",
+    "'expect' is a PARTIAL DesiredState: only the keys present are asserted, and an unknown key is a",
+    "test failure rather than a silently ignored typo. Expectations are written by hand from",
+    "REQUIREMENTS.md — never generated from an implementation's output, which would assert only that",
+    "the code does what it does."
+  ],
+  "vectors": [
+    {
+      "name": "idle: nothing configured, nothing enforced",
+      "requirements": ["FR-6.1", "FR-6.3"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [
+          {"package": "com.example.game", "system": false, "new_since_baseline": false},
+          {"package": "com.android.dialer", "system": true, "new_since_baseline": false}
+        ],
+        "used_minutes_today": 12,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T14:00:00+02:00"
+      },
+      "expect": {
+        "locked": false,
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "hidden_packages": [],
+        "pending_approval": [],
+        "private_dns_host": "family.adguard-dns.com",
+        "blocked_domains": [],
+        "safe_search": true,
+        "youtube_restricted_mode": true,
+        "allow_installs": true,
+        "quota_minutes": 0,
+        "used_minutes": 12,
+        "remaining_minutes": 0,
+        "next_change_at": "",
+        "policy_version": 7
+      }
+    },
+
+    {
+      "name": "bedtime: inside the window suspends non-exempt apps",
+      "requirements": ["FR-4.1", "FR-4.2", "FR-5.5"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": ["com.example.reader"],
+          "blocked_domains": []
+        },
+        "installed": [
+          {"package": "com.example.game", "system": false, "new_since_baseline": false},
+          {"package": "com.example.reader", "system": false, "new_since_baseline": false},
+          {"package": "com.android.dialer", "system": true, "new_since_baseline": false},
+          {"package": "com.android.settings", "system": true, "new_since_baseline": false}
+        ],
+        "used_minutes_today": 30,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T22:30:00+02:00"
+      },
+      "expect": {
+        "locked": false,
+        "suspend_reason": "BEDTIME",
+        "suspended_packages": ["com.example.game"],
+        "hidden_packages": [],
+        "pending_approval": [],
+        "next_change_at": "2026-08-18T07:00:00+02:00"
+      }
+    },
+
+    {
+      "name": "bedtime: leaving the window un-suspends — the state is not one-way",
+      "requirements": ["FR-4.2"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": ["com.example.reader"],
+          "blocked_domains": []
+        },
+        "installed": [
+          {"package": "com.example.game", "system": false, "new_since_baseline": false},
+          {"package": "com.example.reader", "system": false, "new_since_baseline": false},
+          {"package": "com.android.dialer", "system": true, "new_since_baseline": false},
+          {"package": "com.android.settings", "system": true, "new_since_baseline": false}
+        ],
+        "used_minutes_today": 30,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T08:00:00+02:00"
+      },
+      "expect": {
+        "locked": false,
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "hidden_packages": [],
+        "next_change_at": "2026-08-17T21:00:00+02:00"
+      }
+    },
+
+    {
+      "name": "bedtime: the boundary minute is inside the window, the end minute is outside",
+      "requirements": ["FR-4.1"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T21:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "BEDTIME",
+        "suspended_packages": ["com.example.game"],
+        "next_change_at": "2026-08-18T07:00:00+02:00"
+      }
+    },
+
+    {
+      "name": "bedtime: the end minute is already outside the window",
+      "requirements": ["FR-4.1", "FR-4.2"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T07:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "next_change_at": "2026-08-17T21:00:00+02:00"
+      }
+    },
+
+    {
+      "name": "bedtime: the minute before the end is still inside the window",
+      "requirements": ["FR-4.1"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T06:59:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "BEDTIME",
+        "suspended_packages": ["com.example.game"],
+        "next_change_at": "2026-08-17T07:00:00+02:00"
+      }
+    },
+
+    {
+      "name": "bedtime: start equal to end is disabled, not a 24-hour lockdown",
+      "requirements": ["FR-4.1", "NFR-6"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "21:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T22:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "next_change_at": ""
+      }
+    },
+
+    {
+      "name": "bedtime: the window survives the end of daylight saving time",
+      "requirements": ["FR-4.1", "FR-4.3"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-24T23:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "BEDTIME",
+        "suspended_packages": ["com.example.game"],
+        "next_change_at": "2026-10-25T07:00:00+01:00"
+      }
+    },
+
+    {
+      "name": "quota: reaching the daily limit suspends for the rest of the local day",
+      "requirements": ["FR-3.4"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [
+          {"package": "com.example.game", "system": false, "new_since_baseline": false},
+          {"package": "com.android.dialer", "system": true, "new_since_baseline": false}
+        ],
+        "used_minutes_today": 60,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "QUOTA",
+        "suspended_packages": ["com.example.game"],
+        "quota_minutes": 60,
+        "used_minutes": 60,
+        "remaining_minutes": 0,
+        "next_change_at": "2026-08-18T00:00:00+02:00"
+      }
+    },
+
+    {
+      "name": "quota: one minute short of the limit enforces nothing",
+      "requirements": ["FR-3.4"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "used_minutes_today": 59,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "remaining_minutes": 1,
+        "next_change_at": "2026-08-18T00:00:00+02:00"
+      }
+    },
+
+    {
+      "name": "quota and bedtime together: the earlier edge is the next change",
+      "requirements": ["FR-3.4", "FR-4.1"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "used_minutes_today": 90,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T23:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "BEDTIME",
+        "suspended_packages": ["com.example.game"],
+        "remaining_minutes": 0,
+        "next_change_at": "2026-08-18T00:00:00+02:00"
+      }
+    },
+
+    {
+      "name": "app rules: a blocked app is suspended and hidden",
+      "requirements": ["FR-5.2"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": ["com.example.game"],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [
+          {"package": "com.example.game", "system": false, "new_since_baseline": false},
+          {"package": "com.android.dialer", "system": true, "new_since_baseline": false}
+        ],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": ["com.example.game"],
+        "hidden_packages": ["com.example.game"]
+      }
+    },
+
+    {
+      "name": "critical whitelist survives bedtime, an exhausted quota, an explicit block and a parent lock",
+      "requirements": ["FR-5.5", "NFR-6"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": false,
+          "youtube_blocked": true,
+          "daily_limit_minutes": 30,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": ["com.android.dialer", "com.android.settings", "com.oem.dialer"],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [
+          {"package": "com.android.dialer", "system": true, "new_since_baseline": false},
+          {"package": "com.android.settings", "system": true, "new_since_baseline": false},
+          {"package": "com.oem.dialer", "system": true, "new_since_baseline": false},
+          {"package": "com.example.game", "system": false, "new_since_baseline": true},
+          {"package": "com.google.android.youtube", "system": false, "new_since_baseline": false}
+        ],
+        "used_minutes_today": 400,
+        "parent_lock": true,
+        "critical_packages": ["com.oem.dialer"],
+        "now": "2026-08-17T23:30:00+02:00"
+      },
+      "expect": {
+        "locked": true,
+        "suspend_reason": "BEDTIME",
+        "suspended_packages": [
+          "app.revanced.android.youtube",
+          "com.example.game",
+          "com.google.android.apps.youtube.kids",
+          "com.google.android.apps.youtube.music",
+          "com.google.android.youtube",
+          "com.vanced.android.youtube",
+          "org.schabi.newpipe"
+        ],
+        "hidden_packages": [
+          "app.revanced.android.youtube",
+          "com.google.android.apps.youtube.kids",
+          "com.google.android.apps.youtube.music",
+          "com.google.android.youtube",
+          "com.vanced.android.youtube",
+          "org.schabi.newpipe"
+        ]
+      }
+    },
+
+    {
+      "name": "youtube killswitch on: apps, dns and browser blocklist together",
+      "requirements": ["FR-7.1", "FR-7.2", "FR-7.3", "FR-6.4"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": true,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": ["Bad.Example.COM.", "https://tracker.example/path"]
+        },
+        "installed": [
+          {"package": "com.google.android.youtube", "system": false, "new_since_baseline": false},
+          {"package": "com.example.game", "system": false, "new_since_baseline": false}
+        ],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [
+          "app.revanced.android.youtube",
+          "com.google.android.apps.youtube.kids",
+          "com.google.android.apps.youtube.music",
+          "com.google.android.youtube",
+          "com.vanced.android.youtube",
+          "org.schabi.newpipe"
+        ],
+        "hidden_packages": [
+          "app.revanced.android.youtube",
+          "com.google.android.apps.youtube.kids",
+          "com.google.android.apps.youtube.music",
+          "com.google.android.youtube",
+          "com.vanced.android.youtube",
+          "org.schabi.newpipe"
+        ],
+        "blocked_domains": [
+          "bad.example.com",
+          "googlevideo.com",
+          "tracker.example",
+          "youtu.be",
+          "youtube-nocookie.com",
+          "youtube.com",
+          "youtubei.googleapis.com",
+          "youtubekids.com",
+          "yt3.ggpht.com",
+          "ytimg.com"
+        ]
+      }
+    },
+
+    {
+      "name": "youtube killswitch off: the inverse restores every layer",
+      "requirements": ["FR-7.4", "FR-6.4"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": ["Bad.Example.COM.", "https://tracker.example/path"]
+        },
+        "installed": [
+          {"package": "com.google.android.youtube", "system": false, "new_since_baseline": false},
+          {"package": "com.example.game", "system": false, "new_since_baseline": false}
+        ],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "hidden_packages": [],
+        "blocked_domains": ["bad.example.com", "tracker.example"]
+      }
+    },
+
+    {
+      "name": "free-installation off: a new app waits for a parent, an allowed one does not",
+      "requirements": ["FR-5.4"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": ["com.example.school"],
+          "blocked_domains": []
+        },
+        "installed": [
+          {"package": "com.example.game", "system": false, "new_since_baseline": true},
+          {"package": "com.example.school", "system": false, "new_since_baseline": true},
+          {"package": "com.example.preloaded", "system": false, "new_since_baseline": false},
+          {"package": "com.android.settings", "system": true, "new_since_baseline": false}
+        ],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": ["com.example.game"],
+        "pending_approval": ["com.example.game"],
+        "hidden_packages": [],
+        "allow_installs": false,
+        "user_restrictions": [
+          "disallow_config_private_dns",
+          "no_add_user",
+          "no_config_date_time",
+          "no_debugging_features",
+          "no_install_apps",
+          "no_install_unknown_sources",
+          "no_safe_boot",
+          "no_uninstall_apps"
+        ]
+      }
+    },
+
+    {
+      "name": "free-installation on: new apps are inventoried, not blocked",
+      "requirements": ["FR-5.3"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [
+          {"package": "com.example.game", "system": false, "new_since_baseline": true},
+          {"package": "com.example.preloaded", "system": false, "new_since_baseline": false}
+        ],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "pending_approval": [],
+        "allow_installs": true,
+        "user_restrictions": [
+          "disallow_config_private_dns",
+          "no_add_user",
+          "no_config_date_time",
+          "no_debugging_features",
+          "no_install_unknown_sources",
+          "no_safe_boot",
+          "no_uninstall_apps"
+        ]
+      }
+    },
+
+    {
+      "name": "tracking-only: measures everything, restrains nothing, still filters and hardens",
+      "requirements": ["FR-8"],
+      "input": {
+        "settings": {
+          "tracking_only": true,
+          "allow_child_installs": true,
+          "youtube_blocked": true,
+          "daily_limit_minutes": 30,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 9,
+          "blocked_packages": ["com.example.game"],
+          "allowed_packages": [],
+          "blocked_domains": ["bad.example.com"]
+        },
+        "installed": [
+          {"package": "com.example.game", "system": false, "new_since_baseline": true},
+          {"package": "com.google.android.youtube", "system": false, "new_since_baseline": false}
+        ],
+        "used_minutes_today": 400,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T23:30:00+02:00"
+      },
+      "expect": {
+        "locked": false,
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "hidden_packages": [],
+        "pending_approval": [],
+        "next_change_at": "",
+        "private_dns_host": "family.adguard-dns.com",
+        "safe_search": true,
+        "youtube_restricted_mode": true,
+        "quota_minutes": 30,
+        "used_minutes": 400,
+        "remaining_minutes": 0,
+        "policy_version": 9,
+        "blocked_domains": [
+          "bad.example.com",
+          "googlevideo.com",
+          "youtu.be",
+          "youtube-nocookie.com",
+          "youtube.com",
+          "youtubei.googleapis.com",
+          "youtubekids.com",
+          "yt3.ggpht.com",
+          "ytimg.com"
+        ],
+        "user_restrictions": [
+          "disallow_config_private_dns",
+          "no_add_user",
+          "no_config_date_time",
+          "no_debugging_features",
+          "no_install_unknown_sources",
+          "no_safe_boot",
+          "no_uninstall_apps"
+        ]
+      }
+    },
+
+    {
+      "name": "tracking-only still honours an explicit parent lock",
+      "requirements": ["FR-8", "FR-9"],
+      "input": {
+        "settings": {
+          "tracking_only": true,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "used_minutes_today": 0,
+        "parent_lock": true,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "locked": true,
+        "suspend_reason": "",
+        "suspended_packages": []
+      }
+    },
+
+    {
+      "name": "a different filtering endpoint per child is honoured verbatim",
+      "requirements": ["FR-6.2"],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "teen.example-dns.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "private_dns_host": "teen.example-dns.net"
+      }
+    }
+  ]
+}

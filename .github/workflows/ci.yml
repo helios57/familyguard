@@ -1,0 +1,203 @@
+# The gate.
+#
+# Until this file existed, the only gate was `tests/run_all.sh` run by hand, which makes a green
+# result a claim about one developer's machine and nothing else.
+#
+# Two rules shape every job here:
+#
+#  1. **Each job delegates to `tests/run_all.sh`.** That script is where the three-valued status
+#     lives — 0 ran and passed, 1 ran and failed, 2 could NOT be run — and re-implementing its
+#     layers in YAML would create a second definition of "green" that drifts from the first. A `2`
+#     fails the job, because a layer that could not run is not a pass here either.
+#  2. **Every third-party action is pinned by commit SHA, not by tag.** A tag is a mutable pointer
+#     that its owner can move; a workflow with repository write access and a moved tag is a supply
+#     chain. The human-readable version is in the trailing comment.
+#
+# The one job that does not delegate is `secret-scan`: it has no local counterpart because gitleaks
+# is not installed on the development machine, and a scan is worth running where the history is.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # `release.yml` calls this workflow rather than restating its jobs. A release that re-ran a
+  # *paraphrase* of the gate would be measuring something other than what the gate measures, and the
+  # difference would only ever be discovered by a bad release.
+  workflow_call:
+
+# A second push to the same branch cancels the first. Not for the pull request itself — a cancelled
+# required check reads as "never reported", and branch protection treats never-reported as blocked
+# rather than as failed, which is a permanently unmergeable PR with every visible job green.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.26.6"
+  # The JDK that runs Gradle, not the bytecode level the app is compiled to — see the comment on
+  # `compileOptions` in `android-dpc/app/build.gradle.kts` for why those are separate decisions.
+  # This one never reaches a phone, so it is simply the newest that was measured to work: on
+  # 2026-08-18 `assembleDebug`, the unit suite and `assembleDebugAndroidTest` were all green under
+  # Temurin 26.0.2, and under 25.0.4 as a fallback. AGP 9.3.1 documents 17 as its minimum and
+  # default, which is a floor, not a ceiling.
+  JAVA_VERSION: "26"
+
+jobs:
+  # ------------------------------------------------------------------ backend --
+  #
+  # `tests/run_all.sh backend` runs build, vet, `vet -tags integration`, test and gofmt. None of the
+  # five implies another: `go build` does not compile tests, neither build nor test compiles a file
+  # behind `//go:build integration`, and `gofmt -l` exits 0 whether or not it found anything, so its
+  # output is the signal and its status is worthless.
+  backend:
+    name: backend (build, vet, vet -tags integration, test, gofmt)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+      - name: Report the toolchain that will define this result
+        run: go version
+      - run: tests/run_all.sh backend
+
+  # ------------------------------------------------------------------ android --
+  #
+  # Assemble and unit-test. The assemble is not redundant with the tests: `testDebugUnitTest`
+  # compiles `src/main` and `src/test`, but it does not run the manifest merger, the resource linker
+  # or the packager, so a broken manifest or a missing resource is invisible to a fully green unit
+  # run — and the manifest is where this app declares the DeviceAdminReceiver it cannot work without.
+  #
+  # `run_all.sh android-unit` then counts the tests out of the JUnit XML rather than trusting
+  # Gradle's exit status, and compares the classes that reported against the `*Test.kt` files that
+  # exist. A test class that stops being discovered takes its assertions out of the suite while every
+  # remaining test still passes and the task still exits 0.
+  android:
+    name: android (assemble + unit tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+      # The runner image ships the Android SDK. If that ever stops being true, AGP would try to
+      # download it mid-build and fail somewhere less legible than here.
+      - name: Require the Android SDK
+        run: |
+          if [ -z "${ANDROID_HOME:-}${ANDROID_SDK_ROOT:-}" ]; then
+            echo "NOT MEASURED: no Android SDK on this runner (ANDROID_HOME and ANDROID_SDK_ROOT are both unset)" >&2
+            exit 2
+          fi
+          echo "ANDROID_HOME=${ANDROID_HOME:-unset} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-unset}"
+      - name: Assemble the debug APK
+        run: ./gradlew --console=plain --no-daemon :app:assembleDebug
+        working-directory: android-dpc
+      - name: Unit tests, counted from the JUnit XML
+        run: tests/run_all.sh android-unit
+      # The XML is the readable artifact of this gate. Uploaded on failure as well as success,
+      # because the run that failed is the one worth reading.
+      - name: Upload the test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-unit-test-results
+          path: android-dpc/app/build/test-results/testDebugUnitTest/
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------- e2e --
+  #
+  # Black-box: a real PostgreSQL in Docker, the real server binary, every request over a socket.
+  #
+  # The suite refuses to pull the postgres image itself — pulling inside the harness would make a red
+  # suite indistinguishable from a rate-limited registry — so the pull is an explicit step, and its
+  # failure is a failure of the step that pulls rather than of the suite.
+  e2e:
+    name: e2e (black box against a real server and a real PostgreSQL)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            backend/go.sum
+            tests/e2e/go.mod
+      - name: Pre-pull the PostgreSQL image the harness requires to be present
+        run: docker pull postgres:18.6
+      - run: tests/run_all.sh e2e
+
+  # -------------------------------------------------------------------- image --
+  #
+  # Phase 7.1's twelve assertions about the built image: no shell, no package manager, a non-root
+  # USER, a static binary, an embedded zone database, a base pinned by digest rather than a tag, and
+  # the server actually serving under the read-only root and dropped capabilities the manifest
+  # imposes.
+  #
+  # All twelve are calibrated — each was broken in the Dockerfile or the Go source, observed red, and
+  # restored — so the layer is registered in `tests/run_all.sh` and invoked through it, the same way
+  # the e2e job is. Two of them only exist because that calibration found them: the uid check used to
+  # read `docker top`, which renders uid 0 through the host's `ps` and printed "uid root, not root"
+  # as a PASS, and a crash under `--read-only` used to be reported as NOT MEASURED because
+  # `docker port` prints nothing for a container that already exited.
+  image:
+    name: image (distroless smoke test)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The script builds the image itself, from `backend/` as the context, and pulls its three base
+      # images if they are absent. Building it here first would test a different artifact than the
+      # one it then inspects.
+      - name: Smoke-test the image
+        env:
+          SMOKE_IMAGE: familyguard-control-plane:ci
+        run: tests/run_all.sh image
+
+  # -------------------------------------------------------------- secret-scan --
+  #
+  # NFR-7. The binary is pinned by version AND verified against the checksum published with that
+  # release: fetching a tool over the network and running it unverified inside a job that can read
+  # the repository is the same supply-chain hole the SHA pinning above closes.
+  #
+  # `--redact` because a finding must not print the secret it found into a public log.
+  secret-scan:
+    name: secret-scan (gitleaks over the full history)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # gitleaks scans history; a shallow clone scans one commit and reports clean
+      - name: Install gitleaks, verified
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL "$url" -o /tmp/gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks version
+      # `--redact` means a finding is reported as a rule and a count, never as a value: this log is
+      # world-readable, so a scanner that printed what it found would itself be the leak. Resolving a
+      # red therefore means reproducing the scan locally — same version, same pinned checksum — and
+      # reading the report there.
+      #
+      # There is deliberately NO allowlist in this repository: no `.gitleaksignore`, no `paths` or
+      # rule exemption. Both fixtures that used to need one — a token-shaped constant in a DPC unit
+      # test and the 43-character base64 values in the provisioning test — are now BUILT at the
+      # lengths the assertions need instead of written out as high-entropy literals, so there is
+      # nothing left to exempt. That is the fix to reach for when this job goes red: make the value
+      # stop being secret-shaped. A `.gitleaksignore` entry is pinned to `commit:file:rule:line` and
+      # is void the moment history is rewritten, and a `paths` exemption over `*_test.go` would clear
+      # one red by blinding the scanner to every credential ever pasted into a test.
+      - name: Scan
+        run: /tmp/gitleaks detect --source . --redact --no-banner --exit-code 1

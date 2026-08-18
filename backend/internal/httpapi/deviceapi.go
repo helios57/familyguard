@@ -1,0 +1,403 @@
+package httpapi
+
+import (
+	"encoding/base64"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/helios57/familyguard/backend/internal/auth"
+	"github.com/helios57/familyguard/backend/internal/enforce"
+	"github.com/helios57/familyguard/backend/internal/store"
+)
+
+// usageBackfillDays bounds how far into the past a device may file screen time. A phone that was
+// off for a week has real usage to report for the days it was on; a phone with a wrong clock has
+// not. Seven days admits the first and refuses the second.
+const usageBackfillDays = 7
+
+type enrollRequest struct {
+	EnrollmentToken string `json:"enrollment_token"`
+	Model           string `json:"model"`
+	OSVersion       string `json:"os_version"`
+	// CriticalPackages is what this hardware calls its dialer, launcher and IME. The server unions
+	// it with the built-in list and never narrows it, so a device that reports nothing is no worse
+	// off than the floor, and a device that reports its OEM dialer cannot have it suspended.
+	CriticalPackages []string `json:"critical_packages"`
+}
+
+type enrollResponse struct {
+	DeviceToken string `json:"device_token"`
+	DeviceID    string `json:"device_id"`
+	ChildID     string `json:"child_id"`
+	// Recovery is the material for verifying the parent's recovery code with no network (FR-12.3).
+	// The plaintext code is not here: the device must be able to check a code, not to display one.
+	Recovery recoveryMaterial `json:"recovery"`
+}
+
+type recoveryMaterial struct {
+	Salt       string `json:"salt"`
+	Iterations int    `json:"iterations"`
+	Hash       string `json:"hash"`
+}
+
+// enroll exchanges a single-use enrollment token for a device credential (FR-1.4).
+//
+// A replayed token and a token that never existed are answered identically, and that is by
+// construction rather than by choice: single use is enforced by clearing the hash inside the same
+// UPDATE that matches it, so a second attempt matches zero rows and there is nothing left to tell
+// the two apart. Both are 409 — the request is well-formed, the state does not permit it.
+func (s *Server) enroll(c *gin.Context) {
+	var req enrollRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	token := strings.TrimSpace(req.EnrollmentToken)
+	if token == "" {
+		failWith(c, http.StatusBadRequest, "invalid_input", "enrollment_token is required")
+		return
+	}
+
+	deviceToken, deviceHash, err := auth.NewToken()
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	code, salt, iterations, hash, err := auth.NewRecoveryCode()
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+
+	result, err := s.store.ConsumeEnrollment(c.Request.Context(), auth.HashToken(token), deviceHash,
+		store.RecoverySecret{Code: code, Salt: salt, Iterations: iterations, Hash: hash},
+		strings.TrimSpace(req.Model), strings.TrimSpace(req.OSVersion), req.CriticalPackages)
+	if err != nil {
+		s.log.Warn("enrollment refused", "error", err, "client", c.ClientIP(),
+			"request_id", RequestIDOf(c))
+		failWith(c, http.StatusConflict, "conflict",
+			"this enrollment token is not valid, has expired, or has already been used")
+		return
+	}
+
+	s.audit(c, store.ActorDevice, result.Device.ID.String(), "DEVICE_ENROLLED", "device",
+		result.Device.ID.String(), map[string]any{
+			"model": result.Device.Model, "os_version": result.Device.OSVersion,
+			"critical_packages": len(result.Device.CriticalPackages),
+		})
+	s.hub.PublishParents(Event{Type: "device", DeviceID: result.Device.ID.String(),
+		ChildID: result.ChildID.String()})
+
+	c.JSON(http.StatusOK, enrollResponse{
+		DeviceToken: deviceToken,
+		DeviceID:    result.Device.ID.String(),
+		ChildID:     result.ChildID.String(),
+		Recovery: recoveryMaterial{
+			Salt:       base64.RawURLEncoding.EncodeToString(salt),
+			Iterations: iterations,
+			Hash:       base64.RawURLEncoding.EncodeToString(hash),
+		},
+	})
+}
+
+type heartbeatRequest struct {
+	BatteryLevel  *int   `json:"battery_level"`
+	Charging      *bool  `json:"charging"`
+	ScreenOn      *bool  `json:"screen_on"`
+	Connectivity  string `json:"connectivity"`
+	PolicyVersion int64  `json:"policy_version"`
+}
+
+// heartbeat records liveness and tells the device whether it is behind.
+//
+// The response carries the current policy version and the number of commands waiting, so a device
+// whose stream was cut still converges on its own schedule. The stream makes that fast; the
+// heartbeat is what makes it certain.
+func (s *Server) heartbeat(c *gin.Context) {
+	dev := deviceOf(c)
+	var req heartbeatRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	if req.BatteryLevel != nil && (*req.BatteryLevel < 0 || *req.BatteryLevel > 100) {
+		failWith(c, http.StatusBadRequest, "invalid_input", "battery_level must be 0..100")
+		return
+	}
+
+	if err := s.store.TouchDevice(c.Request.Context(), dev.ID, store.DeviceState{
+		BatteryLevel:  req.BatteryLevel,
+		Charging:      req.Charging,
+		ScreenOn:      req.ScreenOn,
+		Connectivity:  req.Connectivity,
+		PolicyVersion: req.PolicyVersion,
+	}); err != nil {
+		s.fail(c, err)
+		return
+	}
+	pol, err := s.store.GetPolicy(c.Request.Context(), dev.ChildID)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	pending, err := s.store.PendingCommands(c.Request.Context(), dev.ID)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+
+	s.hub.PublishParents(Event{Type: "state", DeviceID: dev.ID.String(), ChildID: dev.ChildID.String()})
+	c.JSON(http.StatusOK, gin.H{
+		"policy_version":   pol.Version,
+		"pending_commands": len(pending),
+		"locked":           dev.Locked,
+		"server_time":      s.now().Format(time.RFC3339),
+	})
+}
+
+// devicePolicy answers with the desired state and with the input it was computed from.
+//
+// Both, deliberately. The desired state is what to apply right now; the input is what lets the
+// device recompute the same answer offline, at 21:00, with no network — using the same engine and
+// the same shared vectors. Sending only the output would make every enforcement decision depend on
+// connectivity, which is the one thing a child's phone can always remove.
+func (s *Server) devicePolicy(c *gin.Context) {
+	dev := deviceOf(c)
+	state, input, err := s.resolver.Resolve(c.Request.Context(), dev.ID, s.now())
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"desired": state, "input": input})
+}
+
+// deviceCommands hands over the queued commands and records that it did.
+//
+// Delivery is recorded here, on a fetch that actually returned them, and nowhere else. The push
+// event says only "there is something to fetch": if it marked a command delivered, a phone in a
+// tunnel would show as having received an alarm it never got (NFR-3).
+func (s *Server) deviceCommands(c *gin.Context) {
+	dev := deviceOf(c)
+	cmds, err := s.store.PendingCommands(c.Request.Context(), dev.ID)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	// The rows were read before they were marked, so the copies handed to the device still say
+	// QUEUED. Carry the recorded state onto them rather than answering with a payload that
+	// contradicts the row the server just wrote — a device that stores what it was given would
+	// otherwise disagree with the console about the same command forever.
+	for i, cmd := range cmds {
+		at, err := s.store.MarkDelivered(c.Request.Context(), cmd.ID)
+		if err != nil {
+			s.fail(c, err)
+			return
+		}
+		cmds[i].State = store.CmdDelivered
+		cmds[i].DeliveredAt = &at
+	}
+	if len(cmds) > 0 {
+		s.hub.PublishParents(Event{Type: "command", DeviceID: dev.ID.String(),
+			ChildID: dev.ChildID.String()})
+	}
+	c.JSON(http.StatusOK, gin.H{"commands": cmds})
+}
+
+type inventoryRequest struct {
+	Apps []inventoryApp `json:"apps"`
+}
+
+type inventoryApp struct {
+	PackageName string `json:"package_name"`
+	Label       string `json:"label"`
+	SystemApp   bool   `json:"system_app"`
+}
+
+func (s *Server) deviceInventory(c *gin.Context) {
+	dev := deviceOf(c)
+	var req inventoryRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	apps := make([]store.InstalledApp, 0, len(req.Apps))
+	for _, a := range req.Apps {
+		if strings.TrimSpace(a.PackageName) == "" {
+			continue
+		}
+		apps = append(apps, store.InstalledApp{
+			PackageName: a.PackageName, Label: a.Label, SystemApp: a.SystemApp,
+		})
+	}
+	if err := s.store.ReplaceInstalledApps(c.Request.Context(), dev.ID, apps); err != nil {
+		s.fail(c, err)
+		return
+	}
+	s.hub.PublishParents(Event{Type: "inventory", DeviceID: dev.ID.String(), ChildID: dev.ChildID.String()})
+	c.JSON(http.StatusOK, gin.H{"apps": len(apps)})
+}
+
+type usageRequest struct {
+	// Day is optional. Omitted means "today in the child's timezone", resolved by the server —
+	// which is the only party that knows the policy's zone and whose clock a child cannot change.
+	Day     string           `json:"day"`
+	Samples map[string]int64 `json:"samples"`
+}
+
+func (s *Server) deviceUsageReport(c *gin.Context) {
+	dev := deviceOf(c)
+	var req usageRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	pol, err := s.store.GetPolicy(c.Request.Context(), dev.ChildID)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	today, err := enforce.DayKey(pol, s.now())
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+
+	day := strings.TrimSpace(req.Day)
+	switch {
+	case day == "":
+		day = today
+	case !validDay(day):
+		failWith(c, http.StatusBadRequest, "invalid_input", "day must look like 2026-08-17")
+		return
+	case day > today:
+		// A future day would let a device with a wrong or tampered clock park usage where today's
+		// quota can never see it, which is a way to earn unlimited screen time (FR-3.2).
+		failWith(c, http.StatusBadRequest, "invalid_input", "day is in the future")
+		return
+	case day < earliestBackfill(today):
+		failWith(c, http.StatusBadRequest, "invalid_input", "day is more than a week old")
+		return
+	}
+
+	if err := s.store.RecordUsage(c.Request.Context(), dev.ID, day, req.Samples); err != nil {
+		s.fail(c, err)
+		return
+	}
+	minutes, err := s.store.UsageMinutesForDay(c.Request.Context(), dev.ID, day)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	s.hub.PublishParents(Event{Type: "usage", DeviceID: dev.ID.String(), ChildID: dev.ChildID.String()})
+	c.JSON(http.StatusOK, gin.H{"day": day, "minutes": minutes})
+}
+
+// earliestBackfill is today minus the backfill window, in the same calendar the day key uses.
+func earliestBackfill(today string) string {
+	t, err := time.Parse("2006-01-02", today)
+	if err != nil {
+		return today
+	}
+	return t.AddDate(0, 0, -usageBackfillDays).Format("2006-01-02")
+}
+
+type locationRequest struct {
+	Latitude   float64  `json:"latitude"`
+	Longitude  float64  `json:"longitude"`
+	AccuracyM  *float64 `json:"accuracy_m"`
+	CapturedAt string   `json:"captured_at"`
+}
+
+func (s *Server) deviceLocationReport(c *gin.Context) {
+	dev := deviceOf(c)
+	var req locationRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	if req.Latitude < -90 || req.Latitude > 90 || req.Longitude < -180 || req.Longitude > 180 {
+		failWith(c, http.StatusBadRequest, "invalid_input", "latitude/longitude out of range")
+		return
+	}
+	captured := s.now()
+	if req.CapturedAt != "" {
+		t, err := time.Parse(time.RFC3339, req.CapturedAt)
+		if err != nil {
+			failWith(c, http.StatusBadRequest, "invalid_input", "captured_at must be RFC 3339")
+			return
+		}
+		captured = t
+	}
+	loc, err := s.store.AddLocation(c.Request.Context(), dev.ID, req.Latitude, req.Longitude,
+		req.AccuracyM, captured)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	s.hub.PublishParents(Event{Type: "location", DeviceID: dev.ID.String(), ChildID: dev.ChildID.String()})
+	c.JSON(http.StatusOK, loc)
+}
+
+type ackRequest struct {
+	OK     bool           `json:"ok"`
+	Result map[string]any `json:"result"`
+	Error  string         `json:"error"`
+}
+
+// ackCommand records the device's own report of what happened.
+//
+// The device id comes from the authenticated token and is part of the WHERE clause, so one device
+// cannot acknowledge another's command — including one it learned the id of from a shared network.
+func (s *Server) ackCommand(c *gin.Context) {
+	dev := deviceOf(c)
+	id, ok := uuidParam(c, "id")
+	if !ok {
+		return
+	}
+	var req ackRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	cmd, err := s.store.AckCommand(c.Request.Context(), dev.ID, id, req.OK, req.Result, req.Error)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	s.audit(c, store.ActorDevice, dev.ID.String(), "COMMAND_"+cmd.State, "device", dev.ID.String(),
+		map[string]any{"type": cmd.Type, "command": cmd.ID.String(), "error": req.Error})
+	s.hub.PublishParents(Event{Type: "command", DeviceID: dev.ID.String(), ChildID: dev.ChildID.String()})
+	c.JSON(http.StatusOK, cmd)
+}
+
+type recoveryEventRequest struct {
+	Succeeded  bool   `json:"succeeded"`
+	OccurredAt string `json:"occurred_at"`
+}
+
+// recoveryEventReport records that someone used the offline recovery code (FR-12.4).
+//
+// Failures are recorded as well as successes, and both reach the console: a run of failed attempts
+// is what a parent needs to see, and it is the only signal that distinguishes a child guessing from
+// a parent who mistyped once.
+func (s *Server) recoveryEventReport(c *gin.Context) {
+	dev := deviceOf(c)
+	var req recoveryEventRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	occurred := s.now()
+	if req.OccurredAt != "" {
+		t, err := time.Parse(time.RFC3339, req.OccurredAt)
+		if err != nil {
+			failWith(c, http.StatusBadRequest, "invalid_input", "occurred_at must be RFC 3339")
+			return
+		}
+		occurred = t
+	}
+	if err := s.store.RecordRecoveryEvent(c.Request.Context(), dev.ID, req.Succeeded, occurred); err != nil {
+		s.fail(c, err)
+		return
+	}
+	s.audit(c, store.ActorDevice, dev.ID.String(), "RECOVERY_CODE_USED", "device", dev.ID.String(),
+		map[string]any{"succeeded": req.Succeeded, "occurred_at": occurred.Format(time.RFC3339)})
+	s.hub.PublishParents(Event{Type: "recovery", DeviceID: dev.ID.String(), ChildID: dev.ChildID.String()})
+	c.JSON(http.StatusOK, gin.H{"recorded": true})
+}

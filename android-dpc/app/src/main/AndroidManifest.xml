@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      Re-applying the baseline after a reboot is the only reason this app wants to hear about boot.
+      Every other permission arrives with the phase that first calls something needing it, so the
+      manifest can always be read as a list of what the code does rather than of what it might.
+    -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- The control-plane connection: enrollment, policy, heartbeat and the event stream. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Read, never changed: the heartbeat reports whether this phone is on Wi-Fi or mobile data. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+      The connection runs as a foreground service because the product's responsiveness claim rests
+      on it: "lock now" must lock the phone, not queue until the next background window. See
+      ConnectionService for why the type is `specialUse` and not `dataSync`.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!--
+      Android 13 and up. The service grants this to itself as device owner; it is declared because a
+      permission that is not declared cannot be granted at all, and an ungranted one means the
+      foreground-service notification is suppressed while the service keeps running — a managed phone
+      with nothing on screen saying so.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+      Suspending an app requires knowing it is there. From Android 11 an app sees only the packages
+      it declares an interest in, and the failure that causes here is silent in exactly the way this
+      project keeps guarding against: `getInstalledApplications` returns a short list, every blocked
+      package reads as "not installed", and the sync reports clean while the child keeps using the
+      app. A device owner is documented as exempt from the filtering, but exempt-by-platform-policy
+      is not something this code can assert, so the permission is declared as well and
+      AppSuspensionManager checks that its own package is in the result before believing any of it.
+
+      This app is installed from a provisioning QR and never from Play, so the Play policy that
+      restricts this permission to a short list of app categories does not gate it — and device
+      administration is on that list regardless.
+    -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
+    <!--
+      Screen time (FR-3) is measured from `UsageStatsManager`, and this is the declaration that makes
+      the grant possible at all — without it this app does not appear in Settings → Special app
+      access → Usage access and `appops` has nothing to allow.
+
+      Declaring it is NOT granting it. `PACKAGE_USAGE_STATS` is an appop, and no device-owner API can
+      set one: `setPermissionGrantState` covers runtime permissions only. The grant is a one-time
+      step per device, recorded in DEPLOYMENT.md. Until it happens every query returns nothing, so
+      the reader answers "not measured" rather than zero — a zero would make the daily limit
+      unreachable and show the parent a child who spent the day off their phone.
+    -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!--
+      Bedtime has to start on a phone nobody is holding. The engine already computes the instant at
+      which the answer changes; without an alarm nothing acts on it, and the device re-evaluates only
+      while the screen is on — so a phone put down at 20:30 with a 21:00 bedtime enforces nothing at
+      21:00, and the child picks it up to an unrestricted phone.
+
+      Declared, then checked at run time: this is an appop, not a plain permission, and an app
+      targeting Android 13 or later does not hold it by default. AlarmManagerPlatform asks
+      `canScheduleExactAlarms()` and falls back to a wake-up the platform may delay rather than to
+      none, so an ungranted appop costs minutes of precision instead of the whole feature.
+    -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <!--
+      The find-my-phone siren (FR-9) rings on the alarm stream and vibrates with it. The sound needs
+      no permission; the vibration does. A lost phone is often a silenced phone, and the pulse is what
+      carries through a sofa cushion — dropping it would leave the feature working only in a quiet
+      room, which is not where a phone goes missing.
+    -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!--
+      "Locate now" (FR-9). Both are declared because from Android 12 a request for FINE alone is
+      answered with COARSE when the user chooses approximate location, and an app that never declared
+      COARSE gets nothing at all in that case — a parent looking for a child would see "no position"
+      on a phone whose GPS is working.
+
+      BACKGROUND is what makes it work when it matters. The command arrives over the event stream
+      while the phone is in a pocket, and without it every fix would come back only if the child
+      happened to have the app open — which this app has no UI to be open in. The service's
+      foreground type stays `specialUse` on purpose: adding `location` to a service that starts at
+      boot risks ForegroundServiceStartNotAllowedException on Android 14, which would cost the
+      connection itself rather than one command.
+
+      All three are runtime permissions, so the device owner grants them to itself at startup — see
+      ConnectionService.grantOwnPermissions. Declaring is not granting, and LocationProbe reports "not
+      permitted" as itself rather than as "no position".
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <application
+        android:name=".FamilyGuardApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.FamilyGuard">
+
+        <!--
+          Exported, because the system's device-policy service is what sends these broadcasts, and
+          it is a different process. `BIND_DEVICE_ADMIN` is what keeps that from meaning "any app on
+          the phone": it is a signature-level permission held only by the platform, so an exported
+          component guarded by it is reachable by the system and by nothing else.
+        -->
+        <receiver
+            android:name=".admin.AdminReceiver"
+            android:description="@string/admin_description"
+            android:exported="true"
+            android:label="@string/admin_label"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+                <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+          Binding this service is how the platform treats the owner app as persistent. Without it an
+          OEM task killer can stop the DPC and the phone silently enforces nothing until the next
+          boot — a failure whose only symptom is that a bedtime does not happen.
+        -->
+        <service
+            android:name=".admin.AdminService"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_SERVICE" />
+            </intent-filter>
+        </service>
+
+        <!--
+          The two activities the setup wizard drives during QR provisioning. Same reasoning as the
+          receiver: exported because the caller is the system, and guarded so that is all it means.
+        -->
+        <activity
+            android:name=".provisioning.GetProvisioningModeActivity"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:theme="@style/Theme.FamilyGuard.Invisible">
+            <intent-filter>
+                <action android:name="android.app.action.GET_PROVISIONING_MODE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".provisioning.PolicyComplianceActivity"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:theme="@style/Theme.FamilyGuard.Invisible">
+            <intent-filter>
+                <action android:name="android.app.action.ADMIN_POLICY_COMPLIANCE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          The offline escape hatch (FR-12), and the only component on this phone a person can start.
+
+          Exported, unavoidably and on purpose: a MAIN/LAUNCHER activity is reachable by the launcher
+          and therefore by anything, and it cannot carry a permission — a signature permission would
+          make the launcher unable to start it, which is to say it would make the escape hatch
+          unreachable in exactly the situation it exists for. So the protection is not on the
+          component. It is that this activity accepts no input except the code typed into it: it
+          reads no Intent extras, no data URI and no action, and every decision it makes comes from
+          the encrypted stores. `ManifestAndPlatformCallsTest` names this component as the one
+          permitted exception and asserts that property, rather than taking this comment's word.
+
+          A launcher entry rather than a deep link or a notification tap, because the notification
+          exists only while ConnectionService runs, and a service that is not running is one of the
+          reasons somebody is standing here.
+
+          `adjustResize` so the keyboard shrinks the scrolling column instead of covering the button.
+        -->
+        <activity
+            android:name=".recovery.RecoveryActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.FamilyGuard"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          The long-lived connection. Not exported: nothing outside this app has any reason to start
+          or stop it, and the three components that do — the compliance activity, the admin receiver
+          and the boot receiver — are all in this package.
+
+          `specialUse` rather than `dataSync`, which is what this looks like. From Android 15 a
+          `dataSync` service is capped at six hours in any twenty-four, so the connection would die
+          every evening and come back the next morning — arriving with a targetSdk bump rather than
+          with a code change, and showing up only as bedtimes that stopped happening.
+        -->
+        <service
+            android:name=".sync.ConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Continuous device-policy enforcement for a fully managed device: holds
+                    the control-plane event stream open so a parent's change takes effect in seconds
+                    rather than at the next background window." />
+        </service>
+
+        <!--
+          Not exported. BOOT_COMPLETED is a protected broadcast that only the system can send, so
+          there is nothing an app on the phone could gain by reaching this — and nothing it should
+          be able to try.
+        -->
+        <receiver
+            android:name=".admin.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>

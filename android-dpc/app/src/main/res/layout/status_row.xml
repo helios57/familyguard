@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  One labelled fact on the status block (FR-13.4).
+
+  Two lines rather than a label/value pair on one, because the values are sentences — "version 9 was
+  sent, but this phone is still applying version 7" does not fit beside its label on a 360 dp phone
+  in any font scale, and a value that wraps under a right-aligned label is unreadable.
+
+  The whole row carries one `contentDescription`, set in code, so a screen reader says "Needs
+  attention. Screen time today: not measured…" as one sentence instead of reading a label and a
+  value as two unrelated fragments. The children are marked `no` so they are not also read
+  individually.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="14dp"
+    android:focusable="true"
+    android:orientation="vertical">
+
+    <TextView
+        android:id="@+id/status_row_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:importantForAccessibility="no"
+        android:textAppearance="?attr/textAppearanceLabelMedium"
+        android:textColor="?attr/colorOnSurfaceVariant" />
+
+    <TextView
+        android:id="@+id/status_row_value"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:importantForAccessibility="no"
+        android:textAppearance="?attr/textAppearanceBodyMedium"
+        android:textIsSelectable="true" />
+
+</LinearLayout>

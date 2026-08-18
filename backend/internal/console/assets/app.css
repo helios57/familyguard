@@ -1,0 +1,382 @@
+/* Family Guard console.
+ *
+ * Mobile first, and literally so: every rule below the reset is written for a 360 px phone held in
+ * one hand, and the only media query widens that layout for a desktop. Nothing here is a phone
+ * adaptation of a desktop screen, because that is the shape that produces 11 px labels and controls
+ * you cannot hit while walking.
+ *
+ * Three constants come from that: no tap target smaller than 44 px, no input smaller than 16 px
+ * (below that iOS zooms the page on focus and never zooms back), and nothing important within
+ * reach of the browser chrome at either end — the bottom bar sits above the home indicator via
+ * env(safe-area-inset-bottom).
+ */
+
+:root {
+  --bg: #f5f6f9;
+  --surface: #ffffff;
+  --surface-2: #eceef4;
+  --text: #14161d;
+  --text-dim: #5a6072;
+  --line: #d9dce6;
+  --accent: #2f5bd7;
+  --accent-text: #ffffff;
+  --ok: #1c7f4b;
+  --warn: #a86400;
+  --danger: #b3261e;
+  --radius: 14px;
+  --tap: 44px;
+  --gap: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1016;
+    --surface: #191b24;
+    --surface-2: #232634;
+    --text: #eef0f6;
+    --text-dim: #a2a8bb;
+    --line: #2e3242;
+    --accent: #6d90ff;
+    --accent-text: #0f1016;
+    --ok: #56d199;
+    --warn: #f0b355;
+    --danger: #ff8a80;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Stops the grey flash on tap without removing the :active feedback below it. */
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: contain;
+}
+
+h1, h2, h3 { margin: 0; font-weight: 650; }
+h1 { font-size: 1.15rem; }
+h2 { font-size: 1.05rem; }
+h3 { font-size: 0.95rem; }
+p { margin: 0 0 0.6em; }
+
+.noscript { display: block; padding: 24px; text-align: center; }
+
+/* ---- sign in ------------------------------------------------------------ */
+
+.signin {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.signin-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 28px 22px;
+  width: min(420px, 100%);
+  text-align: center;
+}
+.signin-card h1 { margin: 12px 0 6px; }
+.signin-card p { color: var(--text-dim); }
+
+/* ---- chrome ------------------------------------------------------------- */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  padding: max(8px, env(safe-area-inset-top)) 12px 0;
+}
+.topbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: var(--tap);
+}
+#family-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The child switcher scrolls sideways rather than wrapping: with four children a wrapping row
+   pushes the content below the fold on a phone, and the snap points keep a half-cut pill from
+   being the resting state. */
+.pills {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  padding: 8px 0 10px;
+  scrollbar-width: none;
+}
+.pills::-webkit-scrollbar { display: none; }
+.pill {
+  scroll-snap-align: start;
+  flex: 0 0 auto;
+  /* var(--tap), like every other control. It read 36px until a browser measured it: the child
+     switcher is how a parent changes which child they are looking at, so it is one of the two most
+     tapped things in the console, and it was the only control below the floor this file's own
+     header promises. Nine source-level guards over this stylesheet passed the whole time. */
+  min-height: var(--tap);
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.pill[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+
+/* A tap target is an area, not a height.
+   `.btn` sets min-height, so a button whose label is a single glyph is 44px tall and as wide as the
+   glyph — the sheet's close control measured 43x44 on a 360px phone, and the only instrument that
+   noticed was one that measured both edges. Icon-only buttons get the floor in both directions. */
+.btn-icon { min-width: var(--tap); }
+
+.view {
+  padding: var(--gap);
+  /* Room for the tab bar plus the home indicator, so the last card is never trapped under it. */
+  padding-bottom: calc(var(--tap) + 34px + env(safe-area-inset-bottom));
+  outline: none;
+}
+
+.tabbar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 10;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.tab {
+  min-height: var(--tap);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 2px;
+  font-size: 0.7rem;
+  text-decoration: none;
+  color: var(--text-dim);
+}
+.tab-icon { font-size: 1.15rem; line-height: 1; }
+.tab[aria-current="page"] { color: var(--accent); }
+
+/* ---- cards -------------------------------------------------------------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: var(--gap);
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.muted { color: var(--text-dim); font-size: 0.9rem; }
+.stack { display: flex; flex-direction: column; gap: 10px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.wrap { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: var(--text-dim); }
+.dot.online { background: var(--ok); }
+.dot.offline { background: var(--danger); }
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.badge.warn { color: var(--warn); }
+.badge.danger { color: var(--danger); }
+.badge.ok { color: var(--ok); }
+
+/* ---- controls ----------------------------------------------------------- */
+
+.btn {
+  min-height: var(--tap);
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn-danger { color: var(--danger); }
+.btn-quiet { background: transparent; border-color: transparent; color: var(--text-dim); }
+.btn-block { display: block; width: 100%; text-align: center; text-decoration: none; }
+.btn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+
+label { display: block; font-size: 0.9rem; color: var(--text-dim); margin-bottom: 4px; }
+input, select {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  /* 16px exactly: anything smaller makes mobile Safari zoom in on focus and stay there. */
+  font: inherit;
+  font-size: 16px;
+}
+input[type="checkbox"] { width: auto; min-height: auto; }
+
+/* A switch big enough to hit. The input stays in the DOM and keeps its semantics; only its
+   appearance is replaced, so it is still reachable by keyboard and by a screen reader. */
+.switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: var(--tap); }
+.switch .switch-label { flex: 1; color: var(--text); font-size: 0.98rem; }
+.switch .switch-label small { display: block; color: var(--text-dim); font-size: 0.82rem; }
+.switch input {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  width: 52px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  position: relative;
+  transition: background 0.15s;
+}
+.switch input::after {
+  content: "";
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 0.15s;
+}
+.switch input:checked { background: var(--accent); border-color: var(--accent); }
+.switch input:checked::after { transform: translateX(22px); background: var(--accent-text); }
+.switch input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* ---- lists -------------------------------------------------------------- */
+
+.list { list-style: none; margin: 0; padding: 0; }
+.list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: var(--tap);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.list li:last-child { border-bottom: none; }
+.list .label { min-width: 0; }
+.list .label b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list .label small { color: var(--text-dim); font-size: 0.8rem; word-break: break-all; }
+
+/* ---- usage bars --------------------------------------------------------- */
+
+.bars { display: flex; align-items: flex-end; gap: 4px; height: 90px; margin-top: 8px; }
+.bars .bar { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; opacity: 0.85; }
+.bars .bar.over { background: var(--danger); }
+.meter { height: 10px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.meter > span { display: block; height: 100%; background: var(--ok); }
+.meter > span.over { background: var(--danger); }
+
+/* ---- sheet -------------------------------------------------------------- */
+
+.sheet {
+  border: none;
+  padding: 0;
+  width: 100%;
+  max-width: 520px;
+  max-height: 92dvh;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+.sheet::backdrop { background: rgba(0, 0, 0, 0.55); }
+.sheet-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.sheet-body { padding: 14px; overflow-y: auto; }
+.sheet-body svg { width: 100%; height: auto; max-width: 320px; margin: 0 auto; display: block; background: #fff; border-radius: 8px; }
+.code {
+  font: 600 1.4rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.14em;
+  text-align: center;
+  padding: 12px;
+  background: var(--surface-2);
+  border-radius: 10px;
+  word-break: break-all;
+}
+
+/* ---- toast -------------------------------------------------------------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--tap) + 20px + env(safe-area-inset-bottom));
+  z-index: 20;
+  max-width: min(92vw, 460px);
+  padding: 11px 16px;
+  border-radius: 10px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 0.92rem;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+}
+.toast.error { background: var(--danger); color: #fff; }
+
+/* ---- wider screens ------------------------------------------------------ */
+
+@media (min-width: 720px) {
+  .view {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px 20px 40px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 var(--gap);
+    align-items: start;
+  }
+  .view > .full { grid-column: 1 / -1; }
+  .topbar { padding-inline: 20px; }
+  .topbar-row, .pills { max-width: 900px; margin-inline: auto; }
+  /* The tab bar stays on screen at every width. It is the whole navigation, and moving it into a
+     sidebar above some breakpoint would mean maintaining two navigations. */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

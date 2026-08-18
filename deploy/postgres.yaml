@@ -1,0 +1,106 @@
+# PostgreSQL for the FamilyGuard control plane.
+#
+# Named `familyguard-db`, not `database`. A DSN that reads `@database:5432` is one copied manifest
+# away from pointing at a different app's database, and a control plane that silently connected to
+# the wrong one would be discovered by the damage rather than by an error.
+#
+# STORAGE. This example uses a `hostPath`, which is the honest choice for the single-node cluster
+# this project was built for and the wrong one for anything larger. If your cluster has a
+# StorageClass, replace both `hostPath` volumes with a PersistentVolumeClaim — nothing else in this
+# directory has to change. If you keep the hostPath, the directory must exist and be owned by the
+# uid below BEFORE the first apply: the pod runs unprivileged and cannot chown its own data
+# directory, and there is deliberately no init container to do it, because that container would
+# have to run as root — a larger hole than the problem it closes.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: familyguard-db
+spec:
+  replicas: 1
+  strategy:
+    # Recreate, never RollingUpdate. This is a single-writer database on a single volume, and a
+    # rolling update starts the new pod before the old one exits. Postgres' own lockfile would be
+    # the only thing preventing two processes on one data directory — a coin flip against data loss.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: familyguard-db
+  template:
+    metadata:
+      labels:
+        app: familyguard-db
+      annotations:
+        # A password rotation updates the Secret; a postgres holding the old password in memory
+        # would then refuse the control plane's new DSN. Reloader restarts it. See
+        # secret.example.yaml — a secrets operator does not restart anything by itself.
+        reloader.stakater.com/auto: "true"
+    spec:
+      securityContext:
+        # A dedicated uid/gid, not shared with any other app on the host. The number is arbitrary;
+        # that it is dedicated is not. With the hostPath above, `chown 50140:50140` and
+        # `chmod 700` the directory before the first apply.
+        runAsUser: 50140
+        runAsGroup: 50140
+        fsGroup: 50140
+      containers:
+        - name: postgres
+          # Pinned to a patch version. `postgres:18` would move a major-version data directory
+          # under a running deployment on some future pull.
+          image: postgres:18.6
+          env:
+            - name: POSTGRES_DB
+              value: familyguard
+            - name: POSTGRES_USER
+              value: familyguard
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: familyguard-secret
+                  key: POSTGRES_PASSWORD
+            # Explicit data subdirectory: the image default has varied between major versions, and
+            # pinning it keeps the on-disk layout stable across an upgrade.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "familyguard", "-d", "familyguard"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "familyguard", "-d", "familyguard"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+      volumes:
+        - name: pgdata
+          hostPath:
+            path: /srv/familyguard/postgres
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: familyguard-db
+spec:
+  selector:
+    app: familyguard-db
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432

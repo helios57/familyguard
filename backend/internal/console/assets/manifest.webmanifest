@@ -1,0 +1,19 @@
+{
+  "name": "Family Guard",
+  "short_name": "Guard",
+  "description": "Parent console for the family's managed devices.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f1016",
+  "theme_color": "#12131a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The release rule: TLS, and only the CAs the platform ships with.
+
+  `cleartextTrafficPermitted="false"` is the second half of the check Enroller already makes on the
+  provisioning URL. Two mechanisms rather than one on purpose — not for redundancy, but because they
+  bind at different moments: Enroller refuses an http:// URL that arrives in a QR code, and this
+  refuses an http:// request however it came to be made. A redirect from https to http is caught by
+  this one alone.
+
+  User-added certificate authorities are deliberately NOT trusted. That is the difference between
+  this app and a normal one: the traffic it protects is the policy that governs the phone, and the
+  person with the strongest motive to install a proxy CA is the person the policy applies to. The
+  cost is that debugging TLS on a real device needs a debug build, which is what src/debug is for.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

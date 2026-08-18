@@ -1,0 +1,235 @@
+# Publishes the control-plane image that the cluster pulls.
+#
+# `deploy/control-plane.yaml` pins a bare semver, and until a matching tag has been released that pin
+# refers to nothing the cluster can pull. That is deliberate: a deployment naming an image nobody
+# published is a deployment that starts a container nobody reviewed.
+#
+# The tag is the version. `v0.1.0` publishes `0.1.0`, because the manifest pins the bare semver and
+# a `v` here would produce an image the cluster does not ask for. The tag is also refused unless it
+# is on `main` and the tree at that commit is the tree CI passed on — see `guard` below.
+#
+# Nothing has been released from this repository yet: there is no `v*` tag, and therefore no image
+# in the registry. `0.1.0` will be the first. Until that tag is pushed, the semver pinned in the
+# deployment manifest names something that does not exist, and `ImagePullBackOff` with `manifest
+# unknown` is the expected symptom rather than a fault to debug.
+#
+# A published tag is never force-moved onto a fix. A release tag that moves is the one change a
+# consumer cannot detect — the digest under it changes while every reference to it stays byte
+# identical — so a mistake is corrected by cutting the next version, never by repointing this one.
+#
+# `latest` is deliberately NOT published. A floating tag in a manifest is an unpinned deployment
+# wearing a version number: two clusters that both say they run `latest` can be running different
+# code, and neither can tell.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/helios57/familyguard-control-plane
+
+jobs:
+  # The tag is a claim that this commit is releasable. This job checks the claim before anything is
+  # published, because a push to a registry is not a thing anyone downstream un-observes: deleting a
+  # version does not un-pull it from a node that already has it, and a digest somebody wrote into a
+  # manifest keeps naming what it named.
+  #
+  # The GHCR package inherits this repository's visibility. This repository is public, so the package
+  # is public, so the cluster pulls it anonymously and the deployment carries no `imagePullSecrets`
+  # and no registry credential at all — one fewer secret to mint, rotate and leak.
+  #
+  # That is worth measuring rather than assuming, because a private package fails in a way that looks
+  # like a missing tag: both are `ImagePullBackOff`, and only the substring separates them —
+  # `manifest unknown` means nothing was published under that name, `unauthorized` means it was
+  # published and cannot be reached. Confirm the anonymous path directly:
+  #
+  #   token=$(curl -s "https://ghcr.io/token?scope=repository:helios57/familyguard-control-plane:pull" | jq -r .token)
+  #   curl -sS -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $token" \
+  #     -H 'Accept: application/vnd.oci.image.index.v1+json' \
+  #     https://ghcr.io/v2/helios57/familyguard-control-plane/manifests/0.1.0
+  #
+  # 200 is a public package. 401 or 403 means the package is private — GHCR does not always flip a
+  # package's visibility with the repository's, and it is a per-package setting that can be changed
+  # back independently of this repository.
+  guard:
+    name: guard (the tag names a semver, on main, that passes every layer)
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the ancestry check below needs the branch, and a shallow clone has none
+      - id: version
+        name: Derive the version, and refuse anything that is not a plain semver
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "tag $tag does not name a plain semver" >&2
+            exit 1
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "publishing ${IMAGE}:${version}"
+      - name: Refuse a tag that is not on main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "tag ${GITHUB_REF_NAME} points at a commit that is not on main" >&2
+            exit 1
+          fi
+      - name: Refuse a version the Android app does not also carry
+        # The DPC's versionName and the server's tag are one release. A server published as 0.2.0
+        # while the APK on disk still says 0.1.0 gives a parent two numbers for one system and no way
+        # to tell which one a device is running.
+        run: |
+          set -euo pipefail
+          want="${{ steps.version.outputs.version }}"
+          got="$(sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' android-dpc/app/build.gradle.kts | head -n1)"
+          if [ -z "$got" ]; then
+            echo "could not read versionName out of android-dpc/app/build.gradle.kts" >&2
+            exit 2
+          fi
+          if [ "$got" != "$want" ]; then
+            echo "tag says $want, the DPC's versionName says $got" >&2
+            exit 1
+          fi
+
+  # The same layers CI runs, re-run against the tagged tree. A tag can be pushed to a commit whose
+  # CI run was cancelled, or was green before a force-push moved the branch. Re-running is a few
+  # minutes; publishing an unmeasured image is not recoverable in the same way.
+  verify:
+    name: verify (backend, e2e, android, image)
+    needs: guard
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  publish:
+    name: publish ghcr.io/helios57/familyguard-control-plane
+    needs: [guard, verify]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write # the only job in this repository that has it
+      id-token: write # signs the provenance…
+      attestations: write # …and this one stores it. Neither implies the other — see the gate below.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: backend # the Dockerfile's context on purpose: nothing outside the Go module can be copied in
+          push: true
+          tags: ${{ env.IMAGE }}:${{ needs.guard.outputs.version }}
+          build-args: VERSION=${{ needs.guard.outputs.version }}
+          provenance: true
+          sbom: true
+      # A tag is a mutable pointer; the digest is the artifact. This is the value to put in a
+      # manifest, and the value to compare a running pod against — never the tag it was pulled by.
+      - name: Report the digest
+        run: |
+          set -euo pipefail
+          digest="${{ steps.build.outputs.digest }}"
+          if [ -z "$digest" ]; then
+            echo "the build reported no digest; nothing can be verified against this push" >&2
+            exit 2
+          fi
+          {
+            echo "### Published"
+            echo
+            echo '```'
+            echo "${IMAGE}:${{ needs.guard.outputs.version }}"
+            echo "${IMAGE}@${digest}"
+            echo '```'
+            echo
+            echo "\`deploy/control-plane.yaml\` pins the tag; verify a running pod against the"
+            echo "DIGEST above. A matching tag is not evidence — a tag can be moved."
+          } >>"$GITHUB_STEP_SUMMARY"
+      # Sigstore-signed provenance, stored in GitHub's attestation API and its transparency log.
+      #
+      # Storing one takes THREE things, and during development this step failed twice for two of
+      # them in a row — which is the reason it is gated on a measured value rather than simply
+      # enabled:
+      #
+      #   1. `id-token: write`     — signs the statement.
+      #   2. `attestations: write` — stores it, via POST /repos/{owner}/{repo}/attestations.
+      #      Neither permission implies the other. Without the second the step dies with
+      #      "Resource not accessible by integration".
+      #   3. a repository GitHub will accept one for. A user-owned PRIVATE repository is refused at
+      #      any permission: "Feature not available for user-owned private repositories."
+      #
+      # Both refusals land on this one step, with the image ALREADY PUSHED, and the second is
+      # invisible until the first is fixed — so one red step reported two unrelated causes on two
+      # consecutive attempts, and fixing the permissions looked like it had not worked.
+      #
+      # `visibility` is therefore read back from the API instead of hard-coded. This repository is
+      # public, so the gate opens and every release is attested; were it ever made private again the
+      # release would keep publishing and say plainly that it is unattested, rather than failing
+      # after the push or — worse — succeeding while quietly dropping a guarantee nobody was told
+      # about.
+      - name: Can this repository store an attestation?
+        id: attestable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          visibility=$(gh api "repos/${GITHUB_REPOSITORY}" --jq .visibility)
+          echo "visibility=${visibility}"
+          if [ "$visibility" = "public" ]; then
+            echo "sigstore=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "sigstore=false" >>"$GITHUB_OUTPUT"
+          fi
+      - name: Attest what was built
+        if: steps.attestable.outputs.sigstore == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      # A skipped step is green, and "publish succeeded" reads as "the image is attested". So say
+      # which of the two provenances this image carries — every time, in the summary the release is
+      # read from. An absence nobody is told about is an absence nobody checks for.
+      - name: Say what provenance this image carries
+        if: always() && steps.build.outputs.digest != ''
+        env:
+          SIGSTORE: ${{ steps.attestable.outputs.sigstore }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Provenance"
+            echo
+            echo "- **In-registry (BuildKit):** yes. \`provenance\` and \`sbom\` attestation"
+            echo "  manifests were pushed alongside the image and travel with it in the registry."
+            echo "  Read them back with:"
+            echo
+            echo '  ```'
+            echo "  docker buildx imagetools inspect ${IMAGE}:${VERSION} --format '{{ json .Provenance }}'"
+            echo '  ```'
+            echo
+            if [ "${SIGSTORE}" = "true" ]; then
+              echo "- **Sigstore (GitHub attestations):** yes. Verify with"
+              echo "  \`gh attestation verify oci://${IMAGE}:${VERSION} -R ${GITHUB_REPOSITORY}\`."
+            else
+              echo "- **Sigstore (GitHub attestations):** NO — GitHub does not offer them for"
+              echo "  user-owned private repositories. \`gh attestation verify\` will find nothing"
+              echo "  for this image, and that is the expected answer here, not a tampering signal."
+              echo "  Making this repository public, or moving it under an organisation, turns them"
+              echo "  on with no change to this workflow."
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"

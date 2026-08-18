@@ -1,0 +1,244 @@
+{
+  "_comment": [
+    "Shared recovery-code vectors (FR-12.3). Replayed by backend/internal/auth (Go) and by",
+    "the Android DPC's RecoveryVectorsTest (Kotlin). Two implementations that disagree about",
+    "what a typed code IS produce a phone that rejects the code printed on the parent's",
+    "screen, offline, with no way to debug it. That is the failure this file exists to",
+    "prevent, so neither side may edit it to make its own implementation pass.",
+    "",
+    "The digests were produced by Python's hashlib.pbkdf2_hmac, a third implementation of",
+    "RFC 8018, independent of both mirrors. The normalisation expectations were written by",
+    "hand from the rule in tokens.go, never generated from an implementation's output.",
+    "",
+    "Every code and salt here is deliberately low-entropy and fake. Nothing in this file is,",
+    "or resembles, a credential for any device.",
+    "",
+    "Regenerate with tools/gen-recovery-vectors.py, but note that regenerating is only",
+    "correct for ADDING vectors. A digest that changed under an edit is the two sides being",
+    "told to agree on something new, which is a decision, not a refresh."
+  ],
+  "normalize": [
+    {
+      "name": "a code in the form the console prints it",
+      "raw": "2345-6789-ABCD-EFGH-JKMN",
+      "expect": "23456789ABCDEFGHJKMN"
+    },
+    {
+      "name": "lower case, because a phone keyboard starts there",
+      "raw": "2345-6789-abcd-efgh-jkmn",
+      "expect": "23456789ABCDEFGHJKMN"
+    },
+    {
+      "name": "spaces where the console printed dashes",
+      "raw": "2345 6789 ABCD EFGH JKMN",
+      "expect": "23456789ABCDEFGHJKMN"
+    },
+    {
+      "name": "no separators at all",
+      "raw": "23456789ABCDEFGHJKMN",
+      "expect": "23456789ABCDEFGHJKMN"
+    },
+    {
+      "name": "leading and trailing whitespace, including a newline from a paste",
+      "raw": "\n  2345-6789-ABCD-EFGH-JKMN \t\n",
+      "expect": "23456789ABCDEFGHJKMN"
+    },
+    {
+      "name": "a tab in the middle, which is what a copied table cell leaves behind",
+      "raw": "2345\t6789-ABCD-EFGH-JKMN",
+      "expect": "23456789ABCDEFGHJKMN"
+    },
+    {
+      "name": "a non-breaking space at each end and in the middle, as a chat app pastes it",
+      "raw": "\u00a02345-6789-ABCD-EFGH-JKM\u00a0N\u00a0",
+      "expect": "23456789ABCDEFGHJKMN"
+    },
+    {
+      "name": "the four spaces Go strips that Java does not call whitespace at all",
+      "raw": "\u00852345\u00a06789\u2007ABCD\u202fEFGH-JKMN",
+      "expect": "23456789ABCDEFGHJKMN"
+    },
+    {
+      "name": "the exotic spaces both platforms strip, including both ends of the U+2000 run",
+      "raw": "2345\u000b6789\fABCD\rEFGH\u1680JK\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2008\u2009\u200aM\u2028\u2029\u205f\u3000N",
+      "expect": "23456789ABCDEFGHJKMN"
+    },
+    {
+      "name": "an ASCII file separator survives, because Go does not call it a space",
+      "raw": "2345-6789-ABCD-EFGH-JKM\u001cN",
+      "expect": "23456789ABCDEFGHJKM\u001cN"
+    },
+    {
+      "name": "en dash, em dash, non-breaking hyphen, minus sign, fullwidth and an invisible soft hyphen",
+      "raw": "2345\u20136789\u2014ABCD\u2011EFGH\u2212JKMN\uff0d\u00ad",
+      "expect": "23456789ABCDEFGHJKMN"
+    },
+    {
+      "name": "hyphen, figure dash, horizontal bar, small em dash and small hyphen-minus",
+      "raw": "2345\u20106789\u2012ABCD\u2015EFGH\ufe58JK\ufe63MN",
+      "expect": "23456789ABCDEFGHJKMN"
+    },
+    {
+      "name": "a sharp s stays one character, because both sides map case simply",
+      "raw": "2345-6789-ABCD-EFGH-JKM\u00df",
+      "expect": "23456789ABCDEFGHJKM\u00df"
+    },
+    {
+      "name": "a dotless i folds to I, which the alphabet does not contain \u2014 and that is still the fold",
+      "raw": "2345-6789-ABCD-EFGH-JKM\u0131",
+      "expect": "23456789ABCDEFGHJKMI"
+    },
+    {
+      "name": "an empty string normalises to an empty string rather than throwing",
+      "raw": "",
+      "expect": ""
+    },
+    {
+      "name": "a string of nothing but separators normalises away entirely",
+      "raw": " - \t \u2013 \u00a0",
+      "expect": ""
+    }
+  ],
+  "derive": [
+    {
+      "name": "the canonical code at a work factor of one, the lowest the server accepts",
+      "code": "2345-6789-ABCD-EFGH-JKMN",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 1,
+      "expect_hash": "KjA-bYJi0f8_o8o12Fvw1d0VypEoiLb1iqMgGRmrE0s"
+    },
+    {
+      "name": "the same code at a thousand rounds: the digest must change with the work factor",
+      "code": "2345-6789-ABCD-EFGH-JKMN",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 1000,
+      "expect_hash": "5Zy_HG1VKQPjifhy492xQITxwtrd3uX_0lkCqKIp1L4"
+    },
+    {
+      "name": "the same code and work factor under a different salt",
+      "code": "2345-6789-ABCD-EFGH-JKMN",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMg",
+      "iterations": 1000,
+      "expect_hash": "cFyiTYe9tR9A-H18LOLNe1wRiwmIQDK8wzzAbtQpFwY"
+    },
+    {
+      "name": "the production work factor, so the number that ships is the number that is checked",
+      "code": "2345-6789-ABCD-EFGH-JKMN",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 120000,
+      "expect_hash": "UXffYDQgSKN9Z7gw76U5hlJF6gYBcuCe9iJ0vqVrAL8"
+    },
+    {
+      "name": "a messily typed code derives to the same digest as the canonical one",
+      "code": "\u00a0 2345 6789\u2013abcd\u00adEFGH-jkmn\n",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 1,
+      "expect_hash": "KjA-bYJi0f8_o8o12Fvw1d0VypEoiLb1iqMgGRmrE0s"
+    },
+    {
+      "name": "a different code, so the digest is not a constant",
+      "code": "PQRS-TVWX-YZ23-4567-89AB",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 1,
+      "expect_hash": "OY-dcyyqBQzxIMSBzOfw7X2M1wLxJX_ZPEXzRA9D4ss"
+    }
+  ],
+  "verify": [
+    {
+      "name": "the right code verifies",
+      "code": "2345-6789-ABCD-EFGH-JKMN",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 1,
+      "hash": "KjA-bYJi0f8_o8o12Fvw1d0VypEoiLb1iqMgGRmrE0s",
+      "expect": true
+    },
+    {
+      "name": "a differently formatted right code verifies",
+      "code": "\u00a0 2345 6789\u2013abcd\u00adEFGH-jkmn\n",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 1,
+      "hash": "KjA-bYJi0f8_o8o12Fvw1d0VypEoiLb1iqMgGRmrE0s",
+      "expect": true
+    },
+    {
+      "name": "a wrong code does not verify",
+      "code": "PQRS-TVWX-YZ23-4567-89AB",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 1,
+      "hash": "KjA-bYJi0f8_o8o12Fvw1d0VypEoiLb1iqMgGRmrE0s",
+      "expect": false
+    },
+    {
+      "name": "the right code under the wrong salt does not verify",
+      "code": "2345-6789-ABCD-EFGH-JKMN",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMg",
+      "iterations": 1,
+      "hash": "KjA-bYJi0f8_o8o12Fvw1d0VypEoiLb1iqMgGRmrE0s",
+      "expect": false
+    },
+    {
+      "name": "the right code at the wrong work factor does not verify",
+      "code": "2345-6789-ABCD-EFGH-JKMN",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 2,
+      "hash": "KjA-bYJi0f8_o8o12Fvw1d0VypEoiLb1iqMgGRmrE0s",
+      "expect": false
+    },
+    {
+      "name": "a zero work factor denies rather than deriving something",
+      "code": "2345-6789-ABCD-EFGH-JKMN",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 0,
+      "hash": "KjA-bYJi0f8_o8o12Fvw1d0VypEoiLb1iqMgGRmrE0s",
+      "expect": false
+    },
+    {
+      "name": "an absent hash denies; a device with no material never unlocks",
+      "code": "2345-6789-ABCD-EFGH-JKMN",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 1,
+      "hash": "",
+      "expect": false
+    },
+    {
+      "name": "an absent salt denies",
+      "code": "2345-6789-ABCD-EFGH-JKMN",
+      "salt": "",
+      "iterations": 1,
+      "hash": "KjA-bYJi0f8_o8o12Fvw1d0VypEoiLb1iqMgGRmrE0s",
+      "expect": false
+    },
+    {
+      "name": "an empty entry denies rather than deriving from an empty password",
+      "code": "",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 1,
+      "hash": "KjA-bYJi0f8_o8o12Fvw1d0VypEoiLb1iqMgGRmrE0s",
+      "expect": false
+    },
+    {
+      "name": "an entry of nothing but separators denies for the same reason",
+      "code": " -- \t ",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 1,
+      "hash": "KjA-bYJi0f8_o8o12Fvw1d0VypEoiLb1iqMgGRmrE0s",
+      "expect": false
+    },
+    {
+      "name": "an empty entry denies even against material derived from the empty string",
+      "code": "",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 1,
+      "hash": "Iz_HgMAHm-c9Lc3d6Jpd83YDcyyjGl03nErghwDU-88",
+      "expect": false
+    },
+    {
+      "name": "an entry of nothing but separators denies against that material too",
+      "code": "\u2013 -- \u00a0",
+      "salt": "dmVjdG9yLXNhbHQtMDAwMQ",
+      "iterations": 1,
+      "hash": "Iz_HgMAHm-c9Lc3d6Jpd83YDcyyjGl03nErghwDU-88",
+      "expect": false
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.FamilyGuard" parent="Theme.Material3.DayNight.NoActionBar" />
+
+    <!--
+      For the two provisioning activities, which answer the framework and finish without drawing.
+      Without this the setup wizard flashes an empty white screen mid-enrollment, which reads to the
+      person holding the phone as something having gone wrong.
+    -->
+    <style name="Theme.FamilyGuard.Invisible" parent="Theme.FamilyGuard">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+</resources>

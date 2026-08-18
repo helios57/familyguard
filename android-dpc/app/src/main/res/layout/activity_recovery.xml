@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The only screen this app has, and the only one it should have (FR-12).
+
+  It is a scrolling single column rather than a constrained layout because of where it gets used: a
+  parent standing over a phone that has locked their child out, on whatever handset the family owns,
+  with the keyboard covering the bottom half of the screen. A ScrollView means the button is always
+  reachable; a fixed layout means it is reachable on the screen it was designed on.
+
+  Nothing here is sized in `dp` that carries text, and nothing is coloured literally: the theme is
+  DayNight, so a hard-coded colour is a screen that is unreadable for whoever has dark mode on, and
+  a `dp` text size is one that ignores the font scale a parent set because they cannot read small
+  text. Both are exactly the person this screen exists for.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:scrollbars="none">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:id="@+id/recovery_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/recovery_title"
+            android:textAppearance="?attr/textAppearanceHeadlineSmall" />
+
+        <TextView
+            android:id="@+id/recovery_explanation"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/recovery_explanation"
+            android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+        <!--
+          `textCapCharacters` because the code is printed in upper case and a parent copying it will
+          not switch the keyboard; `textNoSuggestions` because a recovery code must not end up in the
+          keyboard's learned dictionary, where the next person to type "F" would be offered it.
+          `importantForAutofill="no"` for the same reason one layer up.
+
+          The verifier normalises case, spacing and the group separators, so none of this is load
+          bearing — it is what stops the screen from rejecting a correctly-copied code for looking
+          different, which is the failure that makes a parent conclude the hatch is broken.
+        -->
+        <EditText
+            android:id="@+id/recovery_code"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:minHeight="48dp"
+            android:hint="@string/recovery_code_hint"
+            android:importantForAutofill="no"
+            android:imeOptions="actionDone"
+            android:inputType="textCapCharacters|textNoSuggestions|textVisiblePassword"
+            android:maxLines="1"
+            android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+        <Button
+            android:id="@+id/recovery_submit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:minHeight="48dp"
+            android:text="@string/recovery_submit" />
+
+        <!--
+          Empty until something has happened. A status line pre-filled with "ready" is one more thing
+          to read past, and it makes the screen look as though it has already answered.
+        -->
+        <TextView
+            android:id="@+id/recovery_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textIsSelectable="true" />
+
+        <!--
+          What this phone knows about itself (FR-13.4).
+
+          Below the code field on purpose. The screen's reason for existing is the escape hatch, and
+          the person who needs that is standing over a phone with a keyboard already covering half of
+          it; making them scroll past a status report to reach the field would be the status report
+          costing somebody the thing they came for. A parent who came to *read* scrolls once.
+
+          The rows are added at runtime, so this is an empty container rather than a set of stubs: a
+          stub row is a row that renders before it has been filled, and "Screen time today:" with an
+          empty value is exactly the screen this feature exists to prevent.
+        -->
+        <View
+            android:id="@+id/status_divider"
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="28dp"
+            android:background="?attr/colorOutlineVariant"
+            android:importantForAccessibility="no" />
+
+        <TextView
+            android:id="@+id/status_heading"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/status_heading"
+            android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+        <TextView
+            android:id="@+id/status_loading"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/status_loading"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textColor="?attr/colorOnSurfaceVariant" />
+
+        <LinearLayout
+            android:id="@+id/status_lines"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <!-- Pushes the footer to the bottom on a tall screen and disappears on a short one. -->
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/recovery_footer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:text="@string/recovery_footer"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="?attr/colorOnSurfaceVariant" />
+
+    </LinearLayout>
+
+</ScrollView>

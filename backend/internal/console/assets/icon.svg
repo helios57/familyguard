@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Family Guard">
+  <!-- Declared "any maskable", so the launcher may crop this to a circle. Everything that carries
+       meaning stays inside the central 80% (r <= 205 from the centre) and the background covers the
+       full square, which is what keeps the shield whole after an aggressive crop. -->
+  <rect width="512" height="512" fill="#12131a"/>
+  <path d="M256 108 372 152v116c0 78-49 130-116 152-67-22-116-74-116-152V152z"
+        fill="none" stroke="#6d90ff" stroke-width="26" stroke-linejoin="round"/>
+  <path d="M212 268l32 34 62-70" fill="none" stroke="#56d199" stroke-width="26"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FamilyGuard</string>
+
+    <!-- Shown by Settings wherever the device admin is listed. -->
+    <string name="admin_label">FamilyGuard</string>
+    <string name="admin_description">Applies the settings a parent chose for this phone. The phone
+        can always be reset from the recovery menu.</string>
+
+    <!--
+      The foreground-service notification. It is the child's disclosure that the phone is managed
+      and the parent's only on-device sign that the connection is alive, so it says what is running
+      rather than something reassuring and vague.
+    -->
+    <string name="connection_channel">Connection</string>
+    <string name="connection_running">Connected to the family settings</string>
+
+    <!--
+      The recovery screen (FR-12). Every one of these is read by somebody who is already annoyed:
+      a phone has stopped doing something and the parent is standing over it. So each says what
+      happened and what to do next, in that order, and none of them says "error".
+
+      They also never name the child's failure. "Wrong code" is what a shoulder-surfing child sees
+      too, and it is the only feedback a guesser gets — so it carries no hint about which part was
+      wrong, and the count that follows it is the parent's signal, not theirs.
+    -->
+    <string name="recovery_title">Unlock this phone</string>
+    <string name="recovery_explanation">Enter the recovery code from the family settings. The phone
+        stops applying the rules until it next reaches the family settings — then whatever is set
+        there takes over again.</string>
+    <string name="recovery_code_hint">Recovery code</string>
+    <string name="recovery_submit">Unlock</string>
+    <string name="recovery_footer">This phone can always be reset to factory settings from Android\'s
+        own settings or from recovery mode. Nothing here can block that.</string>
+
+    <string name="recovery_checking">Checking…</string>
+    <string name="recovery_released">Unlocked. The rules are off until this phone next reaches the
+        family settings.</string>
+    <!-- %1$s is what the appliers reported. Shown rather than hidden: a partial release is not a release. -->
+    <string name="recovery_released_with_problems">Unlocked, but not everything could be turned off:
+        %1$s</string>
+    <string name="recovery_already_released">Already unlocked. The rules are off until this phone
+        next reaches the family settings.</string>
+    <!-- %1$s is the reason, from the controller. -->
+    <string name="recovery_unavailable">%1$s</string>
+    <string name="recovery_empty">Enter the code first.</string>
+
+    <!-- %1$d is how many wrong codes in a row; %2$s is a formatted wait. -->
+    <plurals name="recovery_rejected">
+        <item quantity="one">That code is not right (%1$d wrong so far).</item>
+        <item quantity="other">That code is not right (%1$d wrong in a row).</item>
+    </plurals>
+    <string name="recovery_rejected_wait">That code is not right (%1$d wrong in a row). Try again in
+        %2$s.</string>
+    <string name="recovery_locked_out">Too many wrong codes. Try again in %1$s.</string>
+
+    <!--
+      The on-device status block (FR-13.4). Read by a parent standing next to the phone, which is
+      the one place a question the console cannot answer gets asked: the console knows what it sent,
+      and only the phone knows what happened to it.
+
+      `status_flag` is prepended to every line that is not OK. It exists because colour cannot be the
+      only signal — a parent who is colour-blind, or reading a phone in sunlight, gets the same
+      screen as everyone else — and because the two non-OK levels must look equally unfinished.
+      "Not measured" rendered calmly is the whole failure this block was built to make visible.
+    -->
+    <string name="status_heading">This phone</string>
+    <string name="status_loading">Checking…</string>
+    <string name="status_flag">⚠</string>
+    <!-- %1$s is the label, %2$s the value. Read out as one sentence by a screen reader. -->
+    <string name="status_row_description">%1$s: %2$s</string>
+    <!-- Same, for a row that needs attention. The word is what carries it without colour. -->
+    <string name="status_row_description_attention">Needs attention. %1$s: %2$s</string>
+    <string name="status_unavailable">This phone could not read its own status.</string>
+
+    <plurals name="recovery_wait_minutes">
+        <item quantity="one">%d minute</item>
+        <item quantity="other">%d minutes</item>
+    </plurals>
+    <plurals name="recovery_wait_seconds">
+        <item quantity="one">%d second</item>
+        <item quantity="other">%d seconds</item>
+    </plurals>
+</resources>

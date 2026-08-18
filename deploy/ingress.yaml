@@ -1,0 +1,36 @@
+# Ingress for the parent console, the parent API, the device API and the DPC download — one host,
+# one service, one port. The annotations below are ingress-nginx's; the three that matter are not
+# cosmetic, and a different ingress controller needs its own spelling of each.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: familyguard-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: lets-encrypt
+    # The DPC download. ~15 MB today, and an APK only grows. The default limit is 1 MB, and the
+    # failure is a 413 at the moment a parent is standing over a factory-reset phone.
+    nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+    # Two server-sent-event streams are held open through here: the device stream and the parent
+    # console's. The default 60s read timeout cuts both once a minute. The reconnect is invisible —
+    # nothing errors — so the only symptom is that the phone seems to react slowly to a change.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    # Buffering defeats SSE entirely: nginx would hold each event until its buffer filled, so a
+    # parent's "lock now" would sit in a proxy until some later unrelated event flushed it.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - guard.example.com
+      secretName: familyguard-ingress-tls
+  rules:
+    - host: guard.example.com
+      http:
+        paths:
+          - backend:
+              service:
+                name: familyguard-control-plane
+                port:
+                  number: 8080
+            path: /
+            pathType: Prefix

@@ -1,0 +1,20 @@
+# FamilyGuard — a complete, working Kubernetes deployment, written to be read and adapted.
+#
+# This is the EXAMPLE. It is not what any particular cluster runs: a real deployment keeps its own
+# host, storage paths, image tag and secret plumbing in its own private repository, and only the
+# shape below is shared. Everything site-specific in this directory is spelled `example.com` or
+# `/srv/familyguard`, so a value that still says `example` after you adapt it is a value you have
+# not adapted.
+#
+# `secret.example.yaml` is deliberately NOT in `resources`. Applying it as-is would deploy
+# placeholder credentials, which is worse than failing: the control plane would start, serve a
+# sign-in page nobody can complete, and sign session cookies with a key published on the internet.
+# Read that file for the contract and satisfy it your own way.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: familyguard
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - control-plane.yaml
+  - ingress.yaml

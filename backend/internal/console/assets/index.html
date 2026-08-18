@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Without this the browser lays the page out at 980px and scales it down: every control still
+     works, every tap target is a third of its intended size, and the mobile layout below never
+     applies. It is the single line that decides whether this is usable on a phone. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#12131a">
+<meta name="referrer" content="no-referrer">
+<title>Family Guard</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<noscript class="noscript">Family Guard needs JavaScript to show your family's devices.</noscript>
+
+<!-- Signed out. -->
+<section id="signin" class="signin" hidden>
+  <div class="signin-card">
+    <img src="/icon.svg" alt="" width="56" height="56">
+    <h1>Family Guard</h1>
+    <p id="signin-message">Sign in with the Google account your family uses.</p>
+    <a class="btn btn-primary btn-block" href="/api/v1/auth/google/start">Sign in with Google</a>
+  </div>
+</section>
+
+<!-- Signed in. -->
+<div id="app" hidden>
+  <header class="topbar">
+    <div class="topbar-row">
+      <h1 id="family-name">Family</h1>
+      <button id="signout" class="btn btn-quiet" type="button">Sign out</button>
+    </div>
+    <nav id="child-switcher" class="pills" aria-label="Children"></nav>
+  </header>
+
+  <main id="view" class="view" tabindex="-1"></main>
+
+  <nav class="tabbar" aria-label="Sections">
+    <a class="tab" href="#/home"     data-tab="home">     <span class="tab-icon" aria-hidden="true">◉</span><span>Home</span></a>
+    <a class="tab" href="#/rules"    data-tab="rules">    <span class="tab-icon" aria-hidden="true">⚖</span><span>Rules</span></a>
+    <a class="tab" href="#/apps"     data-tab="apps">     <span class="tab-icon" aria-hidden="true">▦</span><span>Apps</span></a>
+    <a class="tab" href="#/activity" data-tab="activity"> <span class="tab-icon" aria-hidden="true">◔</span><span>Activity</span></a>
+    <a class="tab" href="#/family"   data-tab="family">   <span class="tab-icon" aria-hidden="true">♦</span><span>Family</span></a>
+  </nav>
+</div>
+
+<!-- Live region: every action reports its outcome here, including failures. -->
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<!-- Full-screen sheet, used for the provisioning QR and the recovery code. -->
+<dialog id="sheet" class="sheet">
+  <div class="sheet-head">
+    <h2 id="sheet-title"></h2>
+    <button id="sheet-close" class="btn btn-quiet btn-icon" type="button" aria-label="Close">✕</button>
+  </div>
+  <div id="sheet-body" class="sheet-body"></div>
+</dialog>
+
+<script src="/app.js"></script>
+</body>
+</html>

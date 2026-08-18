@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The device-admin policies this app uses.
+
+  A device owner is granted these implicitly, so the list is documentation as much as it is a
+  request — which is why it names only what the code calls. `wipe-data` is absent on purpose: no
+  command in this product wipes a phone, and declaring the policy would hand a capability to a
+  compromised control plane that the product itself has no use for (FR-2.3, NFR-6).
+-->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <!-- LOCK_NOW, for the parent's lock command (FR-9). -->
+        <force-lock />
+    </uses-policies>
+</device-admin>

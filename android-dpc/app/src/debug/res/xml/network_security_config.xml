@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug builds only. This file overlays the one in src/main and ships in nothing a parent installs.
+
+  The base config is byte-for-byte the release rule, so a debug build is not a laxer app that happens
+  to also work — it is the same app with three loopback names carved out. `10.0.2.2` is the
+  emulator's alias for the host it runs on; the other two are a device with an adb reverse tunnel.
+  They are the same three names Enroller.CLEARTEXT_HOSTS allows, and both lists exist because either
+  one alone would let a cleartext control plane through.
+
+  User-added CAs stay untrusted even here. Trusting them in debug is the usual advice and it is
+  wrong for this app: it would mean the configuration that gets exercised on a bench is not the one
+  that ships, and a TLS problem would first appear on a child's phone.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

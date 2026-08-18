@@ -1,0 +1,195 @@
+# The FamilyGuard control plane: one static Go binary serving the parent console, the parent REST
+# API and the device API on the same port. The console is embedded in the binary (`//go:embed`), so
+# there is no web server, no asset volume and no second container.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: familyguard-control-plane
+spec:
+  replicas: 1
+  strategy:
+    # Recreate, not RollingUpdate, for a reason specific to this app: devices hold a long-lived SSE
+    # stream to /api/v1/device/stream and the console holds one to /api/v1/parent/events. A rolling
+    # update runs two generations at once, each with its own in-process subscriber set, so a policy
+    # change applied on one pod would never reach a phone subscribed to the other for as long as the
+    # old pod lingers. The stream is a wake-up and not the delivery mechanism — the fetch that
+    # follows delivers — so a brief gap costs seconds of latency, while a split brain costs
+    # correctness.
+    #
+    # This is also why `replicas` is 1 and not a knob. Running two would reintroduce the split brain
+    # permanently; horizontal scaling needs the subscriber set moved out of process first, and a
+    # family's phones do not need it.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: familyguard-control-plane
+  template:
+    metadata:
+      labels:
+        app: familyguard-control-plane
+      annotations:
+        # Rotating SESSION_SIGNING_KEY or the OAuth secret updates the Secret, and a pod that kept
+        # the old key in memory would go on accepting cookies you believe you revoked.
+        reloader.stakater.com/auto: "true"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # 65532 is `nonroot` in distroless. Stated numerically as well, because runAsNonRoot
+        # compares a NUMBER and refuses to start a container whose user is only a name.
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      # No imagePullSecrets: the GHCR package inherits the visibility of a public repository, so the
+      # pull is anonymous. If you fork this into a private repository, its package becomes private
+      # too and you will need one — the symptom is ImagePullBackOff with `unauthorized`, which reads
+      # like a bad tag. `manifest unknown` is the bad tag; `unauthorized` is the missing credential.
+      containers:
+        - name: control-plane
+          # Pinned by semver, never `:latest`. This image holds the session signing key and the
+          # database credential in memory, and an unrelated pod restart must not be able to change
+          # which code holds them.
+          #
+          # The tag is what this pins; the DIGEST is what it is. Read a running pod back against the
+          # digest the release build printed —
+          #   kubectl get pod -n familyguard -o jsonpath='{..imageID}'
+          # — and never against the tag it says it was pulled by, which is a label a registry can be
+          # made to move.
+          image: ghcr.io/helios57/familyguard-control-plane:0.1.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            # Proven, not assumed: tests/image/smoke.sh runs this image with --read-only,
+            # --cap-drop ALL and --security-opt no-new-privileges and drives a real sign-in and a
+            # real device sync through it. Every flag here mirrors a line there.
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: ADDR
+              value: ":8080"
+            # The origin the console, the OAuth redirect and the QR payload are all built from. It
+            # must match the Ingress host and the OAuth client's redirect URI exactly.
+            - name: PUBLIC_URL
+              value: "https://guard.example.com"
+            - name: FAMILY_NAME
+              value: "Example"
+            - name: LOG_LEVEL
+              value: "info"
+            # The parents who may sign in before any parent exists to invite them. After the first
+            # sign-in this list is inert — it grants nothing the console cannot also grant — but it
+            # is what stops a fresh database from being claimed by whoever finds the URL first.
+            - name: BOOTSTRAP_PARENT_EMAILS
+              value: "parent@example.com"
+            # The hops whose X-Forwarded-For this server will believe, as CIDRs or addresses.
+            #
+            # Get this wrong in the lax direction and a client can forge its own address; get it
+            # wrong in the strict direction — an empty list — and every request appears to come from
+            # the ingress, which silently collapses the per-IP rate limiter into ONE global bucket.
+            # A single noisy client then locks out the whole family. Neither failure raises an
+            # error, so set it from what your ingress actually presents: the pod CIDR if the
+            # controller runs in-cluster, the node address if it runs with hostNetwork.
+            - name: TRUSTED_PROXIES
+              value: "10.0.0.0/8"
+            # Same-origin only: the console is served by this binary, on this host. No entry is the
+            # correct value, and it is spelled out rather than omitted so that adding one is a
+            # deliberate edit rather than a discovery.
+            - name: ALLOWED_ORIGINS
+              value: ""
+            # The DPC that provisioning installs, and the checksum the QR code carries. Both come
+            # from the same file: APK_PATH is what the server hashes, APK_URL is where the phone
+            # downloads it, and /dpc.apk serves exactly the bytes at APK_PATH — so the checksum in
+            # the QR cannot describe a different artifact from the one the device receives.
+            #
+            # The file must exist before the first start; the server refuses to boot without it
+            # rather than serving a console whose "Setup QR" button 500s in front of a parent
+            # holding a factory-reset phone.
+            - name: APK_PATH
+              value: "/srv/apk/familyguard.apk"
+            # The signing certificate. The server treats it as optional; in practice it is not.
+            # With APK_PATH alone the QR carries only PROVISIONING_DEVICE_ADMIN_PACKAGE_CHECKSUM —
+            # the hash of the APK file, which Android deprecated in favour of the SIGNATURE checksum
+            # and which newer releases no longer honour. A QR without it is one that provisioning
+            # refuses, at the exact moment a parent is standing over a factory-reset phone.
+            - name: APK_CERT_PATH
+              value: "/srv/apk/familyguard.der"
+            - name: APK_URL
+              value: "https://guard.example.com/dpc.apk"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: familyguard-secret
+                  key: DATABASE_URL
+            - name: SESSION_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: familyguard-secret
+                  key: SESSION_SIGNING_KEY
+            - name: OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: familyguard-secret
+                  key: OAUTH_CLIENT_ID
+            - name: OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: familyguard-secret
+                  key: OAUTH_CLIENT_SECRET
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: apk
+              mountPath: /srv/apk
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          # /healthz answers as soon as the process is listening. /readyz pings the database, which
+          # is the difference between "the binary started" and "the deployment works": a control
+          # plane that cannot reach postgres serves 500s to every phone, and a liveness probe on
+          # /healthz alone would call that healthy forever.
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 2
+            # 60 × 2s. Generous on purpose: the first start of a new version runs the schema
+            # migrations, and a startup probe that gives up mid-migration restarts the pod into a
+            # half-applied schema.
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            failureThreshold: 3
+      volumes:
+        - name: apk
+          hostPath:
+            # Populated out of band with the signed release APK and its DER certificate. They are
+            # build artifacts, not configuration, and far too large for a ConfigMap. Read-only in
+            # the container. See DEPLOYMENT.md for building and signing them.
+            path: /srv/familyguard/apk
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: familyguard-control-plane
+spec:
+  selector:
+    app: familyguard-control-plane
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: http
