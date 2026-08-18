@@ -2208,6 +2208,61 @@ Status: **7.1 through 7.5 done. The image layer is calibrated and registered.**
 
 ---
 
+### 7.6 — the first run at the floor, and the two things it found
+
+`android-instrumented` had never executed. It was run on an **API 29** emulator — the floor NFR-13
+names, and the floor because a Galaxy S20 shipped Android 10 — rather than on the API 34 AVD that
+already existed, on the grounds that a layer run above its floor measures the wrong device. It
+failed, twice over, and both failures were real.
+
+**A key cache that outlived the key.** `KeystoreSecretCipher` caches the loaded `SecretKey`
+process-wide, and the cache is what makes generation happen at most once. It also meant the handle
+could outlive the keystore entry it names, after which the platform answered every `Cipher.init`
+with `InvalidKeyException: Keystore operation failed` / `KeyStoreException: Key not found` for the
+rest of the process's life. `loadOrGenerate` already documented the recovery — *"the difference
+between a device that re-enrolls and a device that throws on every read forever"* — but it sat
+**behind** the cache, so after the first successful load it could never run again. A guard that
+exists and cannot be called, in exactly the situation it was written for.
+
+Four of the seven `StoreEncryptionTest` cases failed and three passed, which is the shape of the
+bug rather than a coincidence: the `@After` deletes the test alias, so the tests that happened to
+run first passed and everything after them hit the dangling handle. The host suite could not have
+seen this at all — it drives the layer above with a fake cipher that has no keystore in it.
+
+Fixed by routing both operations through a `withKey` wrapper that drops the cached entry on
+`InvalidKeyException`, reports it, and retries exactly **once**. One retry, not a loop: a second
+failure means the key is not merely absent, and the exception is then the honest answer. On `open`
+the retry ends in `AEADBadTagException` — a different exception, so it cannot recurse — because the
+blob was sealed under a key that no longer exists, and `CipherPreferences` turns that into "absent,
+and reported", which is the recovery the storage layer already documents. A named test,
+`aKeyDeletedUnderneathTheCipherIsReplacedRatherThanWedgingIt`, pins it; it was written first and
+observed red with `Key not found` before the fix.
+
+**A test whose precondition the platform does not allow.** `WipeabilityTest.aNonBootBroadcastIsIgnored`
+cleared the baseline and asserted that no baseline restriction remained, so that "still absent after
+a non-boot broadcast" would mean something. On API 29 that is unsatisfiable: provisioning a device
+owner leaves `no_add_user` as a **base** restriction — `dumpsys user` lists it under `Restrictions:`,
+not under `Device policy local restrictions:` — and no `clearUserRestriction` removes it.
+`UserManager.getUserRestrictions()` returns the *effective* union of both, so a device owner cannot
+even distinguish its own restrictions from the platform's through that API.
+
+The first change was to the *message*: it said "clearing the baseline did not take" without naming
+what survived, which is the same defect the sibling assertion twelve lines above had already been
+fixed for. Naming it produced `[no_add_user]` and the diagnosis in one run instead of two.
+
+The test now asserts the **delta** — whatever genuinely cleared must still be clear after the
+broadcast — and keeps the self-check in the form the platform permits: at least one restriction must
+have cleared, or a re-apply would be undetectable and a green would mean nothing. **Calibrated**:
+with the `intent.action != ACTION_BOOT_COMPLETED` guard removed from `BootReceiver`, it fails and
+names all five restrictions that were wrongly re-applied, so the rewrite did not make it vacuous.
+
+The general form, and the reason this is filed as a finding rather than a fix: **a test that asserts
+over an effective set is asserting about everything that can write to that set, not only about the
+code under test.** Both defects were invisible to a fully green host suite, and one of them was
+invisible to a fully green run one API level up.
+
+---
+
 ## Traceability
 
 Each requirement maps to the phase that implements it and the test that proves it.
@@ -2256,6 +2311,6 @@ proven.
 | NFR-10 battery | 5.3, 5.6, 5.7 | **Half proven.** `ManifestAndPlatformCallsTest` *the permissions the shipped app asks for are exactly the ones it needs* is what keeps the "no location polling" half structural rather than a promise. **5.7 turned it red on purpose and the red was answered rather than suppressed**, which is the whole reason the guard is written in both directions: `LOCATE_NOW` (REQUIREMENTS.md line 136) needs location, so `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` and `ACCESS_BACKGROUND_LOCATION` are now declared, each with its reason in the manifest and in the whitelist — COARSE because Android 12 answers a FINE-only request with COARSE when the user picks approximate location, BACKGROUND because the command arrives while the phone is in a pocket and this app has no UI to be in front of. What the permissions do *not* buy is a poll loop: `LocationProbe` is one shot with a 30 s budget, and `AndroidLocationSource` releases the receiver in a `finally` on both API paths, so a fix that times out does not leave GNSS running. The screen-off idleness half still has no test — the connection is one held-open stream rather than a poll loop, but nothing asserts it. Owed a measurement, not a test |
 | NFR-9 abuse resistance | 2.5 | e2e `TestRateLimitProtectsTheServer`, `TestOversizedBodiesAreRefusedAsTooLarge`, `TestMalformedRequestsAreRefusedWithAReason`, `TestCORSAllowsOnlyTheConfiguredOrigins`, `TestSecurityHeadersOnEveryAnswer`; `TestRateLimiter*` (7), `TestRateLimitCannotBeEscapedByAForgedHeader`, `TestBodyLimit`, `TestCORS*`, `TestSecurityHeaders`, `TestHSTSOnlyOverTLS` |
 | NFR-11 deployability | 7.1, 7.3, 7.4, 7.5 | `deploy/` renders under `kubectl kustomize`, calibrated against a deliberately broken manifest; `DEPLOYMENT.md`; `tests/image/smoke.sh` — **twelve assertions, all calibrated**, registered as the `image` layer of `tests/run_all.sh`. Two of the twelve were false greens the calibration itself found (`docker top` printing "uid root, not root" as a pass; a crash under `--read-only` reported as NOT MEASURED because `docker port` says nothing about an exited container) |
-| NFR-13 supported platforms | 5.11, 5.10 | `app/build.gradle.kts` sets `minSdk = 29`, and `RequirementCitationsTest` is what ties the number to the requirement. The requirement itself was **wrong** until 5.10 — it said API 26, while `setGlobalPrivateDnsModeSpecifiedHost` is API 29, so a 26–28 install would have enforced everything except FR-6.1 and left filtering silently off. Not otherwise proven: nothing in this repository runs on an API 29 device |
+| NFR-13 supported platforms | 5.11, 5.10 | `app/build.gradle.kts` sets `minSdk = 29`, and `RequirementCitationsTest` is what ties the number to the requirement. The requirement itself was **wrong** until 5.10 — it said API 26, while `setGlobalPrivateDnsModeSpecifiedHost` is API 29, so a 26–28 install would have enforced everything except FR-6.1 and left filtering silently off. Proven on the floor as of 2026-08-18: the `android-instrumented` layer runs on an API 29 emulator — 16 testcases in the provisioned pass, 1 after a real reboot — and it was the *first* run at 29 that found two defects an API 34 run had not (§7.6) |
 | every requirement, both directions | 5.10 | `RequirementCitationsTest` — no id cited anywhere in the repo that `REQUIREMENTS.md` does not define (it found four — FR-13.4, cited twelve times and never written, plus three misnumbered store citations), and no requirement that nothing claims (it found eight, one of which was a genuine gap — see FR-2.2). Scans `kt kts go md xml sh py ts yaml yml sql`; a third test fails if either set is implausibly small, if any of `kt`/`go`/`xml`/`md` stops appearing among the citing files, or if a fabricated id is ever reported as defined — two empty sets compare equal, and a walk that resolved the wrong directory is the greenest result available |
 | NFR-12 test integrity | 6.5, 1.4 | the calibration records in this document; `run_all.sh`'s comparison of the classes that reported against the classes *declared* in `src/test` (file names were the unit until the 5.5 sweep found that wrong in both directions); the four known-bad probes that made `actionlint`'s zero findings mean something |

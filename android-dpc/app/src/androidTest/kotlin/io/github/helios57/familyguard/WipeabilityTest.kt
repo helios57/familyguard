@@ -116,20 +116,39 @@ class WipeabilityTest {
      * Cheap, and it binds the action check: without it the receiver would re-harden on any intent
      * that reached it, which is a different bug from the one the test above covers and would be
      * invisible to it.
+     *
+     * **It asserts over what actually cleared, not over the whole baseline, and that is not a
+     * weakening.** `UserManager.getUserRestrictions()` returns the *effective* set — the union of
+     * what a device owner set and what the platform set for itself — and a device owner can only
+     * clear its own half. Measured on API 29: provisioning a device owner leaves `no_add_user` as a
+     * **base** restriction, which `dumpsys user` lists under `Restrictions:` rather than under
+     * `Device policy local restrictions:`, and no `clearUserRestriction` removes it. So "every
+     * baseline restriction is absent after clearing" is not a property this API level allows, and a
+     * test demanding it fails for a reason that has nothing to do with the receiver under test.
+     *
+     * What the receiver has to be shown to do is *nothing*, so the subject is the delta: whatever
+     * genuinely cleared must still be clear afterwards. The precondition survives in the form that
+     * can actually be satisfied — at least one restriction has to have cleared, or a re-apply would
+     * be invisible and a green here would mean nothing.
      */
     @Test
     fun aNonBootBroadcastIsIgnored() {
         val manager = DpmRestrictionGateway.hardeningManager(context)!!
         manager.apply(emptyList())
+
+        val live = inEffect()
+        val cleared = EnforcementEngine.BASELINE_RESTRICTIONS.filter { it !in live }
         assertTrue(
-            "clearing the baseline did not take, so the next assertion proves nothing",
-            EnforcementEngine.BASELINE_RESTRICTIONS.none { it in inEffect() },
+            "nothing cleared — the platform holds ${EnforcementEngine.BASELINE_RESTRICTIONS.filter { it in live }} " +
+                "and a re-apply would therefore be undetectable, so the next assertion proves nothing",
+            cleared.isNotEmpty(),
         )
 
         BootReceiver().onReceive(context, Intent(Intent.ACTION_USER_PRESENT))
+        val after = inEffect()
         assertTrue(
-            "a non-boot broadcast re-applied the baseline",
-            EnforcementEngine.BASELINE_RESTRICTIONS.none { it in inEffect() },
+            "a non-boot broadcast re-applied ${cleared.filter { it in after }}",
+            cleared.none { it in after },
         )
 
         // Left as found: every other test in this class asserts the baseline is in effect, and a
