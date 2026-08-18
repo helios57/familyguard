@@ -47,8 +47,8 @@ tests/run_all.sh backend e2e # only these two
 | `backend` | Go toolchain | build, vet, `vet -tags integration`, test, `gofmt` |
 | `image` | Docker | twelve properties of the built container, under the manifest's own restrictions |
 | `e2e` | Docker | black box: a real server binary, a real PostgreSQL, a real browser |
-| `android-unit` | JDK 21 and the Android SDK | the DPC's JVM suite, plus the two repository-wide guards: requirement citations and documentation links |
-| `android-instrumented` | an emulator promoted to Device Owner | provisioning, suspension, DNS policy, commands, across a real reboot |
+| `android-unit` | JDK 26 and the Android SDK (platform 37.1, build-tools 37.0.0) | the DPC's JVM suite, plus the two repository-wide guards: requirement citations and documentation links |
+| `android-instrumented` | an emulator or device on API 29+ promoted to Device Owner | provisioning, suspension, DNS policy, commands, keystore-backed storage, across a real reboot |
 
 Naming layers on the command line does not make a run green: a layer you asked for that cannot run
 still exits 2. It exists so the summary can print *which* layers produced the result — the scope of a
@@ -140,9 +140,11 @@ compiled without the tag, so a type error inside one is invisible to a fully gre
 lands in CI instead.
 
 **Kotlin.** `./gradlew :app:assembleDebug :app:testDebugUnitTest` from `android-dpc/`. Built with
-JDK 21 — the version CI pins — and compiled to JVM 17 bytecode; `allWarningsAsErrors` is on, so a
-deprecation is a build failure rather than a line of scrollback. The DPC targets `minSdk 29`; an API
-newer than that needs a version guard and a note saying what happens on 29.
+JDK 26 — the version CI pins — and compiled to JVM 17 bytecode; those are separate decisions and
+only the second one reaches a phone, so see the README's *Building* section before changing either.
+`allWarningsAsErrors` is on, so a deprecation is a build failure rather than a line of scrollback.
+The DPC targets `minSdk 29`; an API newer than that needs a version guard and a note saying what
+happens on 29.
 
 **Comments explain why, not what.** The valuable comments in this codebase are the ones recording a
 thing that was tried and failed — a restriction key the platform silently ignores, an appop no

@@ -76,14 +76,21 @@ whose steps all produce the same symptom is a runbook that has not been written 
 
 | # | Task | Verification |
 |---|---|---|
-| 0.1 | Install Android `cmdline-tools`, SDK platform 34, build-tools 34.0.0, platform-tools | `sdkmanager --list_installed` shows them |
-| 0.2 | Pin `JAVA_HOME` to system JDK 21 (Studio's bundled JBR 25 is too new for AGP) | `./gradlew -version` reports JVM 21 |
+| 0.1 | Install Android `cmdline-tools`, SDK platform 37.1, build-tools 37.0.0, platform-tools | `sdkmanager --list_installed` shows them |
+| 0.2 | Point `JAVA_HOME` at JDK 26 | `./gradlew -version` reports JVM 26 |
 | 0.3 | Install an emulator system image + create an AVD for instrumented tests | `avdmanager list avd` shows it |
 | 0.4 | Confirm Docker can run PostgreSQL for e2e | container starts, `pg_isready` succeeds |
 
-Status: **done** — measured 2026-08-17: `~/Android/Sdk` carries cmdline-tools, platforms,
-build-tools, platform-tools, emulator and a system image; `familyguard34` AVD exists; JDK 21 at
-`/usr/lib/jvm/java-21-openjdk-amd64`; Docker server 29.7.2; Go 1.26.5.
+Status: **done** — re-measured 2026-08-18 after the toolchain upgrade: `~/Android/Sdk` carries
+cmdline-tools, platform-tools, emulator, a system image, build-tools 34/35/36/**37.0.0** and
+platforms android-34/35/**37.0**/**37.1**; Docker server 29.7.2; Go **1.26.6**; JDK **26.0.2**.
+
+0.2 changed. It used to read *"pin `JAVA_HOME` to system JDK 21 — Studio's bundled JBR 25 is too new
+for AGP"*, and that is now measurably false: on 2026-08-18 `:app:assembleDebug`,
+`:app:testDebugUnitTest` and `:app:assembleDebugAndroidTest` were all green under Temurin 26.0.2
+(1m13s) and under 25.0.4 (2m13s). AGP 9.3.1 documents JDK 17 as its minimum, which is a floor rather
+than a ceiling. An emulator on **API 29** is what the instrumented layer needs — that is the floor
+the project holds, so testing above it measures the wrong device.
 
 ## Phase 1 — Repository skeleton
 
@@ -91,7 +98,7 @@ build-tools, platform-tools, emulator and a system image; `familyguard34` AVD ex
 |---|---|
 | 1.1 | `.gitignore`, `README.md` describing what actually exists, `SECURITY.md` |
 | 1.2 | Go module `github.com/helios57/familyguard/backend`, `go.mod` with the minimum dependency set |
-| 1.3 | Gradle project: root build, version catalog, wrapper 8.9, `app` module targeting Java 17 |
+| 1.3 | Gradle project: root build, version catalog, wrapper 9.7.0, `app` module targeting Java 17 |
 | 1.4 | GitHub Actions: Go build/vet/test/gofmt, Android assemble + unit tests, e2e suite |
 
 Status: **done — 1.4 written and statically calibrated, never yet executed by GitHub.**
@@ -431,9 +438,10 @@ worse than no concept, because it is the document a reviewer trusts.
 
 Status: **5.1–5.11 done and calibrated, on the JVM and on a real device.**
 
-The Gradle project builds (`:app:assembleDebug`, AGP 8.7.3 / Kotlin 2.0.21 / JDK 21) and
+The Gradle project builds (`:app:assembleDebug`, AGP 9.3.1 / Kotlin 2.4.10 / JDK 26) and
 `:app:testDebugUnitTest` ran **47 classes, 423 tests, 0 failures, 0 errors, 0 skipped** at the close
-of this phase — Phase 6 added to both numbers; §6.4 carries the current one — counted from
+of this phase. The current figure, after Phase 6 and the 2026-08-18 toolchain upgrade, is
+**50 classes, 447 tests, 0 failures, 0 errors, 0 skipped** — counted from
 `app/build/test-results/testDebugUnitTest/*.xml`, not from Gradle's own summary line, which says
 `BUILD SUCCESSFUL` for a task that ran nothing. minSdk is **29**, not the 26 CONCEPT.md §5 first named:
 `setGlobalPrivateDnsModeSpecifiedHost` is API 29, so on 26–28 FR-6.1 cannot be met at all and the app
@@ -1846,6 +1854,14 @@ those two fields for emptiness — and the scanner now returns zero findings ove
 **no allowlist at all**. That is the state this repository ships in: no `.gitleaksignore`, no `paths`
 exemption, nothing to go stale.
 
+It has since held up on a third fixture. `CipherPreferencesTest` (§8) stored a JWT-shaped base64
+blob as its `SECRET`, and gitleaks flagged it as a `generic-api-key` at entropy 4.77 — the one
+finding over the whole tree. Every assertion that uses that constant is an exact substring check, so
+its entropy was buying the tests nothing while making it indistinguishable from a real token to a
+scanner. Lowering it to a readable `"not-a-real-token-…"` returned the scan to zero findings with
+the allowlist still empty, and the reason is written at the constant so the next person does not
+"improve" it back.
+
 The general form is worth more than the instance: **an allowlist is a claim pinned to a state, and a
 control pinned to state is a control with an expiry date nobody wrote down.** A `paths =
 ["*_test.go"]` would have been one line instead of five, and would have blinded the scanner to every
@@ -2045,11 +2061,11 @@ check fail together, for the real reason.
 
 ### 6.13 — a device owner that only a factory reset can remove
 
-The full sweep after the package rename reported `android-instrumented` **NOT MEASURED**, correctly,
+A full sweep once reported `android-instrumented` **NOT MEASURED**, correctly,
 and gave the reason as `dpm`'s: *"Not allowed to set the device owner because there are already some
 accounts on the device"*, on an emulator where `dumpsys account` reports `Accounts: 0`. The truthful
-part was underneath, truncated: the AVD still carried **`ch.lumi.familyguard`** — the pre-rename
-package — as its device owner.
+part was underneath, truncated: the AVD still carried a **previously installed build, under a package name
+this project no longer uses**, as its device owner.
 
 A device owner can only be replaced by a factory reset. So the script's five retries, five seconds
 apart, were spent on a condition that could not change, and the message they produced pointed at an
@@ -2061,7 +2077,8 @@ factory reset on a phone). Still `NOT MEASURED`, never `FAIL` — nothing about 
 exercised, and a `FAIL` here would say the product is broken when it was never run.
 
 Calibrated on the real known-bad input, which was sitting right there: against the un-wiped AVD the
-new branch fires in seconds with `ComponentInfo{ch.lumi.familyguard/…}` in the reason and `rc=2`.
+new branch fires in seconds, naming the foreign owner in the reason — `ComponentInfo{<the other
+package>/…}` — and exits `rc=2`.
 After `emulator -avd familyguard34 -wipe-data`, `dumpsys` reports `Device Owner Type: -1` and the
 layer provisions normally.
 
@@ -2108,7 +2125,7 @@ about it. And when a probe stays green, the first hypothesis is the probe.
 
 Status: **7.1 through 7.5 done. The image layer is calibrated and registered.**
 
-- **7.1** — `backend/Dockerfile` is a two-stage build ending in `gcr.io/distroless/static-debian12`
+- **7.1** — `backend/Dockerfile` is a two-stage build ending in `gcr.io/distroless/static-debian13`
   pinned by digest: no shell, no package manager, `USER 65532`, and the deployment mounts the root
   filesystem read-only with an `emptyDir` for `/tmp`. `tests/image/smoke.sh` asserts **twelve**
   properties of the built image, and all twelve are **calibrated** — each was broken in the

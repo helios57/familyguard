@@ -276,7 +276,21 @@ recovery/       RecoveryManager, RecoveryActivity
 ui/             StatusActivity
 ```
 
-Credentials and the recovery hash live in `EncryptedSharedPreferences`. The only exported
+Credentials and the recovery hash live in a `SharedPreferences` façade backed by AES-256-GCM keys
+held in the Android Keystore — `store/SecretCipher`, `store/KeystoreSecretCipher`,
+`store/CipherPreferences`. This was `EncryptedSharedPreferences` until `androidx.security:security-crypto`
+1.1.0 deprecated its entire public API and named the keystore as the replacement.
+
+Three properties are worth stating because they are decisions rather than defaults. **Keys are
+stored in the clear**, deliberately: every key is a compile-time constant of an open-source project,
+so encrypting them buys nothing and costs the ability to enumerate a store. **Each value is bound to
+its file and key** through a length-prefixed AAD, so a sealed blob cannot be moved between files or
+between keys. And **a value that will not open reads as absent, loudly** — matching what the four
+stores already did with unparseable input, so a device recovers by re-enrolling rather than
+crash-looping — while a value that will not *seal* throws, because the one thing it must never
+become is a plaintext write or a silent no-op.
+
+The only exported
 components are the ones Android requires to be exported (admin receiver, admin service,
 provisioning activities, launcher activity), each guarded by `BIND_DEVICE_ADMIN` where applicable;
 the boot and package receivers are internal.

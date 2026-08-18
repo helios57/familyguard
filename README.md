@@ -58,10 +58,10 @@ has not been run, and that is deliberate — see [Test integrity](#test-integrit
 
 ## Building
 
-Prerequisites: Go 1.26+, JDK 21, Android SDK (platform 35 to compile against, platform 34 for the
-emulator the instrumented layer uses), Docker, and Chrome or Chromium (the e2e suite lays the parent
-console out on a 360×800 phone and measures it; without a browser that layer reports **2, not
-measured** rather than skipping quietly).
+Prerequisites: Go 1.26.6+, JDK 26, Android SDK (platform 37.1 and build-tools 37.0.0 to compile
+against; an API 29 system image for the emulator the instrumented layer uses), Docker, and Chrome or
+Chromium (the e2e suite lays the parent console out on a 360×800 phone and measures it; without a
+browser that layer reports **2, not measured** rather than skipping quietly).
 
 ```bash
 # control plane
@@ -74,9 +74,21 @@ docker build -t familyguard-control-plane:dev backend/
 cd android-dpc && ./gradlew :app:assembleDebug
 ```
 
-The Gradle wrapper pins 8.9. The `app` module is built with JDK 21 — the version CI pins — and
-compiles to JVM 17 bytecode, with `allWarningsAsErrors` on. Studio's bundled JBR 25 is too new for
-this AGP; point `JAVA_HOME` at a system JDK 21.
+The Gradle wrapper pins 9.7.0, on AGP 9.3.1 and Kotlin 2.4.10. `allWarningsAsErrors` is on, and it
+is load-bearing rather than tidiness: a deprecation on a `DevicePolicyManager` call means the
+platform changed a contract underneath the app, which is exactly the class of change that surfaces
+as a real phone behaving differently from the emulator.
+
+Two version numbers here are separate decisions, and only one of them reaches a phone:
+
+- **The JDK that runs Gradle is 26** — the version CI pins. It is a build-time tool, so it is simply
+  the newest that was measured to work; Temurin 26.0.2 and 25.0.4 both build and test green. AGP
+  documents JDK 17 as its minimum, which is a floor and not a ceiling.
+- **The bytecode target is 17**, and stays there until something measures otherwise. Java 21 class
+  files dex without complaint, but D8 accepting them says nothing about whether the result runs on
+  API 29 — a Galaxy S20, the floor this project holds. That is what the instrumented layer is for,
+  and it has not been run on an API 29 device. Raising the number on the strength of a green build
+  would be choosing a number over a measurement.
 
 ## Running the control plane locally
 

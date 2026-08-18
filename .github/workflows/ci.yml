@@ -13,8 +13,9 @@
 #     that its owner can move; a workflow with repository write access and a moved tag is a supply
 #     chain. The human-readable version is in the trailing comment.
 #
-# The one job that does not delegate is `secret-scan`: it has no local counterpart because gitleaks
-# is not installed on the development machine, and a scan is worth running where the history is.
+# The one job that does not delegate is `secret-scan`. `gitleaks` is worth running where the history
+# is, and CI is the only place that has all of it — a local scan sees the working tree, which is a
+# strictly smaller claim. Run `gitleaks dir .` locally anyway before pushing; it is the cheap half.
 
 name: CI
 
