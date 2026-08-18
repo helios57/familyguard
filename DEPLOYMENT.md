@@ -258,22 +258,62 @@ There is deliberately **no `signingConfig` in `app/build.gradle.kts`**. A signin
 file means a keystore path in the repository and a password in a properties file or an environment
 variable; keeping the whole operation out of band means the keystore is never a build input.
 
+Create the keystore once, and never again — every phone already enrolled will only accept an
+update signed by this key:
+
+```bash
+umask 077 && mkdir -p ~/.familyguard
+openssl rand -base64 33 | tr -d '\n' > ~/.familyguard/keystore-password
+keytool -genkeypair -keystore ~/.familyguard/familyguard-release.jks -storetype PKCS12 \
+  -storepass:file ~/.familyguard/keystore-password -keypass:file ~/.familyguard/keystore-password \
+  -alias familyguard -keyalg RSA -keysize 4096 -sigalg SHA256withRSA -validity 10950 \
+  -dname "CN=FamilyGuard DPC, OU=FamilyGuard, O=io.github.helios57, C=CH"
+```
+
+Then, for each release:
+
 ```bash
 cd android-dpc
 ./gradlew :app:assembleRelease
 # → app/build/outputs/apk/release/app-release-unsigned.apk
 
-zipalign -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk /tmp/aligned.apk
-apksigner sign --ks <keystore> --ks-key-alias <alias> --out /tmp/familyguard.apk /tmp/aligned.apk
-apksigner verify --print-certs /tmp/familyguard.apk
+BT=$ANDROID_HOME/build-tools/37.0.0
+$BT/zipalign -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk /tmp/aligned.apk
+
+# The password goes through the environment, not through `file:`. apksigner's file reader takes
+# the store password from line 1 and the key password from line 2 OF THE SAME FILE, so a
+# single-line password file fails with "end of file reached" — naming the key, which reads like a
+# wrong alias rather than a password that was never supplied.
+export KSPASS="$(cat ~/.familyguard/keystore-password)"
+$BT/apksigner sign --ks ~/.familyguard/familyguard-release.jks \
+  --ks-pass env:KSPASS --key-pass env:KSPASS --ks-key-alias familyguard \
+  --v4-signing-enabled false --out /tmp/familyguard.apk /tmp/aligned.apk
+$BT/apksigner verify --print-certs /tmp/familyguard.apk
 ```
+
+`apksigner verify` reporting **v3 only** is correct here, not a missing scheme: v1 (JAR) is
+required below API 24 and v2 below API 28, and `minSdk` is 29. v4 is off because it produces a
+separate `.idsig` that only `adb install --incremental` consumes; nothing in this flow does.
 
 Export the signing certificate in DER form — this is the file whose SHA-256 becomes the QR's
 signature checksum:
 
 ```bash
-keytool -exportcert -keystore <keystore> -alias <alias> -file /tmp/familyguard.der
+keytool -exportcert -keystore ~/.familyguard/familyguard-release.jks \
+  -storepass:file ~/.familyguard/keystore-password -alias familyguard -file /tmp/familyguard.der
 ```
+
+**Cross-check the two before shipping them.** `sha256sum /tmp/familyguard.der` must equal the
+`certificate SHA-256 digest` that `apksigner verify --print-certs` just printed for the APK:
+
+```bash
+sha256sum /tmp/familyguard.der
+```
+
+They come from different tools reading different files, and nothing downstream compares them. If
+they disagree, the QR carries a checksum for a certificate the phone never receives, and
+provisioning fails on the phone, mid-setup, as "Can't set up device" with no further detail —
+the one failure in this system that cannot be debugged from the server side.
 
 Then copy both onto the host:
 
@@ -294,6 +334,12 @@ kubectl -n familyguard rollout restart deploy/familyguard-control-plane
 > as Device Owner on an already-enrolled fleet. Losing control of it is worse than losing the
 > database. It is git-ignored (`*.keystore`, `*.jks`) and it belongs in a password manager or an
 > offline backup, not on the build machine alone.
+>
+> Losing it is the other half of the same problem, and it is unrecoverable: there is no way to
+> re-sign for a phone that is already enrolled, so every device has to be factory-reset and
+> provisioned again. Back the file up somewhere that is not this machine, and verify the backup by
+> restoring it and comparing bytes — a backup that has never been restored is a claim, not a
+> backup.
 
 ### Replacing the APK later
 

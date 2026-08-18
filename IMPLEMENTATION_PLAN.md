@@ -2212,7 +2212,9 @@ five of them.
 | 7.4 | Render it, calibrated: a deliberately broken manifest must fail the render before a clean one is believed |
 | 7.5 | Deployment runbook: DNS record, secret creation, first-parent bootstrap, APK publication, device enrollment |
 
-**Not deployed.** The manifests are published as a worked example and left unapplied.
+**Not deployed *from this repository*.** The manifests here are a worked example and stay one;
+the deployment that exists runs from a private infrastructure repository, which is where the
+real host, the real secret store and the cluster's own conventions live. See Phase 8.
 
 Status: **7.1 through 7.5 done. The image layer is calibrated and registered.**
 
@@ -2351,6 +2353,57 @@ The general form, and the reason this is filed as a finding rather than a fix: *
 over an effective set is asserting about everything that can write to that set, not only about the
 code under test.** Both defects were invisible to a fully green host suite, and one of them was
 invisible to a fully green run one API level up.
+
+---
+
+## Phase 8 — Release, and the first deployment
+
+`v0.1.0`, 2026-08-18. Everything below was read back from an authority rather than from the output
+of the thing being checked.
+
+**The image.** The `v0.1.0` tag ran `release.yml`: the `guard` job (semver, on `main`, DPC
+`versionName` equal to the tag), then the whole of `ci.yml` as a called workflow, then `publish`.
+`ghcr.io/helios57/familyguard-control-plane:0.1.0` is
+`sha256:e8abceff609c5ea6adf4dc529c8e69453b330e7b26c2677cf304547fd02f8b67` — the registry's
+`docker-content-digest` header and the build's own push output agree, which is what makes it
+evidence rather than a transcription. An unauthenticated GET of the manifest returns 200, so the
+package is public and no pull secret is involved. The provenance attestation was created; the
+`repos/{repo} --jq .visibility` gate in the workflow exists because GitHub refuses one for a
+user-owned *private* repository, and a refusal there would otherwise fail a release for a reason
+that has nothing to do with the release.
+
+**The DPC.** Signed on a workstation, never in CI — see DEPLOYMENT.md for why and how. Signing
+certificate SHA-256 `b62cda948ad3a08ecb2af47d1617173db9bdaf3b31bb63b036ff91addb8a8e10`, which is
+both what `apksigner verify` reports for the APK and what `sha256sum` reports for the exported
+DER. Those two numbers coming from different tools reading different files is the point: nothing
+downstream compares them, and if they disagreed the provisioning QR would carry a checksum for a
+certificate the phone never receives.
+
+**The deployment** is a commit in a private infrastructure repository, not a `kubectl apply`. The
+running pod's `imageID` was checked against the digest above — not against the tag it says it was
+pulled by — and the served `/dpc.apk` was downloaded and compared byte-for-byte against the signed
+artifact.
+
+**What this does not establish**, recorded here rather than discovered later:
+
+- **No phone has enrolled against a deployed instance.** The provisioning path is covered by the
+  e2e and instrumented suites, which is not the same claim.
+- **Parent sign-in is unverified.** The Google OAuth client does not exist yet, and creating one
+  needs a browser session that the deploying machine has no path to. The chain up to Google is
+  measured and correct — `/api/v1/auth/google/start` redirects to `accounts.google.com` with the
+  right `redirect_uri`, `scope=openid email profile`, PKCE `S256`, a nonce and a state — so the
+  only missing thing is the credential. Until it exists Google answers `invalid_client`.
+
+**What the first minutes of uptime found.** Eight consecutive 404s from one address, each logged as
+`"path":""`. `c.FullPath()` returns the matched route *template*, which is the right thing to log —
+it keeps device ids out of the log and the cardinality bounded — but for a request that matched
+nothing it is the empty string, so every 404 line reported nothing at all. That is this
+repository's own recurring defect in miniature: a control that runs and evaluates nothing. Fixed in
+`loggedPath`, which falls back to the request path with the query string dropped (that is where
+codes and tokens travel), truncated, and with control characters replaced. Five tests, calibrated:
+four go red against `c.FullPath()`, and the fifth — the one asserting that a *matched* route still
+logs `/api/v1/devices/:id` rather than the id — stays green, which is what makes it a negative
+control rather than a fifth copy of the same assertion.
 
 ---
 

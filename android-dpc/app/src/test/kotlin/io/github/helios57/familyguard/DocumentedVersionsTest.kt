@@ -206,6 +206,11 @@ class DocumentedVersionsTest {
             Regex("""platform (\d+\.\d+) and build-tools ([0-9]+(?:\.[0-9]+)*)""") to listOf("compileSdkPlatform", "buildToolsVersion"),
             Regex("""Gradle wrapper pins ([0-9]+(?:\.[0-9]+)*), on AGP ([0-9]+(?:\.[0-9]+)*) and Kotlin ([0-9]+(?:\.[0-9]+)*)""")
                 to listOf("gradle", "agp", "kotlin"),
+            // DEPLOYMENT.md's release recipe puts the build-tools directory into a command someone
+            // pastes. A wrong number there does not fail the way a wrong number in prose does: AGP
+            // refuses to configure at all, with a message about a missing SDK component rather than
+            // about the document that sent them there.
+            Regex("""build-tools/([0-9]+(?:\.[0-9]+)*)""") to listOf("buildToolsVersion"),
         )
 
         /** Reads one value out of an authority file, or fails naming the file rather than the regex. */
