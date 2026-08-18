@@ -3,6 +3,7 @@ package io.github.helios57.familyguard.store
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.security.GeneralSecurityException
+import java.security.InvalidKeyException
 import java.security.KeyStore
 import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
@@ -48,9 +49,9 @@ class KeystoreSecretCipher(
     private val report: (String) -> Unit = {},
 ) : SecretCipher {
 
-    override fun seal(context: String, plaintext: ByteArray): ByteArray {
+    override fun seal(context: String, plaintext: ByteArray): ByteArray = withKey { key ->
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, key())
+        cipher.init(Cipher.ENCRYPT_MODE, key)
         cipher.updateAAD(context.toByteArray(Charsets.UTF_8))
         val body = cipher.doFinal(plaintext)
         val iv = cipher.iv
@@ -60,21 +61,58 @@ class KeystoreSecretCipher(
         if (iv.size != IV_BYTES) {
             throw GeneralSecurityException("the keystore produced a ${iv.size}-byte IV, not $IV_BYTES")
         }
-        return iv + body
+        iv + body
     }
 
     override fun open(context: String, sealed: ByteArray): ByteArray {
         if (sealed.size < IV_BYTES + TAG_BITS / 8) {
             throw GeneralSecurityException("sealed value is ${sealed.size} bytes, too short to hold an IV and a tag")
         }
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, sealed, 0, IV_BYTES))
-        cipher.updateAAD(context.toByteArray(Charsets.UTF_8))
-        return cipher.doFinal(sealed, IV_BYTES, sealed.size - IV_BYTES)
+        return withKey { key ->
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, sealed, 0, IV_BYTES))
+            cipher.updateAAD(context.toByteArray(Charsets.UTF_8))
+            cipher.doFinal(sealed, IV_BYTES, sealed.size - IV_BYTES)
+        }
     }
 
     /**
-     * The key, loaded once per alias for the life of the process.
+     * Runs [block] with the key, and if the platform says that key is gone, replaces it and runs
+     * [block] once more.
+     *
+     * The cache below is process-wide and holds a *handle*, not the key material. The handle can
+     * therefore outlive the keystore entry it names — an alias deleted, a keystore reset, a restore
+     * onto different hardware — and from then on the platform answers every `Cipher.init` with
+     * `InvalidKeyException: Keystore operation failed` / `KeyStoreException: Key not found`, for as
+     * long as the process lives.
+     *
+     * [loadOrGenerate] has always known how to recover from a missing key. Without this, it could
+     * not be reached a second time, so that recovery was unreachable in precisely the situation it
+     * was written for — a guard that exists and cannot be called. Measured on API 29: delete the
+     * alias under a live instance and every subsequent seal throws, where the intended behaviour is
+     * a device that re-enrolls.
+     *
+     * Exactly one retry. If the second attempt fails too, the key is not merely absent and the
+     * exception is the honest answer rather than a loop. A retry on [open] normally ends in
+     * `AEADBadTagException` — a different exception, so it cannot recurse — because the blob was
+     * sealed under a key that no longer exists; `CipherPreferences` turns that into "absent, and
+     * reported", which is the recovery path the storage layer already documents.
+     */
+    private fun <T> withKey(block: (SecretKey) -> T): T =
+        try {
+            block(key())
+        } catch (gone: InvalidKeyException) {
+            KEYS.remove(alias)
+            report(
+                "the keystore entry '$alias' went away underneath a live key handle " +
+                    "(${gone.message}); it is being replaced, and everything sealed under the old " +
+                    "key is unreadable",
+            )
+            block(key())
+        }
+
+    /**
+     * The key, loaded once per alias and kept until the platform says it is gone — see [withKey].
      *
      * Cached process-wide rather than per instance because there is one instance per preferences
      * file and each `getEntry` is a round trip into the keystore daemon — but mostly because

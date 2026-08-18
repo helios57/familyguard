@@ -138,6 +138,38 @@ class StoreEncryptionTest {
         }
     }
 
+    /**
+     * A key that disappears underneath a live cipher must be replaced, not wedge the instance.
+     *
+     * [KeystoreSecretCipher] caches the loaded key process-wide, and the cache is what makes
+     * generation happen at most once. It also means a `SecretKey` handle can outlive the keystore
+     * entry it refers to — a deleted alias, a keystore reset, a restore onto a different device —
+     * and the platform then answers every `Cipher.init` with `Key not found` for as long as the
+     * process lives. `loadOrGenerate` already knows how to recover from a missing key; before this
+     * test it could never be reached a second time, so the recovery it documents was unreachable in
+     * exactly the situation it was written for.
+     *
+     * The old blob is deliberately NOT recoverable afterwards. It was sealed under a key that no
+     * longer exists anywhere, so refusing to open it is the honest answer, and `CipherPreferences`
+     * turns that refusal into "absent, and reported" rather than a crash.
+     */
+    @Test
+    fun aKeyDeletedUnderneathTheCipherIsReplacedRatherThanWedgingIt() {
+        val replaced = mutableListOf<String>()
+        val subject = KeystoreSecretCipher(ALIAS) { replaced += it }
+
+        val before = subject.seal(CONTEXT, PLAINTEXT.toByteArray())
+        assertEquals(PLAINTEXT, String(subject.open(CONTEXT, before)))
+
+        KeyStore.getInstance(PROVIDER).apply { load(null) }.deleteEntry(ALIAS)
+
+        // Same instance, same alias, cached handle now dangling.
+        val after = subject.seal(CONTEXT, PLAINTEXT.toByteArray())
+        assertEquals(PLAINTEXT, String(subject.open(CONTEXT, after)))
+        assertTrue("the key was replaced without saying so", replaced.isNotEmpty())
+        assertThrows(GeneralSecurityException::class.java) { subject.open(CONTEXT, before) }
+    }
+
     private companion object {
         const val PROVIDER = "AndroidKeyStore"
         const val ALIAS = "familyguard.test.storeencryption"
