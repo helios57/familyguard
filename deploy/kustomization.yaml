@@ -16,5 +16,6 @@ namespace: familyguard
 resources:
   - namespace.yaml
   - postgres.yaml
+  - backup.yaml
   - control-plane.yaml
   - ingress.yaml

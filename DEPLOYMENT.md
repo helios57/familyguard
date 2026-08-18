@@ -252,6 +252,46 @@ forever.
 
 ---
 
+## Backups
+
+`deploy/backup.yaml` dumps the database nightly and keeps 30 days. Read a run with
+`kubectl -n familyguard logs job/<name>`; the job's exit status is the alert, because a backup that
+fails quietly is the same as no backup at all.
+
+It restores what it dumped, in the same job, before the file is allowed to be called a backup —
+size, `pg_restore --list`, a real restore into a throwaway database with `--exit-on-error`, and a
+table-by-table row-count comparison against the live database. Only then is the `.tmp` renamed into
+place. The scratch database is dropped by an EXIT trap, so a failed run does not leave the next one
+failing on a name collision instead of on the real fault.
+
+**Before the first run**, the directory must exist and be owned by the same uid as the database,
+for the same reason the data directory must: the pod is unprivileged and cannot chown it.
+
+```bash
+sudo install -d -m 0700 -o 50140 -g 50140 /srv/familyguard/backups
+```
+
+**Restoring.** Stop the control plane first — a restore into a database something is writing to is
+a race you will not notice losing.
+
+```bash
+kubectl -n familyguard scale deploy/familyguard-control-plane --replicas=0
+kubectl -n familyguard exec deploy/familyguard-db -- \
+  pg_restore -U familyguard -d familyguard --clean --if-exists --exit-on-error \
+             /backup/familyguard-<stamp>.dump
+kubectl -n familyguard scale deploy/familyguard-control-plane --replicas=1
+```
+
+`--exit-on-error` is not optional here either: without it `pg_restore` reports every error and still
+exits 0, and a partial restore looks exactly like a complete one.
+
+**What the nightly job does not do.** The dumps land on the same storage as the data. That covers a
+bad migration and a `DELETE` without a `WHERE`; it does not cover losing the machine, and RAID is
+not a backup — it survives one disk, not one wrong command. Copying them somewhere else is a job on
+another machine, and nothing in this repository can claim to have done it for you.
+
+---
+
 ## Building and signing the DPC
 
 There is deliberately **no `signingConfig` in `app/build.gradle.kts`**. A signing config in the build

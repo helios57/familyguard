@@ -1,0 +1,210 @@
+# A nightly dump of the control plane's database, and — in the same job — a real restore of it.
+#
+# WHY THIS IS NOT OPTIONAL FOR THIS PARTICULAR DATABASE. Losing it is not "restore from yesterday
+# and lose a day". Every row in `devices` is a phone that was factory-reset and provisioned by
+# hand; the enrollment cannot be recreated from anything the server still holds. A lost database
+# means walking to each phone, factory-resetting it again, and scanning a new QR. That is the cost
+# this file exists to avoid, and it is why the retention below is generous for something so small.
+#
+# WHY THE JOB RESTORES WHAT IT JUST WROTE. A backup that has never been restored is a claim, not a
+# backup — and the failure modes here are all silent: a dump interrupted mid-write is a valid file
+# that ends early, a `pg_dump` older than its server writes an archive the server cannot read back,
+# and a permissions change turns the write into a zero-byte file that the shell reports as success.
+# None of those show up until the day you need the file. So the job dumps to a `.tmp` name,
+# restores it into a throwaway database, compares row counts against the live one, and only then
+# renames it into place. **A dump that failed verification never becomes "the backup".**
+#
+# WHAT THIS IS NOT. It is not off-site. The dumps land next to the data they came from, which
+# protects against a bad migration, a `DELETE` without a `WHERE`, and a corrupted data directory —
+# and not at all against the machine being lost or stolen. Copying `/srv/familyguard/backups`
+# somewhere else is a separate job on a separate machine, and it belongs to whoever owns that
+# machine; a cron entry here cannot honestly claim to have done it.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: familyguard-db-backup
+spec:
+  # 03:20, after any nightly churn and well clear of the hour boundary every other cron on a host
+  # tends to pick.
+  schedule: "20 3 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  # Keep the last few of each. A failed job's pod is the only place its log survives, and the log
+  # is the whole diagnosis.
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  # A missed window is not made up for silently: if the job could not start for six hours, the
+  # controller gives up on that occurrence rather than firing it at an unexpected time.
+  startingDeadlineSeconds: 21600
+  jobTemplate:
+    spec:
+      # One attempt, then one retry. More would mostly mean re-running a dump against a database
+      # that is genuinely unreachable, and turning one legible failure into five.
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext:
+            # The same uid as postgres, because it writes into a directory postgres' own uid owns.
+            runAsUser: 50140
+            runAsGroup: 50140
+            fsGroup: 50140
+          containers:
+            - name: backup
+              # The SAME image as the server. pg_dump refuses to dump a server newer than itself,
+              # and — worse — a newer pg_dump can write an archive format an older pg_restore in
+              # some other container cannot read. Pinning both to one tag makes that impossible.
+              image: postgres:18.6
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: PGHOST
+                  value: familyguard-db
+                - name: PGUSER
+                  value: familyguard
+                - name: PGDATABASE
+                  value: familyguard
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: familyguard-secret
+                      key: POSTGRES_PASSWORD
+                - name: RETENTION_DAYS
+                  value: "30"
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+
+                  # `date` is read once. Two calls either side of a slow dump can land on different
+                  # days, and the file would then be named for a day the prune arithmetic does not
+                  # expect.
+                  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+                  final="/backup/familyguard-${stamp}.dump"
+                  tmp="${final}.tmp"
+                  scratch="familyguard_verify_${stamp}"
+
+                  # Drop the scratch database whatever happens, including on the paths that exit
+                  # early. Without this a failed verification leaves a database behind, and the
+                  # next run's failure is a name collision rather than the real fault.
+                  cleanup() { dropdb --if-exists "$scratch" >/dev/null 2>&1 || echo "WARNING: could not drop $scratch"; }
+                  trap cleanup EXIT
+
+                  echo "==> dumping to ${tmp}"
+                  pg_dump --format=custom --compress=9 --file="$tmp"
+
+                  # Size is checked because an empty file is the shape a permissions failure takes,
+                  # and `pg_dump` can exit 0 having written nothing when its output is redirected
+                  # somewhere it cannot write. 1 KiB is far below any real dump of this schema and
+                  # far above zero.
+                  size=$(stat -c %s "$tmp")
+                  echo "==> wrote ${size} bytes"
+                  if [ "$size" -lt 1024 ]; then
+                    echo "FAIL: dump is ${size} bytes, which is not a database" >&2
+                    exit 1
+                  fi
+
+                  # The archive's table of contents parses. This is cheap and catches a file
+                  # truncated mid-write, which is otherwise indistinguishable from a good one until
+                  # a restore reaches the missing part.
+                  echo "==> reading the archive back"
+                  pg_restore --list "$tmp" > /tmp/toc.txt
+                  echo "==> $(wc -l < /tmp/toc.txt) TOC entries"
+
+                  # The real check: restore it. `--exit-on-error` because pg_restore's default is
+                  # to report errors and carry on to a zero exit status, which would make this
+                  # whole step a control that evaluates nothing.
+                  echo "==> restoring into ${scratch}"
+                  createdb "$scratch"
+                  pg_restore --dbname="$scratch" --exit-on-error --no-owner --no-privileges "$tmp"
+
+                  # And compare it to the source. A restore that succeeds into an empty database
+                  # proves the file parses, not that it carries the rows.
+                  #
+                  # The count is taken over EVERY table in `public`, discovered at run time, rather
+                  # than over a list written here. A hand-written list is a list that stops covering
+                  # the table added next month, and it goes on passing — which is the shape of every
+                  # defect this repository keeps finding. The table NAMES are part of the compared
+                  # string too, so a restore that silently dropped a table differs even when every
+                  # surviving table matches.
+                  echo "==> comparing row counts, table by table"
+                  q="SELECT coalesce(string_agg(format('%s=%s', tablename, cnt), ' ' ORDER BY tablename), '(no tables)')
+                     FROM (
+                       SELECT tablename,
+                              (xpath('/row/cnt/text()',
+                                     query_to_xml(format('SELECT count(*) AS cnt FROM public.%I', tablename),
+                                                  false, true, '')))[1]::text::bigint AS cnt
+                       FROM pg_tables WHERE schemaname = 'public'
+                     ) t"
+                  live=$(psql --dbname="$PGDATABASE" -tAc "$q")
+                  copy=$(psql --dbname="$scratch"    -tAc "$q")
+                  echo "    live     ${live}"
+                  echo "    restored ${copy}"
+                  if [ "$live" != "$copy" ]; then
+                    echo "FAIL: the restored copy does not match the source" >&2
+                    exit 1
+                  fi
+
+                  # A comparison of nothing against nothing agrees. Early in this deployment's life
+                  # every table is empty, and reporting that as "verified by row counts" would be
+                  # the same claim as zero errors in a window with zero traffic. The restore still
+                  # proved the archive is restorable; it did not prove the archive carries data,
+                  # and the log says which.
+                  total=$(psql --dbname="$PGDATABASE" -tAc \
+                    "SELECT coalesce(sum(cnt), 0) FROM (
+                       SELECT (xpath('/row/cnt/text()',
+                                     query_to_xml(format('SELECT count(*) AS cnt FROM public.%I', tablename),
+                                                  false, true, '')))[1]::text::bigint AS cnt
+                       FROM pg_tables WHERE schemaname = 'public') t")
+                  if [ "$total" -eq 0 ]; then
+                    echo "    NOTE: the database holds 0 rows, so the comparison above distinguished nothing."
+                    echo "          The archive is restorable; that it carries data is NOT established today."
+                  else
+                    echo "    (compared ${total} rows)"
+                  fi
+
+                  # Only now is it a backup.
+                  mv "$tmp" "$final"
+                  echo "==> verified: ${final}"
+
+                  # Prune, and never below one. `-mtime +N` deletes strictly older than N days; the
+                  # count guard means a month of failed jobs cannot leave the directory empty
+                  # because the survivors aged out.
+                  keep=$(find /backup -maxdepth 1 -name 'familyguard-*.dump' | wc -l)
+                  echo "==> ${keep} verified dumps on disk"
+                  if [ "$keep" -gt 1 ]; then
+                    find /backup -maxdepth 1 -name 'familyguard-*.dump' -mtime "+${RETENTION_DAYS}" -print -delete
+                  fi
+
+                  # Leftover .tmp files are the fossils of failed runs. They are pruned on the same
+                  # clock, and reported, because a directory that keeps growing .tmp files is
+                  # telling you the verification has been failing all week.
+                  stale=$(find /backup -maxdepth 1 -name 'familyguard-*.dump.tmp' -mtime +1 -print -delete | wc -l)
+                  if [ "$stale" -gt 0 ]; then
+                    echo "WARNING: removed ${stale} unverified dump(s) from earlier failed runs"
+                  fi
+              volumeMounts:
+                - name: backups
+                  mountPath: /backup
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+          volumes:
+            - name: backups
+              hostPath:
+                # Must exist and be owned by the uid above before the first run. Same reasoning as
+                # the data directory in postgres.yaml: the pod is unprivileged and cannot chown it.
+                path: /srv/familyguard/backups
+                type: Directory
+            - name: tmp
+              # The root filesystem is read-only; pg_restore --list needs somewhere to write.
+              emptyDir: {}

@@ -9,10 +9,11 @@ reports "not measured" and does not count as done.
 
 ## Where this stands
 
-**Phases 0–7 are done and calibrated.** `tests/run_all.sh` runs six layers: a secret scan over the
-full commit history, the Go control plane, the container image under the manifest's own
-restrictions, the e2e suite against a real server binary / a real PostgreSQL / a real browser, the
-Android unit suite, and the instrumented suite on a device-owned emulator across a real reboot.
+**Phases 0–8 are done and calibrated.** `tests/run_all.sh` runs seven layers: a secret scan over
+the full commit history, the Go control plane, the deployment manifests, the container image under
+the manifest's own restrictions, the e2e suite against a real server binary / a real PostgreSQL / a
+real browser, the Android unit suite, and the instrumented suite on a device-owned emulator across a
+real reboot.
 Every requirement in `REQUIREMENTS.md` has a row in [Traceability](#traceability) naming the test
 that proves it, and the rows that name nothing say so.
 
@@ -1538,12 +1539,13 @@ every one of the 9 methods `src/androidTest` declares. The Android unit numbers 
 `app/build/test-results/testDebugUnitTest/*.xml`, not from Gradle's summary line — `BUILD SUCCESSFUL`
 is what a task that ran nothing also prints.
 
-Last re-measured **2026-08-18**, all six layers, in one invocation with no layer named:
+Last re-measured **2026-08-18**, all layers, in one invocation with no layer named:
 
 | Layer | Result |
 |---|---|
 | `secret-scan` | PASS — gitleaks 8.30.1 over the full history, **0 findings, 0 allowlist entries** |
 | `backend` | PASS — build, vet, `vet -tags integration`, test, `gofmt` |
+| `manifests` | PASS — 10 assertions, 0 failed ([8.1](#81--the-backup-that-had-to-be-restored-to-be-a-backup)) |
 | `image` | PASS — 12 assertions, 0 failed |
 | `e2e` | PASS — **24 tests**, on `postgres:18.6`, the image the deployment runs ([6.11](#611--the-suite-was-proving-it-about-a-database-nobody-would-run)) |
 | `android-unit` | PASS — **450 tests in 51 classes**, the last three being the repository guards ([6.12](#612--fifty-links-between-eight-documents-and-nothing-checking-one-of-them), [6.15](#615--the-versions-the-documents-state-and-the-build-file-that-defines-them)) |
@@ -2404,6 +2406,79 @@ codes and tokens travel), truncated, and with control characters replaced. Five 
 four go red against `c.FullPath()`, and the fifth — the one asserting that a *matched* route still
 logs `/api/v1/devices/:id` rather than the id — stays green, which is what makes it a negative
 control rather than a fifth copy of the same assertion.
+
+### 8.1 — the backup that had to be restored to be a backup
+
+The control plane went live with no backup of its database, which is the same posture as every
+other application on the cluster it runs on. For this one that is the wrong posture, and the reason
+is specific rather than general: every row in `devices` is a phone that was factory-reset and
+provisioned by hand, and the enrollment cannot be reconstructed from anything else the server
+holds. Losing the database is not "restore yesterday and lose a day" — it is walking to each phone,
+resetting it again, and scanning a new QR.
+
+So `deploy/backup.yaml`: a nightly `pg_dump --format=custom`, and then, in the same job, four
+checks that have to pass before the file is allowed to be called a backup.
+
+| check | the failure it exists for |
+|---|---|
+| size > 1 KiB | `pg_dump` can exit 0 having written nothing; an empty file is the shape a permissions failure takes |
+| `pg_restore --list` | a dump interrupted mid-write is a valid file that ends early, and reads as good until a restore reaches the missing part |
+| restore into a scratch database, `--exit-on-error` | pg_restore's **default** is to report errors and still exit 0 — without the flag this step is a control that evaluates nothing |
+| row counts, table by table | a restore into an empty database proves the archive parses, not that it carries the rows |
+
+Only then is the `.tmp` renamed. **A dump that failed verification never becomes "the backup."**
+
+**The first run passed, and the pass was worth nothing.** The log read
+`families=1 parents=1 children=0 devices=0 policies=0` on both sides. Four of the five numbers were
+zero, and `0 == 0` agrees whether or not the restore carried anything — the same claim as zero
+errors in a window with zero traffic. Two changes followed. The comparison now covers **every**
+table in `public`, discovered at run time rather than listed here (a hand-written list stops
+covering the table added next month, and goes on passing), and the table *names* are part of the
+compared string, so a restore that silently dropped a table differs even when every surviving table
+matches. And when the database holds zero rows the job says so in as many words: the archive is
+restorable, and that it carries data is **not** established today.
+
+**Calibrated, on a throwaway postgres, three halves:** a faithful restore agrees; a copy missing one
+row differs; a copy missing a whole table differs. The first attempt at that harness failed on
+`FATAL: the database system is shutting down` two commands after a green `pg_isready` — the postgres
+image runs a temporary server for `initdb` and `pg_isready` answers yes to it, which is
+[6.8](#68--the-readiness-probe-that-was-measuring-a-server-about-to-be-destroyed) again in a
+different costume.
+
+**A new `manifests` layer**, because Phase 7.4 recorded the render as calibrated once, by hand —
+true on one day and unchecked since. A manifest directory is the artifact most able to rot without a
+symptom here: no Go test compiles it, no suite applies it, and the failure surfaces in a cluster.
+Ten assertions, each a property something else in the repository depends on rather than "does
+kustomize exit 0", and each broken and observed red:
+
+| # | assertion | break |
+|---|---|---|
+| 1 | `deploy/` renders, non-empty | an unterminated quote in the CronJob schedule |
+| 2 | every object still present | `ingress.yaml` commented out of the kustomization |
+| 3 | no `Secret` in the render | `secret.example.yaml` added to `resources` |
+| 4 | every pod runs non-root | backup job `runAsUser: 0` |
+| 5 | no floating tag | `postgres:latest` |
+| 6 | backup and database on the **identical** postgres image | backup on `18.5` |
+| 7 | the APK directory is mounted read-only | `readOnly: false` |
+| 8 | startup, readiness and liveness probes declared | `startupProbe` removed |
+| 9 | database strategy `Recreate` | `RollingUpdate` |
+| 10 | the backup job restores what it dumped | the restore call removed |
+
+Assertion 6 is not tidiness: `pg_dump` refuses to dump a server newer than itself, and a newer
+`pg_dump` writes an archive an older `pg_restore` cannot read. Two tags that agree today are two
+tags somebody bumps one at a time.
+
+**The calibration found a defect in assertion 10 rather than in the manifest**, which is the second
+time that has happened in this repository ([7.1](#phase-7--deployment-preparation-no-deploy) was the
+first). Its first form looked for the string `pg_restore`, and the break deleted the restore while
+leaving the cheap `pg_restore --list` parse in place — so the assertion stayed green with the thing
+it exists to require gone. It now names the invocation it means, `pg_restore --dbname=`, and
+requires `--exit-on-error` alongside it.
+
+**Still open:** the dumps sit on the same storage as the data. That covers a bad migration and a
+`DELETE` without a `WHERE`; it does not cover losing the machine, and RAID is not a backup — it
+survives one disk, not one wrong command. Copying them off-host is a job on another machine, and no
+cron entry in this repository can honestly claim to have done it.
 
 ---
 

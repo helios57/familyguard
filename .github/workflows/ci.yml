@@ -162,6 +162,34 @@ jobs:
           SMOKE_IMAGE: familyguard-control-plane:ci
         run: tests/run_all.sh image
 
+  # ---------------------------------------------------------------- manifests --
+  #
+  # `deploy/` renders, and the render still holds the properties the rest of the repository assumes
+  # about it. Phase 7.4 calibrated this once by hand — true on one day, unchecked since. A manifest
+  # directory is the artifact most able to rot without a symptom here: no Go test compiles it, no
+  # suite applies it, and the failure surfaces in somebody's cluster.
+  #
+  # kustomize is pinned by version AND verified against the checksum published with that release,
+  # for the same reason gitleaks is below: fetching a tool over the network and running it
+  # unverified inside a job that can read this repository is a supply chain.
+  manifests:
+    name: manifests (deploy/ renders, and the render still holds)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install kustomize, verified
+        env:
+          KUSTOMIZE_VERSION: "5.8.1"
+          KUSTOMIZE_SHA256: "029a7f0f4e1932c52a0476cf02a0fd855c0bb85694b82c338fc648dcb53a819d"
+        run: |
+          set -euo pipefail
+          url="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL "$url" -o /tmp/kustomize.tar.gz
+          echo "${KUSTOMIZE_SHA256}  /tmp/kustomize.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/kustomize.tar.gz -C /usr/local/bin kustomize
+          kustomize version
+      - run: tests/run_all.sh manifests
+
   # -------------------------------------------------------------- secret-scan --
   #
   # NFR-7. The binary is pinned by version AND verified against the checksum published with that

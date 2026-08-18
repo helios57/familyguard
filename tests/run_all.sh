@@ -30,8 +30,9 @@ ANDROID="$ROOT/android-dpc"
 GRADLEW="$ANDROID/gradlew"
 INSTRUMENTED="$ROOT/tests/android/instrumented.sh"
 IMAGE_SMOKE="$ROOT/tests/image/smoke.sh"
+MANIFESTS="$ROOT/tests/manifests/render.sh"
 
-ALL_LAYERS=(secret-scan backend image e2e android-unit android-instrumented)
+ALL_LAYERS=(secret-scan backend manifests image e2e android-unit android-instrumented)
 
 usage() {
 	printf 'layers: %s\n' "${ALL_LAYERS[*]}"
@@ -190,6 +191,35 @@ run_image() {
 	0) record image "PASS" "" ;;
 	2) record image "NOT MEASURED" "${note:-the harness reported it could not run}" ;;
 	*) record image "FAIL" "" ;;
+	esac
+}
+
+# -------------------------------------------------------------- manifests ----
+#
+# `deploy/` renders, and the render still says what the rest of the repository assumes. Phase 7.4
+# calibrated this once by hand, which made it true on one day and unchecked since — a manifest
+# directory rots without a symptom, because no Go test compiles it and no suite applies it.
+#
+# It is cheap (no docker, no database, under a second) and it is the only layer that looks at the
+# deployment at all, so it runs early: a broken manifest found before a fifteen-minute image and
+# e2e sweep is the same finding, an hour sooner.
+run_manifests() {
+	section "manifests: deploy/ renders, and the render still holds"
+	if [ ! -x "$MANIFESTS" ]; then
+		record manifests "NOT MEASURED" "$MANIFESTS is missing or not executable"
+		return
+	fi
+	local log
+	log="$(mktemp)"
+	"$MANIFESTS" 2>&1 | tee "$log"
+	local rc=${PIPESTATUS[0]}
+	local note
+	note="$(command grep -a '^NOT MEASURED: ' "$log" | tail -n1 | cut -d' ' -f3-)"
+	rm -f "$log"
+	case $rc in
+	0) record manifests "PASS" "" ;;
+	2) record manifests "NOT MEASURED" "${note:-the harness reported it could not run}" ;;
+	*) record manifests "FAIL" "" ;;
 	esac
 }
 
@@ -383,6 +413,7 @@ run_android_instrumented() {
 
 wants secret-scan && run_secret_scan
 wants backend && run_backend
+wants manifests && run_manifests
 wants image && run_image
 wants e2e && run_e2e
 wants android-unit && run_android_unit

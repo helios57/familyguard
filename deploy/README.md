@@ -1,14 +1,15 @@
 # Deploying FamilyGuard — a worked example
 
-Everything needed to stand the whole system up, in six files:
+Everything needed to stand the whole system up, in seven files:
 
 | File | |
 |---|---|
 | `namespace.yaml` | `familyguard`, sharing nothing with the rest of the cluster |
 | `postgres.yaml` | the database, its Service and its volume |
+| `backup.yaml` | a nightly dump that restores itself before it counts as a backup |
 | `control-plane.yaml` | the server, its Service, and every environment variable it reads |
 | `ingress.yaml` | the hostname and its TLS |
-| `kustomization.yaml` | the four above, in order |
+| `kustomization.yaml` | the five above, in order |
 | `secret.example.yaml` | **not** in the kustomization — the contract for the one Secret, and a warning |
 
 Applying it is one command. Making it *yours* is five edits, listed below.
@@ -30,7 +31,7 @@ kubectl apply -k deploy      # …then apply
 | # | Where | What |
 |---|---|---|
 | 1 | `ingress.yaml`, `control-plane.yaml` | `guard.example.com` → your hostname, in **four** places: the Ingress `tls.hosts` and `rules.host`, and the control plane's `PUBLIC_URL` and `APK_URL`. They must agree; the QR payload and the OAuth redirect are both built from `PUBLIC_URL`. |
-| 2 | `postgres.yaml`, `control-plane.yaml` | `/srv/familyguard/...` → your storage. Two `hostPath` volumes, or a PVC each if your cluster has a StorageClass. |
+| 2 | `postgres.yaml`, `backup.yaml`, `control-plane.yaml` | `/srv/familyguard/...` → your storage. Three `hostPath` volumes, or a PVC each if your cluster has a StorageClass. |
 | 3 | `control-plane.yaml` | `BOOTSTRAP_PARENT_EMAILS` → the Google account that may sign in before any parent exists. |
 | 4 | `control-plane.yaml` | `TRUSTED_PROXIES` → what your ingress actually presents. Read the comment there; both directions of wrong are silent. |
 | 5 | — | the `familyguard-secret` Secret. See `secret.example.yaml`, which is a contract and a warning, not a file to apply. |

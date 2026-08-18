@@ -23,7 +23,8 @@ person can read all of it, and — above all — **never be able to brick the ph
 - [DEPLOYMENT.md](DEPLOYMENT.md) — the runbook for the first deployment, in the order the steps have
   to happen, including the ones no sync can do for itself.
 - [deploy/](deploy/) — the Kubernetes manifests themselves, as a worked example: namespace,
-  PostgreSQL, control plane, Ingress, and the secret contract the rest of them depend on.
+  PostgreSQL, a verified nightly backup, control plane, Ingress, and the secret contract the rest of
+  them depend on.
 
 ---
 
@@ -34,7 +35,7 @@ person can read all of it, and — above all — **never be able to brick the ph
 | Control plane (Go 1.26) | `backend/` | API, event stream, policy compiler, console — running and tested |
 | Parent console (vanilla JS, mobile-first) | `backend/internal/console/assets/` | served by the same binary at `/` |
 | Android DPC (Kotlin, Device Owner) | `android-dpc/` | provisioning, enrollment, sync, hardening, app/Chrome/DNS policy, screen time, instant commands, the offline recovery hatch, and the status block the phone shows for itself |
-| Test layers | `tests/` | secret-scan, backend, image, e2e, android-unit, android-instrumented |
+| Test layers | `tests/` | secret-scan, backend, manifests, image, e2e, android-unit, android-instrumented |
 | Kubernetes manifests | `deploy/` | a complete worked example — `kubectl kustomize deploy` renders it; nothing is deployed |
 
 `IMPLEMENTATION_PLAN.md` is the authority on what is finished. It says "not measured" where a thing
@@ -226,11 +227,13 @@ filter over a phone that is filtering nothing is worse than no console at all.
 
 ## Deployment
 
-Nothing is deployed. [`deploy/`](deploy/) holds the manifests that would deploy it — a namespace,
-PostgreSQL, the control plane, a Service each and an Ingress — and they render:
+Nothing is deployed **from this repository**, and nothing here describes a particular cluster.
+[`deploy/`](deploy/) holds the manifests that would deploy it — a namespace, PostgreSQL, a nightly
+backup that restores what it dumps, the control plane, a Service each and an Ingress — and the
+`manifests` test layer renders them on every push and asserts ten properties of the result:
 
 ```bash
-kubectl kustomize deploy
+kubectl kustomize deploy      # or: tests/run_all.sh manifests
 ```
 
 They are written as an **example** rather than as one cluster's configuration. Every site-specific

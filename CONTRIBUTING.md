@@ -45,6 +45,7 @@ tests/run_all.sh backend e2e # only these two
 |---|---|---|
 | `secret-scan` | `gitleaks` on `PATH`, in a git checkout | the full commit history, redacted |
 | `backend` | Go toolchain | build, vet, `vet -tags integration`, test, `gofmt` |
+| `manifests` | `kubectl` or `kustomize`, and PyYAML | `deploy/` renders, and ten properties of the render still hold |
 | `image` | Docker | twelve properties of the built container, under the manifest's own restrictions |
 | `e2e` | Docker | black box: a real server binary, a real PostgreSQL, a real browser |
 | `android-unit` | JDK 26 and the Android SDK (platform 37.1, build-tools 37.0.0) | the DPC's JVM suite, plus the two repository-wide guards: requirement citations and documentation links |
