@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -227,12 +228,57 @@ func (s *Server) accessLog() gin.HandlerFunc {
 		c.Next()
 		s.log.Info("request",
 			"method", c.Request.Method,
-			"path", c.FullPath(),
+			"path", loggedPath(c),
 			"status", c.Writer.Status(),
 			"duration_ms", s.now().Sub(start).Milliseconds(),
 			"request_id", RequestIDOf(c),
 			"client", c.ClientIP())
 	}
+}
+
+// loggedPath is what the access log records as "path".
+//
+// For a request that matched a route it is the route TEMPLATE — `/api/v1/devices/:id`, not the id
+// — so the log has bounded cardinality and cannot carry a device id, an enrollment token or an
+// email that arrived as a path segment.
+//
+// For a request that matched nothing, `c.FullPath()` is the empty string, and an empty field is
+// the one thing a 404 line must not say: that line exists to answer "what 404'd", and this
+// deployment is on the public internet, where most 404s are scanners and some are a broken link in
+// our own console. Telling those apart is the entire value of the line. Found in production on
+// 2026-08-18, in the first minutes of uptime: eight consecutive `"path":""` 404s from one address,
+// carrying no information whatsoever.
+//
+// So unmatched requests fall back to the request path, with three deliberate limits:
+//
+//   - the query string is dropped, because that is where tokens and codes live;
+//   - the result is truncated, because a raw path is attacker-controlled and unbounded;
+//   - control characters are replaced, so a crafted path cannot rearrange the log even if some
+//     downstream reader is less careful about escaping than slog's JSON handler is.
+func loggedPath(c *gin.Context) string {
+	if p := c.FullPath(); p != "" {
+		return p
+	}
+	const maxLen = 100
+	raw := c.Request.URL.Path
+	var b strings.Builder
+	for _, r := range raw {
+		if b.Len() >= maxLen {
+			b.WriteString("…")
+			break
+		}
+		if r < 0x20 || r == 0x7f {
+			b.WriteRune('?')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	if b.Len() == 0 {
+		// A request line of "GET  HTTP/1.1" reaches here with an empty path. Say so, rather than
+		// emit the empty string this function exists to eliminate.
+		return "(empty)"
+	}
+	return b.String()
 }
 
 // ---- shared helpers -------------------------------------------------------
