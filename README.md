@@ -246,16 +246,20 @@ after you adapt it is one you have not adapted. [`deploy/README.md`](deploy/READ
 five edits and the three preconditions no `apply` can satisfy for itself — DNS, the pre-owned
 database directory, and the signed APK that must be on disk before the control plane will start.
 
-The image comes from this repository's own CI: pushing a `v0.1.0` tag runs
+The image comes from this repository's own CI: pushing a `vX.Y.Z` tag runs
 [`.github/workflows/release.yml`](.github/workflows/release.yml), which re-runs every verification
-layer against the tagged tree and publishes `ghcr.io/helios57/familyguard-control-plane:0.1.0`.
-No tag has been pushed yet, so that image does not exist yet, and a cluster pointed at this
-directory today gets `ImagePullBackOff` with `manifest unknown` — the expected state, not a fault.
+layer against the tagged tree and publishes `ghcr.io/helios57/familyguard-control-plane:X.Y.Z`. The
+tag is refused unless the Android app carries the same version, so the phone and the server never
+report two numbers for one system.
+`0.1.0` was published on 2026-08-18; a cluster pointed at a version that has *not* been tagged gets
+`ImagePullBackOff` with `manifest unknown`, which is the expected state for an unreleased pin rather
+than a fault.
 
 Because this repository is public its GHCR package should be public too, so the cluster pulls
 anonymously and there is no `imagePullSecrets`, no registry credential to mint, rotate or leak. GHCR
 does not always inherit a repository's visibility flip, though, and a private package presents as
-`ImagePullBackOff` with `unauthorized` — so the first release checks it rather than assuming:
+`ImagePullBackOff` with `unauthorized` — so this is checked rather than assumed (measured 2026-09-03:
+`0.1.0` answers **200** anonymously, `latest` answers **404**, the tag this workflow never publishes):
 
 ```bash
 t=$(curl -s "https://ghcr.io/token?scope=repository:helios57/familyguard-control-plane:pull" | \

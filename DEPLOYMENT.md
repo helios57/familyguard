@@ -156,17 +156,22 @@ authorization — this is what stops a fresh database from being claimable by wh
 ### 6. Publish the image
 
 ```bash
-git tag v0.1.0 && git push origin v0.1.0
+git tag vX.Y.Z && git push origin vX.Y.Z    # X.Y.Z is what deploy/control-plane.yaml pins
 ```
 
 `.github/workflows/release.yml` refuses the tag unless it is a plain semver, on `main`, whose version
-matches the DPC's `versionName`; re-runs every CI layer against the tagged tree; and only then
-publishes `ghcr.io/helios57/familyguard-control-plane:0.1.0`.
+matches the one the Android app carries; re-runs every CI layer against the tagged tree; and only
+then publishes `ghcr.io/helios57/familyguard-control-plane:X.Y.Z`. Three numbers move together and
+the tag is refused if any of them disagrees: the tag, the Android app's version, and the image the
+deployment manifest pins. Writing them as a version here instead of as a rule is how they drift.
 
-**Nothing has been released from this repository yet.** `0.1.0` will be the first tag, so until it is
-pushed the pin in `deploy/control-plane.yaml` refers to something the registry does not have, and the
-apply sits in `ImagePullBackOff`. `kubectl describe pod` distinguishes the two causes of that one
-symptom: `manifest unknown` is a missing tag, `unauthorized` is a missing credential.
+`0.1.0` was the first release, on 2026-08-18. The package is public — an anonymous manifest request
+for a released version answers 200, and `latest` answers 404 because this workflow deliberately
+publishes no floating tag. `deploy/control-plane.yaml` pins the version the tag on that same commit
+publishes, so between the commit and the end of the release run the pin names an image that does not
+exist yet — an apply in that window sits in `ImagePullBackOff`, and `kubectl describe pod`
+distinguishes the two causes of that one symptom: `manifest unknown` is a tag that was never
+published, `unauthorized` is a missing credential.
 
 The job prints the **digest**. That is the artifact; the tag is a label on it, and a label can move.
 Verify a running pod against the digest, never against the tag it was pulled by — and never move a

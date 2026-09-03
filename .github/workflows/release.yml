@@ -8,10 +8,11 @@
 # a `v` here would produce an image the cluster does not ask for. The tag is also refused unless it
 # is on `main` and the tree at that commit is the tree CI passed on — see `guard` below.
 #
-# Nothing has been released from this repository yet: there is no `v*` tag, and therefore no image
-# in the registry. `0.1.0` will be the first. Until that tag is pushed, the semver pinned in the
-# deployment manifest names something that does not exist, and `ImagePullBackOff` with `manifest
-# unknown` is the expected symptom rather than a fault to debug.
+# `0.1.0` was the first release (2026-08-18) and the package is public: an anonymous
+# `GET /v2/helios57/familyguard-control-plane/manifests/0.1.0` answers 200, and `latest` answers 404,
+# which is this workflow's deliberate omission rather than a failed push. A tag that has NOT been
+# released still names something the registry does not have, and `ImagePullBackOff` with `manifest
+# unknown` is the expected symptom of that rather than a fault to debug.
 #
 # A published tag is never force-moved onto a fix. A release tag that moves is the one change a
 # consumer cannot detect — the digest under it changes while every reference to it stays byte
