@@ -6,8 +6,9 @@ package e2e
 // Everything else that guards the console reads text: the viewport meta is present, the stylesheet
 // declares `--tap: 44px`, the manifest would install. Those are worth having and they are all
 // satisfiable by a page that is unusable on a phone. Only a browser can answer whether the thumb
-// has 44 px to hit, whether the page scrolls sideways, and whether the last card is reachable or
-// parked under the tab bar.
+// has 44 px to hit, whether the page scrolls sideways, whether the top of a view is reachable or
+// parked under the header, and whether the drawer that holds the whole navigation on a phone can be
+// opened at all.
 //
 // The data below is seeded through the real API before anything is measured, because an empty
 // console lays out perfectly: the overflow this catches comes from a long device name, a package
@@ -238,18 +239,46 @@ func formatOverflow(list []renderedOverflow) string {
 // instantly, and the measurement that followed was of the previous view under the new one's name.
 // The provisioning subtest found it — it went looking for a "Setup QR" button and was handed the
 // family view's Remove / Rename / Sign out.
+// It also navigates the way a thumb does. Below 900px the navigation lives inside a closed
+// <dialog>, and `.click()` on an element in one still follows the link — so a test that skipped the
+// menu button would keep passing after the button stopped opening anything, which is the whole
+// navigation on a phone. Opening the drawer first is not ceremony; it is the part under test.
 func (b *browser) switchTab(t *testing.T, tab, ready string) {
 	t.Helper()
 	b.eval(fmt.Sprintf(`(() => {
   const marker = document.createElement('div');
   marker.id = 'stale-view-marker';
   document.getElementById('view').appendChild(marker);
-  document.querySelector('.tab[data-tab=%q]').click();
-})()`, tab), nil)
+  const menu = document.getElementById('menu-open');
+  const shown = (e) => {
+    const cs = getComputedStyle(e);
+    const r = e.getBoundingClientRect();
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+  };
+  if (shown(menu)) menu.click();
+  const link = document.querySelector('.tab[data-tab=%q]');
+  if (!shown(link)) throw new Error('the %q link is not visible even after opening the menu');
+  link.click();
+})()`, tab, tab), nil)
 	b.waitFor(fmt.Sprintf(
 		"location.hash === '#/%s' && document.getElementById('stale-view-marker') === null && "+
 			"document.querySelector(%q) !== null", tab, ready),
 		20*time.Second, "the "+tab+" view to be rendered afresh")
+}
+
+// press sends one key to the page. Used for Escape, which is the drawer behaviour that comes from
+// <dialog> rather than from our code — and is therefore the one that silently disappears the day
+// somebody reimplements the drawer as a <div>.
+func (b *browser) press(key string, code int) {
+	for _, kind := range []string{"rawKeyDown", "keyUp"} {
+		b.call("Input.dispatchKeyEvent", map[string]any{
+			"type":                  kind,
+			"key":                   key,
+			"code":                  key,
+			"windowsVirtualKeyCode": code,
+			"nativeVirtualKeyCode":  code,
+		})
+	}
 }
 
 // FR-13.3, answered by the engine that would do the installing rather than by the file we ship.
@@ -362,6 +391,27 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 	b.waitFor("!document.getElementById('signin').hidden", 15*time.Second, "the sign-in screen")
 	b.measure(t, "signed out").check(t, "signed out")
 
+	// The complaint this rework started from, made into a rule. The sign-in card used to be centred
+	// in a `min-height: 100dvh` grid: on a laptop that is one small box alone in an empty viewport,
+	// and on a phone it pushes the only control on the page towards the middle of a screen that now
+	// scrolls. The property is the same at both widths — the thing a parent came here to do is on
+	// screen when the page loads, without a swipe first.
+	var signin struct {
+		ButtonBottom float64 `json:"buttonBottom"`
+		InnerHeight  float64 `json:"innerHeight"`
+	}
+	b.eval(`(() => {
+  window.scrollTo(0, 0);
+  const btn = document.querySelector('#signin a.btn-primary');
+  if (!btn) throw new Error('there is no sign-in button on the signed-out screen');
+  return { buttonBottom: btn.getBoundingClientRect().bottom, innerHeight: window.innerHeight };
+})()`, &signin)
+	if signin.ButtonBottom > signin.InnerHeight+0.5 {
+		t.Errorf("the sign-in button ends at %.0f in a %.0f px viewport, so it is below the fold: "+
+			"the first thing the console asks a parent to do is scroll to find the only control on "+
+			"the page.", signin.ButtonBottom, signin.InnerHeight)
+	}
+
 	// Sign in the way a phone does: tap the button and let the redirects happen in the browser.
 	// Handing the token to localStorage directly would skip the flow whose final hop is the one
 	// that has to land on a page laid out for a phone.
@@ -384,57 +434,210 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 
 			b.measure(t, screen.tab).check(t, screen.tab)
 
-			// The tab bar is fixed over the content, so "it fits" is not the same as "you can reach
-			// the end of it". Two separate facts, and they need two separate measurements:
+			// The header is sticky over the content, so "it is on screen when the page loads" is
+			// not the same as "it is on screen when you want it". Two facts, two measurements, and
+			// each one taken at the scroll position where a broken header would look different:
 			//
-			//  1. Unscrolled, the bar is already at the bottom edge of the screen.
-			//  2. Scrolled to the very bottom, the last card is still above it.
+			//  1. Scrolled to the end of a long page, the header is still at the top of the
+			//     viewport.
+			//  2. Unscrolled, the first card starts BELOW the header rather than behind it.
 			//
-			// The first used to be measured *after* scrolling to the end, and calibration caught it:
-			// with `.tabbar { position: static }` the suite stayed **green**, because at the end of
-			// a long page a static bar has flowed to the bottom of the viewport too. The assertion
-			// held while the property it names — pinned, reachable without scrolling — was gone.
-			// Measured at rest, the same break is unmissable: the bar is below the fold.
-			var bottom struct {
-				ScrollHeight      float64 `json:"scrollHeight"`
-				InnerHeight       float64 `json:"innerHeight"`
-				TabbarBottomAtTop float64 `json:"tabbarBottomAtTop"`
-				TabbarTop         float64 `json:"tabbarTop"`
-				TabbarBottom      float64 `json:"tabbarBottom"`
-				LastCardBottom    float64 `json:"lastCardBottom"`
+			// The first is measured at the end on purpose, and it is the exact mirror of the
+			// mistake this file made while the navigation was at the bottom. There, "pinned" was
+			// measured after scrolling to the end — where even a `position: static` bar has flowed
+			// to the bottom edge — and the calibration script found the assertion staying green
+			// with the property gone. For a header the useless moment is the top of the page, where
+			// a static header also sits at y=0. Same defect, opposite end of the page.
+			var chrome struct {
+				ScrollHeight   float64 `json:"scrollHeight"`
+				InnerHeight    float64 `json:"innerHeight"`
+				TopbarTopAtEnd float64 `json:"topbarTopAtEnd"`
+				TopbarHeight   float64 `json:"topbarHeight"`
+				TopbarBottom   float64 `json:"topbarBottomAtTop"`
+				FirstCardTop   float64 `json:"firstCardTopAtTop"`
 			}
 			b.eval(`(() => {
-  const bar = document.querySelector('.tabbar');
-  window.scrollTo(0, 0);
-  const atTop = bar.getBoundingClientRect().bottom;
+  const bar = document.querySelector('.topbar');
   window.scrollTo(0, document.scrollingElement.scrollHeight);
   const atEnd = bar.getBoundingClientRect();
+  window.scrollTo(0, 0);
+  const atTop = bar.getBoundingClientRect();
   const cards = [...document.querySelectorAll('#view > *')];
-  const last = cards.length ? cards[cards.length - 1].getBoundingClientRect().bottom : 0;
+  const first = cards.length ? cards[0].getBoundingClientRect().top : 0;
   return {
     scrollHeight: document.scrollingElement.scrollHeight,
     innerHeight: window.innerHeight,
-    tabbarBottomAtTop: atTop,
-    tabbarTop: atEnd.top, tabbarBottom: atEnd.bottom, lastCardBottom: last,
+    topbarTopAtEnd: atEnd.top,
+    topbarHeight: atTop.height,
+    topbarBottomAtTop: atTop.bottom,
+    firstCardTopAtTop: first,
   };
-})()`, &bottom)
+})()`, &chrome)
 
-			if d := bottom.TabbarBottomAtTop - bottom.InnerHeight; d < -0.5 || d > 0.5 {
-				t.Errorf("%s: unscrolled, the tab bar's bottom edge is at %.0f in a %.0f px "+
-					"viewport — it is not pinned to the bottom of the screen, so the navigation is "+
-					"only reachable by scrolling to the end of whatever is on the page.",
-					screen.tab, bottom.TabbarBottomAtTop, bottom.InnerHeight)
+			// Rule 1 is only a measurement on a page long enough to scroll. On a short one
+			// "still at the top after scrolling" is true of a static header too, and reporting it
+			// as a pass would be the green that means nothing.
+			if chrome.ScrollHeight < chrome.InnerHeight+80 {
+				t.Logf("%s: the page is %.0f px in a %.0f px viewport, so there is nothing to "+
+					"scroll and whether the header is sticky is NOT MEASURED on this screen",
+					screen.tab, chrome.ScrollHeight, chrome.InnerHeight)
+			} else if chrome.TopbarTopAtEnd < -0.5 || chrome.TopbarTopAtEnd > 0.5 {
+				t.Errorf("%s: scrolled to the end of the page, the header's top edge is at %.0f "+
+					"instead of 0 — it scrolled away with the content, so the navigation and the "+
+					"child switcher can only be reached by scrolling all the way back up first.",
+					screen.tab, chrome.TopbarTopAtEnd)
 			}
-			if bottom.LastCardBottom > bottom.TabbarTop+0.5 {
-				t.Errorf("%s: scrolled all the way down, the last card ends at %.0f and the tab bar "+
-					"starts at %.0f — the bottom %.0f px of the view is behind the navigation and "+
-					"cannot be scrolled into the open.",
-					screen.tab, bottom.LastCardBottom, bottom.TabbarTop,
-					bottom.LastCardBottom-bottom.TabbarTop)
+			if chrome.FirstCardTop < chrome.TopbarBottom-0.5 {
+				t.Errorf("%s: unscrolled, the header ends at %.0f and the first card starts at "+
+					"%.0f — the top %.0f px of the view is underneath the header and cannot be "+
+					"scrolled out from behind it.",
+					screen.tab, chrome.TopbarBottom, chrome.FirstCardTop,
+					chrome.TopbarBottom-chrome.FirstCardTop)
+			}
+			// The complaint that started this rework was "the login took the whole space and I had
+			// to scroll for everything". Chrome that grows is how that comes back: two stacked rows
+			// of header on a 800px screen is a tenth of the phone spent before any content.
+			if max := float64(phoneHeight) * 0.15; chrome.TopbarHeight > max {
+				t.Errorf("%s: the header is %.0f px tall on a %d px screen (%.0f%%), over the %.0f "+
+					"px budget. Every pixel of permanent chrome is one the content scrolls past "+
+					"forever.", screen.tab, chrome.TopbarHeight, phoneHeight,
+					chrome.TopbarHeight/float64(phoneHeight)*100, max)
 			}
 			b.eval("window.scrollTo(0, 0)", nil)
 		})
 	}
+
+	// The drawer IS the navigation below 900px. Everything above measures screens it has already
+	// been used to reach, which proves it opens; this proves the rest of the contract — that it is
+	// modal, that the links are only reachable through it, that Escape closes it, and that
+	// following a link does not leave it sitting open over the page it just navigated to.
+	t.Run("drawer", func(t *testing.T) {
+		defer b.focus(t)()
+		// Routed by setting the hash rather than through switchTab, which needs the menu button this
+		// subtest is about to check for. Reaching the screen through the thing under test would make
+		// a missing button fail as "the home link is not visible" and never reach the assertion that
+		// names the cause.
+		b.eval("location.hash = '#/home'", nil)
+		b.waitFor("location.hash === '#/home' && document.querySelector('#view .card') !== null",
+			20*time.Second, "the home view")
+
+		const visibleJS = `const shown = (e) => {
+    const cs = getComputedStyle(e);
+    const r = e.getBoundingClientRect();
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+  };`
+
+		var shut struct {
+			Open        bool `json:"open"`
+			VisibleTabs int  `json:"visibleTabs"`
+			MenuVisible bool `json:"menuVisible"`
+		}
+		b.eval(`(() => {
+  `+visibleJS+`
+  return {
+    open: document.getElementById('drawer').open,
+    visibleTabs: [...document.querySelectorAll('.tab')].filter(shown).length,
+    menuVisible: shown(document.getElementById('menu-open')),
+  };
+})()`, &shut)
+
+		if !shut.MenuVisible {
+			t.Fatal("there is no visible menu button on a phone, and the navigation lives behind " +
+				"it — so every screen except the one that happens to load is unreachable")
+		}
+		if shut.Open {
+			t.Error("the drawer is already open before anything was tapped")
+		}
+		if shut.VisibleTabs != 0 {
+			t.Errorf("%d navigation link(s) are visible in the header on a %d px screen while the "+
+				"drawer is shut. At this width the header holds the menu button and the child "+
+				"being looked at; links in it are the two-navigations problem the drawer exists "+
+				"to avoid", shut.VisibleTabs, phoneWidth)
+		}
+
+		b.eval("document.getElementById('menu-open').click()", nil)
+		b.waitFor("document.getElementById('drawer').open", 10*time.Second, "the drawer to open")
+		// Open is not the same as arrived. The drawer slides in over 0.16s, and measuring during
+		// that reports the whole menu hanging off the left edge of the screen — 25 elements at
+		// x -310…0, which reads exactly like a layout that does not fit. Waiting on the geometry the
+		// assertions are about, rather than on a duration, keeps this from being a stopwatch race.
+		b.waitFor("document.getElementById('drawer').getBoundingClientRect().left > -0.5",
+			5*time.Second, "the drawer to finish sliding in")
+
+		var open struct {
+			VisibleTabs int     `json:"visibleTabs"`
+			Width       float64 `json:"width"`
+			Expanded    string  `json:"expanded"`
+			Modal       bool    `json:"modal"`
+			FirstTabTop float64 `json:"firstTabTop"`
+		}
+		b.eval(`(() => {
+  `+visibleJS+`
+  const d = document.getElementById('drawer');
+  const tabs = [...document.querySelectorAll('#drawer-nav .tab')];
+  return {
+    visibleTabs: [...document.querySelectorAll('.tab')].filter(shown).length,
+    width: d.getBoundingClientRect().width,
+    expanded: document.getElementById('menu-open').getAttribute('aria-expanded'),
+    modal: d.matches(':modal'),
+    firstTabTop: tabs.length ? Math.min(...tabs.map(e => e.getBoundingClientRect().top)) : -1,
+  };
+})()`, &open)
+
+		if open.VisibleTabs != 5 {
+			t.Errorf("the open drawer shows %d of the 5 navigation links", open.VisibleTabs)
+		}
+		if open.Width > phoneWidth+0.5 {
+			t.Errorf("the drawer is %.0f px wide on a %d px screen, so it is not a drawer — it is "+
+				"a page with no way back to the one underneath", open.Width, phoneWidth)
+		}
+		if open.Expanded != "true" {
+			t.Errorf("the menu button's aria-expanded is %q while the drawer is open; a screen "+
+				"reader is told the menu is still shut", open.Expanded)
+		}
+		// :modal is what buys the focus trap and the Escape key from the platform instead of from a
+		// key handler somebody has to keep right. A drawer that is open but not modal leaves the
+		// page behind it focusable, so tabbing walks out of the menu into content nobody can see.
+		if !open.Modal {
+			t.Error("the drawer is open but not modal: focus can leave it into the page behind, " +
+				"and none of the dialog behaviour below is coming from the platform")
+		}
+		// Moving the navigation to the top costs one-handed reach: the ☰ is in the corner furthest
+		// from a thumb. The drawer is allowed to cost that ONCE, for the opening tap. If its
+		// destinations then sit at the top of the drawer too, every navigation is a full-screen
+		// stretch and the tab bar was strictly better. So the five links must land in the lower part
+		// of the screen — the band the tab bar used to occupy.
+		if reach := float64(phoneHeight) * 0.35; open.FirstTabTop < reach {
+			t.Errorf("the drawer's first destination starts %.0f px down a %d px screen, above the "+
+				"%.0f px mark: the destinations are not in the drawer's lower half, so reaching "+
+				"them one-handed is a full-screen stretch on every navigation and not just on the "+
+				"tap that opened the menu", open.FirstTabTop, phoneHeight, reach)
+		}
+
+		b.measure(t, "drawer").check(t, "drawer")
+
+		// Escape and the button's state are asserted as ONE condition, because they do not happen at
+		// the same instant: <dialog> queues its `close` event, so `open` is already false for a beat
+		// before the listener that clears aria-expanded runs. Sampling the attribute the moment the
+		// dialog closes is a race — it passed run after run in isolation and went red inside the
+		// full suite. Waiting on the pair still fails, loudly and by name, if nothing ever clears it.
+		b.press("Escape", 27)
+		b.waitFor("!document.getElementById('drawer').open && "+
+			"document.getElementById('menu-open').getAttribute('aria-expanded') === 'false'",
+			10*time.Second,
+			"Escape to close the drawer and the menu button's state to follow it")
+
+		// Following a link must close it. A drawer left open over the page it just navigated to is
+		// the single most common defect in hand-rolled ones, and it is invisible to any check that
+		// only asks whether the route changed.
+		b.eval("document.getElementById('menu-open').click()", nil)
+		b.waitFor("document.getElementById('drawer').open", 10*time.Second, "the drawer to reopen")
+		b.waitFor("document.getElementById('drawer').getBoundingClientRect().left > -0.5",
+			5*time.Second, "the drawer to finish sliding in again")
+		b.eval(`document.querySelector('.tab[data-tab="rules"]').click()`, nil)
+		b.waitFor("location.hash === '#/rules' && !document.getElementById('drawer').open",
+			10*time.Second, "the drawer to close behind the link it followed")
+	})
 
 	// The sheet is the only full-screen surface, and it is where the QR a parent has to point a
 	// second phone at lives. It is measured separately because it is not in the DOM until it opens.

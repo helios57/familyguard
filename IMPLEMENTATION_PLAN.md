@@ -48,9 +48,10 @@ whose steps all produce the same symptom is a runbook that has not been written 
 
 **What is honestly not measured**, and stays that way until real hardware answers it:
 
-- **Safe-area insets.** `env(safe-area-inset-bottom)` is 0 in headless Chrome, so the padding that
-  keeps the console's tab bar clear of a home indicator is declared and unverified. A notched phone
-  is the only instrument that settles it.
+- **Safe-area insets.** `env(safe-area-inset-top)` and `env(safe-area-inset-bottom)` are 0 in
+  headless Chrome, so the padding that keeps the console's header clear of a notch and its toast
+  clear of a home indicator is declared and unverified. A notched phone is the only instrument that
+  settles it.
 - **NFR-10's screen-off half.** The connection is one held-open stream rather than a poll loop, and
   location is one-shot with a 30 s budget, but nothing measures battery over a night. Owed a
   measurement, not a test.
@@ -383,10 +384,13 @@ The nine source guards above are worth having and every one of them is satisfiab
 is unusable on a phone — app.css's own header promises "no tap target smaller than 44 px" while its
 `.pill` rule said `min-height: 36px`, and no guard that reads text can disagree with that. So the
 suite drives headless Chrome over CDP at 360×800 with touch emulation and `mobile: true`, signs in
-through the real redirect chain, and measures each of the five tabs plus the provisioning sheet:
-tap-target width **and** height, elements past the viewport, sideways scrollers, input font size, the
-tab bar's resting position, whether the last card can be scrolled out from under it, and the QR's
-rendered size. The driver is hand-written against the CDP wire protocol — about 430 lines including
+through the real redirect chain, and measures the signed-out screen, each of the five views, the
+navigation drawer and the provisioning sheet: tap-target width **and** height, elements past the
+viewport, sideways scrollers, input font size, whether the sign-in button is above the fold, whether
+the header is still at the top of the viewport at the end of a long page, whether the first card is
+below the header rather than behind it, how much of the screen the permanent chrome costs, whether
+the drawer opens, is modal, closes on Escape, closes behind the link it followed and keeps its
+destinations in the lower part of the screen, and the QR's rendered size. The driver is hand-written against the CDP wire protocol — about 430 lines including
 an RFC 6455 client — so the e2e module keeps its zero-dependency property and no version matrix can
 stop the check from running. Chrome is a **precondition**, not an optional extra: absent, `run.sh`
 exits **2, NOT MEASURED**, because a suite that skips this layer and exits 0 is exactly the green it
@@ -412,16 +416,24 @@ It found four things on its first run, in the order they mattered:
    viewport too — it stayed **green** on that known-bad input. Both are fixed; the second was found
    by calibration and by nothing else.
 
-`tests/e2e/calibrate-mobile.sh` is that calibration, checked in: it breaks the console nine ways in
-turn — the parenthesis, an over-wide card, an unintended sideways scroller, a 13 px input, a static
-tab bar, a view with no bottom padding, an over-wide sheet, a 60 px QR, and 30 px buttons — and each
-run must go red **naming that rule**; red for the wrong reason counts as a failure. It ends by
-restoring the assets and requiring green, without which a guard that fails on everything would look
-perfectly calibrated. Run 2026-08-18: **all 9 bind.**
+`tests/e2e/calibrate-mobile.sh` is that calibration, checked in: it breaks the console fourteen ways
+in turn — the parenthesis, an over-wide card, an unintended sideways scroller, a 13 px input, a
+static header, a fixed header with the content behind it, a header that eats the screen, a hidden
+menu button, a drawer with both of its close-on-navigate paths removed, a drawer whose destinations
+are top-aligned instead of thumb-high, a sign-in card pushed below the fold, an over-wide sheet, a
+60 px QR, and 30 px buttons — and each run must go red **naming that rule**; red for the wrong reason
+counts as a failure. It ends by restoring the assets and requiring
+green, without which a guard that fails on everything would look perfectly calibrated.
 
-Still **not measured**: safe-area insets. `env(safe-area-inset-bottom)` is 0 in headless Chrome, so
-the padding that keeps the tab bar clear of a home indicator is asserted by nothing here; it is
-declared in app.css and unverified, and a notched phone is the only instrument that would settle it.
+Two of those cases exist because a single break was not enough. The drawer is closed on navigation by
+*two* paths — a listener on the nav element, which also covers tapping the link for the screen you
+are already on, and `onRoute`'s own call — so removing either alone leaves the rule green while
+looking calibrated. Both go.
+
+Still **not measured**: safe-area insets. `env(safe-area-inset-top)` and `-bottom` are 0 in headless
+Chrome, so the padding that keeps the header clear of a notch and the toast clear of a home indicator
+is asserted by nothing here; it is declared in app.css and unverified, and a real phone is the only
+instrument that would settle it.
 
 CONCEPT.md was brought back in line with what exists at the end of this phase: §2.2 and §3.3 said
 WebSocket, §3.2's route table predated most of the routes, §3.1 omitted the browser sign-in flow
@@ -2526,7 +2538,7 @@ proven.
 | FR-11 multi-parent/device | 3.3 | e2e `TestDeviceLifecycleJourney`, `TestOneDeviceCannotActOnAnother` |
 | FR-12 recovery | 5.8, 3.4 | both halves. Server: `TestRecoveryCodeRoundTrip`, `TestRecoveryCodesAreUniquePerDevice`, `TestHashTokenDiscriminates`, `TestRecoveryAlphabetIsAscii`. Device: 7 JVM suites / 63 tests over `recovery/` — `RecoveryVectorsTest` replays the 60 cases in `backend/internal/auth/recovery-vectors.json` — hand-written normalisations plus PBKDF2 digests from Python's `hashlib`, a third implementation neither half shares — so a normalisation or derivation divergence is red in CI rather than in a car park. **58 breaks, 58 red** (47 Kotlin, 11 Go); the one that stayed green on the first pass found a missing test rather than a missing guard, and is recorded under [5.8](#58-calibration--58-breaks-47-kotlin-11-go-58-red) |
 | FR-13 / FR-13.1 console | 4.x | e2e `TestConsoleIsServedAndMobileReady`, `TestBrowserSignInJourney`; `TestConsoleServesEveryRoute`, `TestConsoleDeclaresTheMobileViewport`, `TestConsoleReferencesOnlyMountedAssets`, `TestConsoleHasNoInlineScriptOrStyle`, `TestConsoleRevalidatesWithETag`, `TestConsoleDoesNotSwallowUnknownPaths` |
-| FR-13.2 mobile-first | 4.4, 6.5 | e2e `TestConsoleRendersOnAPhone` — the five views measured in a real browser at 360x800: no horizontal page scroll, no sideways-scrolling list, every touch target >= 44 px, no card wider than the viewport, 16 px inputs, the tab bar pinned and nothing hidden behind it, the QR legible. Driven against a **seeded** family, because an empty console lays out perfectly and the overflow this catches comes from a long device name or a package id. `tests/e2e/calibrate-mobile.sh` is the executable calibration record: nine breaks, each required to go red *naming its own rule*, then green on restore — and it found a real defect in its subject the first time it ran (the tab-bar check measured the bar only at the end of a long page, where a `position: static` bar also sits at the bottom). Source-level companions: `TestConsoleDeclaresTheMobileViewport` — a missing viewport meta makes the whole mobile suite vacuous at 980 px |
+| FR-13.2 mobile-first | 4.4, 6.5 | e2e `TestConsoleRendersOnAPhone` — the signed-out screen, the five views, the drawer and the provisioning sheet measured in a real browser at 360x800: no horizontal page scroll, no sideways-scrolling list, every touch target >= 44 px, no card wider than the viewport, 16 px inputs, the sign-in button above the fold, the header still at the top after scrolling to the end, the first card below it rather than behind it, permanent chrome under 15% of the screen, the drawer modal and closing on Escape and on navigation, the QR legible. Driven against a **seeded** family, because an empty console lays out perfectly and the overflow this catches comes from a long device name or a package id. `tests/e2e/calibrate-mobile.sh` is the executable calibration record: fourteen breaks, each required to go red *naming its own rule*, then green on restore — and it found a real defect in its subject the first time it ran (the pinned-navigation check measured the bar only at the end of a long page, where a `position: static` bar also sits at the bottom). Source-level companions: `TestConsoleDeclaresTheMobileViewport` — a missing viewport meta makes the whole mobile suite vacuous at 980 px. **Partial on one clause:** "navigation reachable one-handed" is no longer fully met — the menu opens from the top-left corner, the least reachable point on a large phone. Accepted on the owner's explicit preference for a top navigation (2026-09-03); the drawer's destinations are placed in its lower half, so only the opening tap is affected, and that placement is itself asserted (`#drawer-nav .tab` must start below 35% of the screen) and calibrated rather than left as prose |
 | FR-13.3 installable, no desktop-only input | 4.4, 6.7 | e2e `TestTheConsoleInstallsToAPhone` — Chrome's own verdict over CDP (`Page.getAppManifest`, `Page.getInstallabilityErrors`, `Page.getManifestIcons`), opened by a fail-closed negative control on `about:blank` so that an empty error list cannot mean "this browser computes nothing". `TestConsoleNeedsNoDesktopOnlyInput` covers the second half — no `:hover`, `contextmenu`, `dblclick`, `accesskey` or mouse-only pointer event in any served asset — with a byte-count floor so an empty 200 cannot read as clean. **Calibrated 8/8** (four each, including one harness break per side); the manifest-route checks that used to stand alone here read back our own bytes and are not a statement about installing anything. Not proven: behaviour on a real cellular connection, and installation on any engine other than Chrome |
 | FR-13.4 phone states its own condition | 5.9 | `DeviceStatusTest` — 25 cases over the pure composer, including the three the console cannot see: a policy received but never applied, a device out of contact, and a phone that cannot measure usage at all. The last is the one this row exists for: `NOT_MEASURED` is a third level, carried through `ForegroundReader.spans()` returning `null` rather than an empty list, and asserted to render as prominently as a fault rather than as a zero. `SynchronizerTest` (4 tests) pins the contact stamp to receipt and nowhere else, so the line cannot report a week-old phone as freshly synced. Three independent guards keep the device token off a screen anyone holding the phone can read — the composer's output, a source scan (`ManifestAndPlatformCallsTest` *the status block never reads the device token*), and the rendered view tree (`StatusScreenTest`). Instrumented `UsageAccessTest` revokes the real `GET_USAGE_STATS` appop, **reads the mode back from the system**, and asserts the screen says so — the appop cannot be granted by `setPermissionGrantState` and a revoked one makes `queryEvents` return nothing rather than throw, which is the silent zero this whole requirement is about. **Calibrated 38/38** (32 JVM, 6 on-device) — see the record above |
 | FR-14 audit | 3.7 | e2e `TestEveryAuditedActionIsWritten` — all **21** audited actions driven over real HTTP (17 parent-side, 4 device-side), each asserted as a row naming actor type, actor id, action, target type and target *id*; nine detail keys checked so the row says *which* change was made; every row required to carry a `request_id`; and a source-scanning ratchet over `internal/httpapi/*.go` that fails when a 22nd action appears. **Calibrated 6/6** — see the record below. Also `TestRecoveryAndAudit`, which checks ten action names |

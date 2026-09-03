@@ -26,6 +26,10 @@ const state = {
   view: 'home',
   loading: false,
   stream: null,
+  // Filtering is a property of the person looking, not of the data, so it lives here and survives
+  // the re-render a server event triggers. A parent who has typed "tik" into the app search does
+  // not want a heartbeat to clear it.
+  appFilter: { q: '', rule: 'all', system: false },
 };
 
 /* ---- session ------------------------------------------------------------ */
@@ -165,12 +169,65 @@ const fmtMinutes = (m) => {
   return h ? h + ' h ' + (m % 60) + ' min' : m + ' min';
 };
 
+/* ---- chrome: one navigation, in two places ------------------------------ */
+
+/* `#mainnav` and `#child-switcher` are single elements that MOVE between the header row and the
+ * drawer as the viewport crosses this breakpoint. They are not written twice and hidden.
+ *
+ * app.css used to justify a bottom tab bar at every width by saying a sidebar "would mean
+ * maintaining two navigations". That objection is correct — the second copy is always the one that
+ * stops being updated — and relocating the node is what answers it instead of accepting it. */
+const WIDE = window.matchMedia('(min-width: 900px)');
+
+function placeChrome() {
+  const nav = document.getElementById('mainnav');
+  const kids = document.getElementById('child-switcher');
+  if (WIDE.matches) {
+    const anchor = document.getElementById('signout');
+    anchor.parentNode.insertBefore(nav, anchor);
+    anchor.parentNode.insertBefore(kids, anchor);
+    closeDrawer();
+  } else {
+    document.getElementById('drawer-nav').append(nav);
+    document.getElementById('drawer-children').append(kids);
+  }
+}
+
+function openDrawer() {
+  const d = document.getElementById('drawer');
+  if (d.open) return;
+  if (typeof d.showModal === 'function') d.showModal();
+  else d.setAttribute('open', '');
+  document.getElementById('menu-open').setAttribute('aria-expanded', 'true');
+}
+
+function closeDrawer() {
+  const d = document.getElementById('drawer');
+  if (!d.open) return;
+  if (typeof d.close === 'function') d.close();
+  else d.removeAttribute('open');
+}
+
 /* ---- shell -------------------------------------------------------------- */
 
 async function boot() {
   state.session = takeSessionFromHash() || readSession();
   document.getElementById('signout').addEventListener('click', () => signOut('Signed out.'));
+  document.getElementById('drawer-signout').addEventListener('click', () => signOut('Signed out.'));
   document.getElementById('sheet-close').addEventListener('click', closeSheet);
+
+  document.getElementById('menu-open').addEventListener('click', openDrawer);
+  document.getElementById('drawer-close').addEventListener('click', closeDrawer);
+  // One place to undo the button's state, so Esc, the backdrop and the ✕ cannot disagree about it.
+  document.getElementById('drawer').addEventListener('close', () => {
+    document.getElementById('menu-open').setAttribute('aria-expanded', 'false');
+  });
+  // Picking a destination closes the menu; leaving it open over the page it just navigated to is
+  // the drawer bug every hand-rolled one has.
+  document.getElementById('mainnav').addEventListener('click', closeDrawer);
+
+  placeChrome();
+  WIDE.addEventListener('change', placeChrome);
   window.addEventListener('hashchange', onRoute);
 
   if (!state.session) {
@@ -193,7 +250,9 @@ async function boot() {
     return;
   }
 
-  document.getElementById('family-name').textContent = state.family ? state.family.name : 'Family';
+  const familyName = state.family ? state.family.name : 'Family';
+  document.getElementById('family-name').textContent = familyName;
+  document.getElementById('drawer-family').textContent = familyName;
   const remembered = localStorage.getItem(CHILD_KEY);
   state.childId = state.children.some((c) => c.id === remembered)
     ? remembered
@@ -211,7 +270,9 @@ function renderChildSwitcher() {
     nav.append(el('button', {
       class: 'pill',
       type: 'button',
-      'aria-pressed': child.id === state.childId,
+      // Written on both states rather than only on the pressed one: a toggle that drops the
+      // attribute when it is off tells a screen reader nothing about the off state.
+      'aria-pressed': String(child.id === state.childId),
       text: child.name,
       onclick: () => selectChild(child.id),
     }));
@@ -219,12 +280,25 @@ function renderChildSwitcher() {
   nav.append(el('button', {
     class: 'pill', type: 'button', text: '+ Child', onclick: addChild,
   }));
+  document.getElementById('drawer-children-label').hidden = false;
+  renderCrumb();
+}
+
+/* Which child is on screen, for the widths where the switcher itself is in the drawer. Without it
+   every screen below the header is ambiguous the moment a family has two children. */
+function renderCrumb() {
+  const child = state.children.find((c) => c.id === state.childId);
+  document.getElementById('crumb').textContent = child ? child.name : '';
 }
 
 function selectChild(id) {
   state.childId = id;
   localStorage.setItem(CHILD_KEY, id);
+  // A different child is a different set of apps; carrying the previous child's search across is a
+  // filter the parent did not ask for and cannot see the cause of.
+  state.appFilter = { q: '', rule: 'all', system: false };
   renderChildSwitcher();
+  closeDrawer();
   refresh();
 }
 
@@ -235,6 +309,7 @@ function onRoute() {
     if (tab.dataset.tab === state.view) tab.setAttribute('aria-current', 'page');
     else tab.removeAttribute('aria-current');
   }
+  closeDrawer();
   refresh();
 }
 
@@ -246,6 +321,25 @@ const VIEWS = {
   family: { load: loadFamily, render: renderFamily },
 };
 
+/* ---- empty states ------------------------------------------------------- */
+
+/* On day one this console has no devices, no apps, no usage and no history, so four of its five
+ * screens are made entirely of these. That is the first impression, not the edge case — and the
+ * version this replaced answered it with four different one-line shrugs ("Nothing to show yet",
+ * "No apps reported yet") that named no cause and offered no way out.
+ *
+ * Nothing here invents a row to fill the space. An empty screen says why it is empty and what the
+ * one next action is; it does not draw a fake device to look busy. */
+function emptyCard(icon, title, body, action) {
+  return el('div', { class: 'card full empty' },
+    el('div', { class: 'empty-icon', 'aria-hidden': 'true', text: icon }),
+    el('h2', { text: title }),
+    el('p', { text: body }),
+    action || null);
+}
+
+const setUpAPhoneLink = () => el('a', { class: 'btn btn-primary', href: '#/home', text: 'Set up a phone' });
+
 let refreshToken = 0;
 async function refresh() {
   const view = VIEWS[state.view];
@@ -253,9 +347,9 @@ async function refresh() {
   const main = document.getElementById('view');
 
   if (!state.childId && state.view !== 'family') {
-    main.replaceChildren(el('div', { class: 'card full' },
-      el('h2', { text: 'No children yet' }),
-      el('p', { class: 'muted', text: 'Add a child with the + button above, then add their phone.' })));
+    main.replaceChildren(emptyCard('♦', 'Add your first child',
+      'Rules, apps and screen time all belong to a child. Add one here, then set up their phone.',
+      el('button', { class: 'btn btn-primary', type: 'button', text: 'Add a child', onclick: addChild })));
     return;
   }
   try {
@@ -337,7 +431,20 @@ function handleFrame(frame) {
   // Coalesced: a policy change fans out one event per device, and re-rendering five times in a row
   // would make the page flicker for no extra information.
   clearTimeout(nudge);
-  nudge = setTimeout(refresh, 400);
+  nudge = setTimeout(maybeRefresh, 400);
+}
+
+/* A refresh replaces every child of #view, which takes the field the parent is typing in with it.
+ * A heartbeat arriving mid-sentence must not do that, so the nudge waits — and re-arms rather than
+ * being dropped, because a nudge that is silently discarded is a screen that stops updating for as
+ * long as a cursor happens to sit in a box. */
+function maybeRefresh() {
+  const a = document.activeElement;
+  if (a && a.closest && a.closest('#view') && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) {
+    nudge = setTimeout(maybeRefresh, 3000);
+    return;
+  }
+  refresh();
 }
 
 /* ---- home --------------------------------------------------------------- */
@@ -351,12 +458,65 @@ async function loadHome() {
 }
 
 function renderHome(data) {
-  const cards = data.devices.map((dev, i) => deviceCard(dev, data.states[i]));
+  if (!data.devices.length) return [setupCard()];
+
+  const cards = [];
+  // Only worth drawing for a second device. With one, the card below it is already the answer to
+  // "is it all right", and a strip repeating it is decoration that costs a screenful.
+  if (data.devices.length > 1) cards.push(statusStrip(data));
+
+  cards.push(...data.devices.map((dev, i) => deviceCard(dev, data.states[i])));
+
   cards.push(el('div', { class: 'card full' },
-    el('div', { class: 'card-head' }, el('h2', { text: 'Add a phone' })),
+    el('div', { class: 'card-head' }, el('h2', { text: 'Add another phone' })),
     el('p', { class: 'muted', text: 'Create the device here, then scan its QR on a factory-reset phone.' }),
     el('button', { class: 'btn btn-primary btn-block', type: 'button', text: 'Add a device', onclick: addDevice })));
   return cards;
+}
+
+/* The whole of the home screen until the first phone is enrolled — which is where every new install
+   starts, and where this console previously showed an empty list above a card called "Add a phone".
+   The three steps are the ones the enrolment actually needs; the factory-reset requirement is not
+   advice, it is what Android demands before it will hand device-owner rights to anything. */
+function setupCard() {
+  const child = state.children.find((c) => c.id === state.childId);
+  return el('div', { class: 'card full' },
+    el('h2', { text: child ? 'Set up ' + child.name + '’s first phone' : 'Set up the first phone' }),
+    el('p', { class: 'muted', text: 'The phone has to be factory-reset first: Family Guard is installed as the device owner, and Android only allows that on a phone with no account set up on it yet.' }),
+    el('ol', { class: 'steps' },
+      el('li', {}, el('b', { text: 'Add the phone here' }),
+        el('small', { text: 'Give it a name you will recognise later. Nothing is sent to the phone yet.' })),
+      el('li', {}, el('b', { text: 'Factory-reset the phone' }),
+        el('small', { text: 'Settings → System → Reset options → Erase all data.' })),
+      el('li', {}, el('b', { text: 'Scan the QR this page shows you' }),
+        el('small', { text: 'On the welcome screen, tap the same spot six times. The phone then asks for a QR code.' }))),
+    el('button', { class: 'btn btn-primary btn-block', type: 'button', text: 'Add a phone', onclick: addDevice }));
+}
+
+/* One line per phone: reachable, charged, and how much of today's allowance is gone. The point is
+   that a parent with two or three phones gets the answer without opening anything. */
+function statusStrip(data) {
+  const rows = data.devices.map((dev, i) => {
+    const st = dev.state || {};
+    const desired = data.states[i];
+    const used = desired ? (desired.used_minutes || 0) : 0;
+    const quota = desired ? (desired.quota_minutes || 0) : 0;
+    return el('div', { class: 'strip-row' },
+      el('span', { class: 'dot ' + (st.online ? 'online' : 'offline') }),
+      el('span', { class: 'strip-name', text: dev.name }),
+      dev.locked ? el('span', { class: 'badge danger', text: 'locked' }) : null,
+      st.battery_level !== null && st.battery_level !== undefined
+        ? el('span', { class: 'badge', text: st.battery_level + '%' })
+        : null,
+      quota > 0
+        ? el('span', { class: 'meter', title: fmtMinutes(used) + ' of ' + fmtMinutes(quota) },
+          el('span', {
+            class: used >= quota ? 'over' : '',
+            style: 'width:' + Math.min(100, Math.round((used / quota) * 100)) + '%',
+          }))
+        : el('span', { class: 'badge', text: fmtMinutes(used) }));
+  });
+  return el('div', { class: 'card full strip' }, ...rows);
 }
 
 function deviceCard(dev, desired) {
@@ -463,11 +623,16 @@ async function showRecovery(dev) {
 /* ---- rules -------------------------------------------------------------- */
 
 async function loadRules() {
-  const [policy, domains] = await Promise.all([
+  const [policy, domains, devices] = await Promise.all([
     api('/children/' + state.childId + '/policy'),
     api('/children/' + state.childId + '/blocked-domains'),
+    api('/devices?child_id=' + encodeURIComponent(state.childId)),
   ]);
-  return { policy, domains: domains.domains || [] };
+  return {
+    policy,
+    domains: domains.domains || [],
+    enrolled: (devices.devices || []).some((d) => d.enrolled),
+  };
 }
 
 function renderRules(data) {
@@ -539,7 +704,16 @@ function renderRules(data) {
       : el('p', { class: 'muted', text: 'Only the built-in adult-content filter is active.' }),
     el('p', { class: 'muted', text: 'Filtering uses ' + p.dns_host + '.' }));
 
-  return [rules, bedtime, domains];
+  const cards = [rules, bedtime, domains];
+  // Rules are a property of the child and are saved whether or not a phone exists to carry them, so
+  // this screen stays fully usable — it just says so, rather than letting a parent set a bedtime and
+  // wonder why nothing happened.
+  if (!data.enrolled) {
+    cards.unshift(el('div', { class: 'card full' },
+      el('p', { class: 'muted', text: 'No phone is enrolled for this child yet. Anything set here is saved now and applies the moment one is.' }),
+      setUpAPhoneLink()));
+  }
+  return cards;
 }
 
 /* ---- apps --------------------------------------------------------------- */
@@ -562,7 +736,11 @@ async function loadApps() {
     }
   });
   const ruleFor = new Map((rules.rules || []).map((r) => [r.package_name, r.action]));
-  return { apps: [...byPackage.values()].sort(sortApps), ruleFor };
+  return {
+    apps: [...byPackage.values()].sort(sortApps),
+    ruleFor,
+    enrolled: list.some((d) => d.enrolled),
+  };
 }
 
 function sortApps(a, b) {
@@ -572,10 +750,18 @@ function sortApps(a, b) {
 
 function renderApps(data) {
   if (!data.apps.length) {
-    return [el('div', { class: 'card full' },
-      el('h2', { text: 'No apps reported yet' }),
-      el('p', { class: 'muted', text: 'The phone sends its app list shortly after it is set up.' }))];
+    // Two different reasons for the same blank list, and they need different next steps: there is no
+    // phone, or there is one and it has not reported yet. Saying "set up a phone" to somebody who
+    // already did is the empty state telling them to redo work they have done.
+    return [data.enrolled
+      ? emptyCard('▦', 'No apps reported yet',
+        'The phone is enrolled but has not sent its list of installed apps. It does that shortly after setup and then once a day.')
+      : emptyCard('▦', 'No apps reported yet',
+        'A phone sends the list of what is installed on it shortly after it is set up. Nothing is listed here until one does.',
+        setUpAPhoneLink())];
   }
+
+  const f = state.appFilter;
 
   const setRule = async (pkg, action) => {
     await act(action === null ? 'Rule cleared' : (action === 'BLOCK' ? 'Blocked' : 'Allowed'), () =>
@@ -585,28 +771,84 @@ function renderApps(data) {
     refresh();
   };
 
+  /* Three states, named. The previous control was two buttons where tapping the lit one again
+     cleared the rule — a hidden third state whose only documentation was a line of prose above the
+     list, and which is indistinguishable from a mis-tap. */
   const row = (app) => {
     const rule = data.ruleFor.get(app.package_name) || null;
+    const choice = (label, value) => el('button', {
+      class: 'btn', type: 'button', text: label,
+      'aria-pressed': String(rule === value),
+      onclick: () => setRule(app.package_name, value),
+    });
     return el('li', {},
       el('span', { class: 'label' },
         el('b', { text: app.label || app.package_name }),
         el('small', { text: app.package_name + (app.system_app ? ' · system' : '') })),
-      el('div', { class: 'wrap' },
-        el('button', {
-          class: 'btn' + (rule === 'ALLOW' ? ' btn-primary' : ''), type: 'button', text: 'Allow',
-          onclick: () => setRule(app.package_name, rule === 'ALLOW' ? null : 'ALLOW'),
-        }),
-        el('button', {
-          class: 'btn' + (rule === 'BLOCK' ? ' btn-primary' : ''), type: 'button', text: 'Block',
-          onclick: () => setRule(app.package_name, rule === 'BLOCK' ? null : 'BLOCK'),
-        })));
+      el('div', { class: 'seg' },
+        choice('Allow', 'ALLOW'), choice('Block', 'BLOCK'), choice('Default', null)));
   };
 
+  const matches = (app) => {
+    if (!f.system && app.system_app) return false;
+    const rule = data.ruleFor.get(app.package_name) || null;
+    if (f.rule === 'allowed' && rule !== 'ALLOW') return false;
+    if (f.rule === 'blocked' && rule !== 'BLOCK') return false;
+    if (f.rule === 'none' && rule !== null) return false;
+    const q = f.q.trim().toLowerCase();
+    if (!q) return true;
+    return (app.label || '').toLowerCase().includes(q) || app.package_name.toLowerCase().includes(q);
+  };
+
+  const list = el('ul', { class: 'list applist' });
+  const count = el('p', { class: 'list-count' });
+
+  /* Repainting only the list, never the toolbar: rebuilding the search field on every keystroke
+     would move the caret to the end of it, which makes correcting a typo impossible. */
+  const paint = () => {
+    const shown = data.apps.filter(matches);
+    count.textContent = shown.length === data.apps.length
+      ? data.apps.length + (data.apps.length === 1 ? ' app' : ' apps')
+      : shown.length + ' of ' + data.apps.length + ' apps';
+    list.replaceChildren(...shown.map(row));
+    if (!shown.length) {
+      list.append(el('li', {}, el('span', { class: 'muted', text: 'Nothing matches that filter.' })));
+    }
+  };
+
+  const search = el('input', {
+    type: 'search', value: f.q, placeholder: 'Search apps',
+    'aria-label': 'Search apps', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false',
+    oninput: (e) => { f.q = e.target.value; paint(); },
+  });
+
+  const filter = el('div', { class: 'seg' }, [
+    ['all', 'All'], ['blocked', 'Blocked'], ['allowed', 'Allowed'], ['none', 'No rule'],
+  ].map(([value, label]) => el('button', {
+    class: 'btn', type: 'button', text: label,
+    'aria-pressed': String(f.rule === value),
+    onclick: (e) => {
+      f.rule = value;
+      for (const b of e.target.parentNode.children) b.setAttribute('aria-pressed', String(b === e.target));
+      paint();
+    },
+  })));
+
+  const system = el('label', { class: 'switch' },
+    el('span', { class: 'switch-label' }, 'Show system apps',
+      el('small', { text: 'The dialler, the settings app and the rest of Android.' })),
+    el('input', {
+      type: 'checkbox', checked: f.system,
+      onchange: (e) => { f.system = e.target.checked; paint(); },
+    }));
+
+  paint();
+
   return [el('div', { class: 'card full' },
-    el('div', { class: 'card-head' }, el('h2', { text: 'Apps' }),
-      el('span', { class: 'badge', text: data.apps.length + ' installed' })),
-    el('p', { class: 'muted', text: 'Tap Allow or Block. Tapping again clears the rule.' }),
-    el('ul', { class: 'list' }, data.apps.map(row)))];
+    el('div', { class: 'card-head' }, el('h2', { text: 'Apps' })),
+    el('div', { class: 'toolbar' }, search, filter, system),
+    count,
+    list)];
 }
 
 /* ---- activity ----------------------------------------------------------- */
@@ -625,8 +867,9 @@ async function loadActivity() {
 
 function renderActivity(data) {
   if (!data.devices.length) {
-    return [el('div', { class: 'card full' }, el('h2', { text: 'Nothing to show yet' }),
-      el('p', { class: 'muted', text: 'Set up a phone first.' }))];
+    return [emptyCard('◔', 'Nothing recorded yet',
+      'Screen time, app usage and locations all come from an enrolled phone. Once one is set up, this page fills itself in.',
+      setUpAPhoneLink())];
   }
   const cards = [];
 

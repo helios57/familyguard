@@ -18,36 +18,76 @@
 <body>
 <noscript class="noscript">Family Guard needs JavaScript to show your family's devices.</noscript>
 
-<!-- Signed out. -->
+<!-- Signed out.
+     Three blocks, not one centred card. On a phone they stack in DOM order, which puts the sign-in
+     button roughly 350px down and therefore above the fold; on a wide screen the areas below place
+     the card beside the description instead of alone in the middle of an empty viewport. -->
 <section id="signin" class="signin" hidden>
-  <div class="signin-card">
-    <img src="/icon.svg" alt="" width="56" height="56">
-    <h1>Family Guard</h1>
-    <p id="signin-message">Sign in with the Google account your family uses.</p>
-    <a class="btn btn-primary btn-block" href="/api/v1/auth/google/start">Sign in with Google</a>
+  <div class="signin-inner">
+    <div class="signin-head">
+      <img src="/icon.svg" alt="" width="60" height="60">
+      <h1>Family Guard</h1>
+      <p class="signin-lead">Screen time, app rules and device location for the phones in your family.</p>
+    </div>
+
+    <div class="signin-card">
+      <h2>Sign in</h2>
+      <p id="signin-message">Use the Google account your family uses.</p>
+      <a class="btn btn-primary btn-block" href="/api/v1/auth/google/start">Sign in with Google</a>
+      <p class="signin-note">Only an account a parent has already added to this family can sign in.</p>
+    </div>
+
+    <ul class="signin-points">
+      <li><span class="point-icon" aria-hidden="true">&#9878;</span>Set a bedtime and a daily screen-time limit.</li>
+      <li><span class="point-icon" aria-hidden="true">&#9638;</span>Allow or block any app on the phone.</li>
+      <li><span class="point-icon" aria-hidden="true">&#9684;</span>See what was used today, and where the phone has been.</li>
+      <li><span class="point-icon" aria-hidden="true">&#9673;</span>Lock or ring a phone that has gone missing.</li>
+    </ul>
   </div>
 </section>
 
-<!-- Signed in. -->
+<!-- Signed in.
+     One navigation, in one place in the DOM. `#mainnav` and `#child-switcher` are moved between the
+     top bar and the drawer by app.js as the viewport crosses 900px, rather than being written twice
+     and kept in sync by hand — two navigations is the cost app.css used to cite for not having a
+     drawer at all, and moving the node is what avoids paying it. -->
 <div id="app" hidden>
   <header class="topbar">
-    <div class="topbar-row">
+    <div id="topbar-row" class="topbar-row">
+      <button id="menu-open" class="btn btn-quiet btn-icon menu-btn" type="button"
+              aria-label="Open menu" aria-expanded="false" aria-controls="drawer">&#9776;</button>
       <h1 id="family-name">Family</h1>
+      <span id="crumb" class="crumb"></span>
+      <nav id="mainnav" class="mainnav" aria-label="Sections">
+        <a class="tab" href="#/home"     data-tab="home"><span class="tab-icon" aria-hidden="true">&#9673;</span><span>Home</span></a>
+        <a class="tab" href="#/rules"    data-tab="rules"><span class="tab-icon" aria-hidden="true">&#9878;</span><span>Rules</span></a>
+        <a class="tab" href="#/apps"     data-tab="apps"><span class="tab-icon" aria-hidden="true">&#9638;</span><span>Apps</span></a>
+        <a class="tab" href="#/activity" data-tab="activity"><span class="tab-icon" aria-hidden="true">&#9684;</span><span>Activity</span></a>
+        <a class="tab" href="#/family"   data-tab="family"><span class="tab-icon" aria-hidden="true">&#9670;</span><span>Family</span></a>
+      </nav>
+      <nav id="child-switcher" class="pills" aria-label="Children"></nav>
       <button id="signout" class="btn btn-quiet" type="button">Sign out</button>
     </div>
-    <nav id="child-switcher" class="pills" aria-label="Children"></nav>
   </header>
 
   <main id="view" class="view" tabindex="-1"></main>
-
-  <nav class="tabbar" aria-label="Sections">
-    <a class="tab" href="#/home"     data-tab="home">     <span class="tab-icon" aria-hidden="true">◉</span><span>Home</span></a>
-    <a class="tab" href="#/rules"    data-tab="rules">    <span class="tab-icon" aria-hidden="true">⚖</span><span>Rules</span></a>
-    <a class="tab" href="#/apps"     data-tab="apps">     <span class="tab-icon" aria-hidden="true">▦</span><span>Apps</span></a>
-    <a class="tab" href="#/activity" data-tab="activity"> <span class="tab-icon" aria-hidden="true">◔</span><span>Activity</span></a>
-    <a class="tab" href="#/family"   data-tab="family">   <span class="tab-icon" aria-hidden="true">♦</span><span>Family</span></a>
-  </nav>
 </div>
+
+<!-- The drawer is a <dialog> for the same reason the sheet is: showModal() gives the focus trap,
+     the Esc key and the backdrop scrim from the platform, so none of them is a hand-written loop
+     that can be wrong. -->
+<dialog id="drawer" class="drawer" aria-label="Menu">
+  <div class="drawer-head">
+    <span id="drawer-family" class="drawer-family"></span>
+    <button id="drawer-close" class="btn btn-quiet btn-icon" type="button" aria-label="Close menu">&#10005;</button>
+  </div>
+  <div id="drawer-nav" class="drawer-slot"></div>
+  <p id="drawer-children-label" class="drawer-sep" hidden>Children</p>
+  <div id="drawer-children" class="drawer-slot drawer-slot-children"></div>
+  <div class="drawer-foot">
+    <button id="drawer-signout" class="btn btn-block" type="button">Sign out</button>
+  </div>
+</dialog>
 
 <!-- Live region: every action reports its outcome here, including failures. -->
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
@@ -56,7 +96,7 @@
 <dialog id="sheet" class="sheet">
   <div class="sheet-head">
     <h2 id="sheet-title"></h2>
-    <button id="sheet-close" class="btn btn-quiet btn-icon" type="button" aria-label="Close">✕</button>
+    <button id="sheet-close" class="btn btn-quiet btn-icon" type="button" aria-label="Close">&#10005;</button>
   </div>
   <div id="sheet-body" class="sheet-body"></div>
 </dialog>

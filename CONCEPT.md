@@ -234,9 +234,22 @@ rather than assumed.
 
 **Mobile-first (FR-13.2).** The parent uses this from a phone. The base stylesheet targets a 360 px
 portrait viewport and widens with `min-width` media queries; there are no fixed pixel widths and no
-horizontal page scroll. Navigation is a bottom tab bar within thumb reach, the child switcher is a
-horizontally scrollable pill row, tables reflow into stacked cards below 720 px, and every
-interactive element is at least 44 px tall. Inputs are 16 px, below which iOS Safari zooms the page
+horizontal page scroll. Navigation sits at the top at every width: below 900 px it is a drawer
+opened from a ☰ button, and at 900 px and above it is a row of links in the header. There is only
+**one** navigation in the DOM — `app.js` moves the `<nav>` element and the child switcher between
+the header and the drawer as the viewport crosses that breakpoint, rather than writing each twice
+and keeping the copies in sync. The drawer is a `<dialog>` opened with `showModal()`, so the focus
+trap, the Escape key and the backdrop come from the platform instead of from a hand-written key
+handler. Tables reflow into stacked cards below 720 px, the content grid widens to two columns at
+720 px and three at 1180 px, and every interactive element is at least 44 px tall.
+
+> This replaced a bottom tab bar, which the stylesheet had defended on the grounds that a sidebar
+> "would mean maintaining two navigations". The objection was right and is answered by moving the
+> node rather than duplicating it. It does cost something real: opening the menu is a reach to the
+> top-left corner, which is the least thumb-friendly part of a large phone. The destinations inside
+> the drawer are pushed to its lower half to keep the rest of the interaction in reach, but the
+> opening tap is a genuine regression against "navigation reachable one-handed", accepted on the
+> owner's explicit preference for a top navigation. Inputs are 16 px, below which iOS Safari zooms the page
 on focus and leaves it zoomed. The viewport meta sets `viewport-fit=cover` and does **not** set
 `user-scalable=no` or a `maximum-scale`, so a parent can still zoom in on a small label. The
 provisioning QR renders at the full width of a phone screen, and a web app manifest makes the

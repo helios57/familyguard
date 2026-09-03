@@ -1,14 +1,20 @@
 /* Family Guard console.
  *
  * Mobile first, and literally so: every rule below the reset is written for a 360 px phone held in
- * one hand, and the only media query widens that layout for a desktop. Nothing here is a phone
- * adaptation of a desktop screen, because that is the shape that produces 11 px labels and controls
- * you cannot hit while walking.
+ * one hand, and the media queries only widen that layout for a tablet or a laptop. Nothing here is a
+ * phone adaptation of a desktop screen, because that is the shape that produces 11 px labels and
+ * controls you cannot hit while walking.
  *
  * Three constants come from that: no tap target smaller than 44 px, no input smaller than 16 px
  * (below that iOS zooms the page on focus and never zooms back), and nothing important within
- * reach of the browser chrome at either end — the bottom bar sits above the home indicator via
- * env(safe-area-inset-bottom).
+ * reach of the browser chrome at either end.
+ *
+ * The navigation lives at the top at every width. Below 900 px it is a drawer opened from the ☰
+ * button; at 900 px and above it is a row of links in the header. There is still only ONE of it:
+ * app.js moves `#mainnav` and `#child-switcher` between the header and the drawer as the viewport
+ * crosses that breakpoint. An earlier version of this file kept the navigation pinned to the bottom
+ * at every width and justified it by saying a sidebar "would mean maintaining two navigations" —
+ * the objection was right, and moving the node instead of duplicating it is the answer to it.
  */
 
 :root {
@@ -19,6 +25,7 @@
   --text-dim: #5a6072;
   --line: #d9dce6;
   --accent: #2f5bd7;
+  --accent-soft: #e6ecfb;
   --accent-text: #ffffff;
   --ok: #1c7f4b;
   --warn: #a86400;
@@ -26,6 +33,7 @@
   --radius: 14px;
   --tap: 44px;
   --gap: 12px;
+  --topbar: 56px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -37,6 +45,7 @@
     --text-dim: #a2a8bb;
     --line: #2e3242;
     --accent: #6d90ff;
+    --accent-soft: #232a44;
     --accent-text: #0f1016;
     --ok: #56d199;
     --warn: #f0b355;
@@ -67,24 +76,70 @@ p { margin: 0 0 0.6em; }
 
 /* ---- sign in ------------------------------------------------------------ */
 
-.signin {
-  min-height: 100dvh;
+/* This used to be `min-height: 100dvh; place-items: center` around a 420 px card, which on a laptop
+   is one small box floating in an otherwise empty viewport — it reads as a page that failed to
+   load. The page is now laid out top-down like every other page, and the three blocks are placed
+   into two columns only when there is room for two columns. */
+
+.signin { padding: clamp(20px, 4vh, 56px) 20px calc(40px + env(safe-area-inset-bottom)); }
+
+.signin-inner {
+  max-width: 1000px;
+  margin: 0 auto;
   display: grid;
-  place-items: center;
-  padding: 24px;
+  gap: 24px;
 }
+
+.signin-head img { display: block; margin-bottom: 12px; }
+.signin-head h1 { font-size: 1.6rem; letter-spacing: -0.01em; }
+.signin-lead { color: var(--text-dim); margin-top: 6px; font-size: 1.02rem; max-width: 46ch; }
+
 .signin-card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 28px 22px;
-  width: min(420px, 100%);
-  text-align: center;
+  padding: 22px 20px;
 }
-.signin-card h1 { margin: 12px 0 6px; }
+.signin-card h2 { margin-bottom: 4px; }
 .signin-card p { color: var(--text-dim); }
+.signin-note { font-size: 0.85rem; margin: 10px 0 0; }
 
-/* ---- chrome ------------------------------------------------------------- */
+.signin-points { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.signin-points li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+}
+.point-icon {
+  flex: 0 0 auto;
+  width: 28px; height: 28px;
+  display: grid; place-items: center;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--accent);
+  font-size: 0.95rem;
+}
+
+/* Two columns, with the card beside the description rather than under it. `align-content: center`
+   rather than `min-height: 100dvh`: the block is centred in whatever space it has, and does not
+   claim a viewport it cannot fill. */
+@media (min-width: 860px) {
+  .signin { padding-block: clamp(40px, 9vh, 96px); }
+  .signin-inner {
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    grid-template-areas: "head card" "points card";
+    column-gap: 56px;
+    row-gap: 28px;
+    align-content: start;
+  }
+  .signin-head { grid-area: head; }
+  .signin-points { grid-area: points; }
+  .signin-card { grid-area: card; align-self: start; }
+}
+
+/* ---- top bar ------------------------------------------------------------ */
 
 .topbar {
   position: sticky;
@@ -92,26 +147,47 @@ p { margin: 0 0 0.6em; }
   z-index: 10;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
-  padding: max(8px, env(safe-area-inset-top)) 12px 0;
+  padding: env(safe-area-inset-top) 10px 0;
 }
 .topbar-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  min-height: var(--tap);
+  min-height: var(--topbar);
 }
-#family-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#family-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+
+/* The current child, shown only where the switcher itself is not: below 900 px the pills are in the
+   drawer, and a header that does not say which child you are looking at makes every screen below it
+   ambiguous. */
+.crumb {
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.crumb:empty { display: none; }
+.crumb::before { content: "·"; margin-right: 6px; }
+
+.menu-btn { flex: 0 0 auto; font-size: 1.2rem; }
+
+/* Below 900 px these three live in the drawer, so they are hidden *in the header* rather than
+   globally — a bare `#mainnav { display: none }` would follow the node into the drawer and hide it
+   there too. */
+.topbar #mainnav,
+.topbar #child-switcher,
+.topbar #signout { display: none; }
 
 /* The child switcher scrolls sideways rather than wrapping: with four children a wrapping row
-   pushes the content below the fold on a phone, and the snap points keep a half-cut pill from
-   being the resting state. */
+   pushes the content below the fold, and the snap points keep a half-cut pill from being the
+   resting state. */
 .pills {
   display: flex;
   gap: 8px;
   overflow-x: auto;
   scroll-snap-type: x proximity;
-  padding: 8px 0 10px;
   scrollbar-width: none;
 }
 .pills::-webkit-scrollbar { display: none; }
@@ -128,49 +204,119 @@ p { margin: 0 0 0.6em; }
   border: 1px solid var(--line);
   background: var(--surface-2);
   color: var(--text);
+  font: inherit;
   font-size: 0.95rem;
+  white-space: nowrap;
   cursor: pointer;
 }
 .pill[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 
-/* A tap target is an area, not a height.
-   `.btn` sets min-height, so a button whose label is a single glyph is 44px tall and as wide as the
-   glyph — the sheet's close control measured 43x44 on a 360px phone, and the only instrument that
-   noticed was one that measured both edges. Icon-only buttons get the floor in both directions. */
-.btn-icon { min-width: var(--tap); }
+/* ---- navigation --------------------------------------------------------- */
 
-.view {
-  padding: var(--gap);
-  /* Room for the tab bar plus the home indicator, so the last card is never trapped under it. */
-  padding-bottom: calc(var(--tap) + 34px + env(safe-area-inset-bottom));
-  outline: none;
-}
-
-.tabbar {
-  position: fixed;
-  left: 0; right: 0; bottom: 0;
-  z-index: 10;
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  background: var(--surface);
-  border-top: 1px solid var(--line);
-  padding-bottom: env(safe-area-inset-bottom);
-}
+.mainnav { display: flex; gap: 2px; min-width: 0; }
 .tab {
   min-height: var(--tap);
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 2px;
-  padding: 6px 2px;
-  font-size: 0.7rem;
+  gap: 8px;
+  padding: 0 12px;
+  border-radius: 10px;
   text-decoration: none;
   color: var(--text-dim);
+  font-size: 0.95rem;
+  white-space: nowrap;
 }
-.tab-icon { font-size: 1.15rem; line-height: 1; }
-.tab[aria-current="page"] { color: var(--accent); }
+.tab-icon { font-size: 1.05rem; line-height: 1; }
+.tab[aria-current="page"] { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+
+@media (min-width: 900px) {
+  .menu-btn { display: none; }
+  .crumb { display: none; }
+  .topbar { padding-inline: 20px; }
+  .topbar #mainnav { display: flex; }
+  .topbar #child-switcher { display: flex; flex: 0 1 auto; margin-left: auto; }
+  .topbar #signout { display: inline-flex; flex: 0 0 auto; }
+  .topbar-row { max-width: 1240px; margin-inline: auto; gap: 12px; }
+  .mainnav { margin-left: 10px; }
+}
+
+/* ---- drawer ------------------------------------------------------------- */
+
+/* A <dialog>, so the focus trap, the Esc key and the scrim come from the platform rather than from
+   a hand-written key handler that has to be right. The UA stylesheet centres a modal dialog with
+   `inset: 0; margin: auto`; `margin-right: auto` alone pins it to the left edge. */
+.drawer {
+  border: none;
+  padding: 0;
+  margin: 0 auto 0 0;
+  width: min(310px, 86vw);
+  max-width: none;
+  height: 100dvh;
+  max-height: 100dvh;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  overflow: hidden;
+}
+.drawer[open] { display: flex; flex-direction: column; }
+.drawer::backdrop { background: rgba(0, 0, 0, 0.5); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .drawer[open] { animation: drawer-in 0.16s ease-out; }
+  @keyframes drawer-in { from { transform: translateX(-100%); } to { transform: none; } }
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: max(8px, env(safe-area-inset-top)) 10px 8px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.drawer-family { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-slot { padding: 8px; overflow-y: auto; }
+
+/* The destinations sit at the BOTTOM of the drawer, not the top. Moving the navigation off the
+   bottom bar costs one-handed reach — the ☰ is in the far corner from a thumb — and this is what
+   keeps that cost to the opening tap alone: once the drawer is up, the five links it exists for are
+   back in the same band of the screen the tab bar used to occupy. `margin-top: auto` on the FIRST
+   growing child is what does it, so the free space collects in exactly one place; `.drawer-foot`
+   deliberately does not also claim it, because two auto margins split the space between them and
+   leave the sign-out button floating in a gap. When the content is taller than the drawer the auto
+   margin resolves to zero on its own and the layout degrades to a plain top-aligned list. */
+#drawer-nav { flex: 0 0 auto; margin-top: auto; }
+.drawer-slot-children { flex: 0 1 auto; max-height: 38vh; }
+.drawer-sep {
+  margin: 4px 0 0;
+  padding: 8px 16px 0;
+  border-top: 1px solid var(--line);
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.drawer-foot {
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+}
+
+/* The same nav element, laid out as a list instead of a row. */
+.drawer .mainnav { flex-direction: column; gap: 2px; }
+.drawer .tab { min-height: 48px; padding: 0 12px; font-size: 1rem; border-radius: 10px; }
+.drawer .tab-icon { width: 22px; text-align: center; }
+
+/* And the same switcher, as a column of full-width pills. */
+.drawer .pills { flex-direction: column; overflow-x: visible; gap: 6px; }
+.drawer .pill { border-radius: 10px; text-align: left; width: 100%; }
+
+/* ---- view --------------------------------------------------------------- */
+
+.view {
+  padding: var(--gap);
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  outline: none;
+}
 
 /* ---- cards -------------------------------------------------------------- */
 
@@ -209,6 +355,65 @@ p { margin: 0 0 0.6em; }
 .badge.danger { color: var(--danger); }
 .badge.ok { color: var(--ok); }
 
+/* ---- empty states and first run ----------------------------------------- */
+
+/* The console a parent sees on day one has no devices, no apps, no usage and no history, so four of
+   its five screens are made entirely of this. It is the first impression, not the edge case. */
+.empty { text-align: center; padding: 26px 18px; }
+.empty .empty-icon {
+  width: 52px; height: 52px;
+  margin: 0 auto 12px;
+  display: grid; place-items: center;
+  border-radius: 14px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 1.5rem;
+}
+.empty h2 { margin-bottom: 6px; }
+.empty p { color: var(--text-dim); font-size: 0.95rem; max-width: 44ch; margin-inline: auto; }
+.empty .btn { margin-top: 14px; display: inline-flex; align-items: center; justify-content: center; }
+
+.steps { margin: 0 0 14px; padding: 0; list-style: none; counter-reset: step; }
+.steps li {
+  position: relative;
+  counter-increment: step;
+  padding: 0 0 14px 40px;
+  border-left: 2px solid var(--line);
+  margin-left: 13px;
+}
+.steps li:last-child { border-left-color: transparent; padding-bottom: 0; }
+.steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: -14px; top: -2px;
+  width: 26px; height: 26px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+.steps b { display: block; font-weight: 620; }
+.steps small { color: var(--text-dim); font-size: 0.88rem; }
+
+/* ---- home status strip -------------------------------------------------- */
+
+/* Shown only when there is more than one device. With one device the card below already answers
+   "is it all right", and a strip repeating it is decoration. */
+.strip { padding: 4px 14px; }
+.strip .strip-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--tap);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.strip .strip-row:last-child { border-bottom: none; }
+.strip .strip-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.strip .meter { flex: 0 0 84px; }
+
 /* ---- controls ----------------------------------------------------------- */
 
 .btn {
@@ -229,7 +434,19 @@ p { margin: 0 0 0.6em; }
 .btn-danger { color: var(--danger); }
 .btn-quiet { background: transparent; border-color: transparent; color: var(--text-dim); }
 .btn-block { display: block; width: 100%; text-align: center; text-decoration: none; }
+/* An <a> is inline, and min-height does not apply to an inline box — so a link styled as a button
+   is exactly as tall as its line box plus padding, which lands within a pixel of the 44px floor and
+   depends on the font. Giving it a block-level display makes the floor apply instead of nearly
+   apply. `a.btn.btn-block` restates the full-width case, which the more specific rule would
+   otherwise override back to inline. */
+a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+a.btn.btn-block { display: flex; }
 .btn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+/* A tap target is an area, not a height.
+   `.btn` sets min-height, so a button whose label is a single glyph is 44px tall and as wide as the
+   glyph — the sheet's close control measured 43x44 on a 360px phone, and the only instrument that
+   noticed was one that measured both edges. Icon-only buttons get the floor in both directions. */
+.btn-icon { min-width: var(--tap); display: inline-grid; place-items: center; padding: 0; }
 
 label { display: block; font-size: 0.9rem; color: var(--text-dim); margin-bottom: 4px; }
 input, select {
@@ -278,6 +495,21 @@ input[type="checkbox"] { width: auto; min-height: auto; }
 
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
+/* A group of mutually exclusive choices, sized so three of them still fit a 360 px screen. */
+.seg { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.seg .btn {
+  flex: 1 1 0;
+  min-width: 0;
+  border: none;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  padding: 10px 6px;
+}
+.seg .btn + .btn { border-left: 1px solid var(--line); }
+.seg .btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+
 /* ---- lists -------------------------------------------------------------- */
 
 .list { list-style: none; margin: 0; padding: 0; }
@@ -294,6 +526,19 @@ input[type="checkbox"] { width: auto; min-height: auto; }
 .list .label { min-width: 0; }
 .list .label b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list .label small { color: var(--text-dim); font-size: 0.8rem; word-break: break-all; }
+
+/* The app list carries a three-way control per row, which does not fit beside a package name on a
+   360 px screen. It stacks below the label until there is room for both. */
+.applist li { flex-direction: column; align-items: stretch; gap: 8px; }
+.applist .seg { width: 100%; }
+@media (min-width: 560px) {
+  .applist li { flex-direction: row; align-items: center; }
+  .applist .seg { width: auto; flex: 0 0 260px; }
+}
+
+.toolbar { display: grid; gap: 8px; margin-bottom: 10px; }
+.toolbar .seg .btn { font-size: 0.85rem; }
+.list-count { color: var(--text-dim); font-size: 0.85rem; margin: 0 0 8px; }
 
 /* ---- usage bars --------------------------------------------------------- */
 
@@ -346,7 +591,8 @@ input[type="checkbox"] { width: auto; min-height: auto; }
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(var(--tap) + 20px + env(safe-area-inset-bottom));
+  /* The tab bar it used to clear is gone, so this is now just clear of the home indicator. */
+  bottom: calc(20px + env(safe-area-inset-bottom));
   z-index: 20;
   max-width: min(92vw, 460px);
   padding: 11px 16px;
@@ -362,7 +608,7 @@ input[type="checkbox"] { width: auto; min-height: auto; }
 
 @media (min-width: 720px) {
   .view {
-    max-width: 900px;
+    max-width: 1240px;
     margin: 0 auto;
     padding: 20px 20px 40px;
     display: grid;
@@ -371,12 +617,14 @@ input[type="checkbox"] { width: auto; min-height: auto; }
     align-items: start;
   }
   .view > .full { grid-column: 1 / -1; }
-  .topbar { padding-inline: 20px; }
-  .topbar-row, .pills { max-width: 900px; margin-inline: auto; }
-  /* The tab bar stays on screen at every width. It is the whole navigation, and moving it into a
-     sidebar above some breakpoint would mean maintaining two navigations. */
+}
+
+/* A third column rather than a wider one. Past about 70 characters a line of text stops being
+   easier to read for being longer, and a two-column grid on a 1500 px screen is mostly gutter. */
+@media (min-width: 1180px) {
+  .view { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * { transition: none !important; }
+  * { transition: none !important; animation: none !important; }
 }
