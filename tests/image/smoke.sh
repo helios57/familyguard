@@ -191,9 +191,23 @@ docker run -d --name "$PG" --network "$NET" \
 	-e POSTGRES_PASSWORD="$PG_PASSWORD" -e POSTGRES_DB=postgres \
 	"$PG_IMAGE" >/dev/null 2>&1 || notmeasured "could not start postgres"
 
+# `-h 127.0.0.1` is load bearing, and this script had the version without it — the same readiness
+# bug tests/e2e/run.sh already fixed, kept alive by a second copy of the loop. Without the flag
+# pg_isready uses the UNIX SOCKET, which is served during the entrypoint's *initdb* phase by a
+# temporary server that is about to be shut down. The temporary server runs with listen_addresses
+# empty, so TCP is exactly what the init phase cannot fake — and the gap is measurable on the image
+# THIS script uses rather than borrowed from the other one: polling both probes against a fresh
+# postgres:18.6, the socket answers ready at **1.53 s** and TCP not until **1.95 s**. Four hundred
+# milliseconds in which the old check returned success and the very next connection is refused.
+#
+# What that 0.85 s window cost here, on 2026-09-05: the release run for v0.2.0 went red with
+# `dial tcp …:5432: connect: connection refused`, five of twelve assertions failing at once, on a
+# tree whose identical suite had been green in CI minutes before. It reads as Docker being flaky and
+# it is a probe measuring the wrong process — which is why the fix belongs in the probe and not in a
+# retry around the run.
 ready=""
 for _ in $(seq 1 60); do
-	if docker exec "$PG" pg_isready -U postgres -q >/dev/null 2>&1; then
+	if docker exec "$PG" pg_isready -h 127.0.0.1 -U postgres -q >/dev/null 2>&1; then
 		ready=yes
 		break
 	fi

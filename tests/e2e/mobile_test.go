@@ -595,6 +595,42 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 			t.Errorf("the menu button's aria-expanded is %q while the drawer is open; a screen "+
 				"reader is told the menu is still shut", open.Expanded)
 		}
+
+		// The same claim again, with the race that broke it made deterministic.
+		//
+		// `dialog.close()` fires `close` as a QUEUED TASK, so closing and reopening inside one task
+		// delivers the close event while the drawer is open again — which is what a parent does by
+		// picking a destination (the drawer closes) and reaching for the menu once more. The check
+		// above catches that roughly never: it went red once in CI, on a tree whose identical suite
+		// had been green minutes before, and green everywhere else. A guard that fires one time in
+		// many is a guard that gets re-run rather than read, so the ordering is forced here instead
+		// of waited for.
+		//
+		// The counter is the positive control. Without it a `close` event that never arrived would
+		// leave aria-expanded at "true" and this would pass having tested nothing.
+		b.eval(`(() => {
+  window.__closeEvents = 0;
+  document.getElementById('drawer').addEventListener('close', () => { window.__closeEvents++; });
+  closeDrawer();
+  openDrawer();
+})()`, nil)
+		b.waitFor("window.__closeEvents > 0", 5*time.Second,
+			"the drawer's close event to be delivered after the reopen")
+
+		var raced struct {
+			Open     bool   `json:"open"`
+			Expanded string `json:"expanded"`
+		}
+		b.eval(`({
+  open: document.getElementById('drawer').open,
+  expanded: document.getElementById('menu-open').getAttribute('aria-expanded'),
+})`, &raced)
+		if !raced.Open {
+			t.Error("the drawer did not reopen, so the close-then-open ordering was not exercised")
+		} else if raced.Expanded != "true" {
+			t.Errorf("after closing and reopening the drawer in one task, aria-expanded is %q "+
+				"while the drawer is open: the queued close event overwrote the open state", raced.Expanded)
+		}
 		// :modal is what buys the focus trap and the Escape key from the platform instead of from a
 		// key handler somebody has to keep right. A drawer that is open but not modal leaves the
 		// page behind it focusable, so tabbing walks out of the menu into content nobody can see.

@@ -2767,6 +2767,65 @@ the scope of a run is where its blind spot lives, and a summary is only worth wh
 
 ---
 
+## Phase 10 — the release that was refused, and the two defects it found
+
+`v0.2.0` was tagged on a commit whose CI had been **green on every one of the six jobs minutes
+earlier**. Its own `verify` — the same `ci.yml`, re-run against the tagged tree, which exists
+because a tag can be pushed at a commit whose CI was cancelled or force-pushed past — came back
+with **e2e and image red**. `publish` never ran, so nothing reached GHCR and no release exists.
+That is the gate working, and it is the only reason either defect below was found: both are races,
+and a race is green almost always.
+
+The tag stands, unpublished, and `v0.2.1` carries the fixes. Moving it would have been the one
+change a consumer cannot detect (DEPLOYMENT.md), and the price of not moving it is one version
+number that names nothing — which is a fact, and cheaper than a tag that lies.
+
+### 10.1 — the drawer told a screen reader the menu was shut while it was open
+
+`TestConsoleRendersOnAPhone/drawer`: *the menu button's aria-expanded is "false" while the drawer is
+open*.
+
+`dialog.close()` fires its `close` event as a **queued task**, not synchronously. The console's
+close handler wrote `aria-expanded="false"` unconditionally, because it was the close handler. So
+closing and reopening inside one task — a parent picking a destination, which closes the drawer, then
+reaching for the menu again — delivers the `close` event *after* `showModal()` has already set the
+attribute to `true`, and the last writer wins. The drawer is open; assistive technology is told it is
+not.
+
+The fix is to read the authority instead of remembering the event: one `syncMenuButton()` that sets
+the attribute from `drawer.open`, called from both paths.
+
+**The calibration is the interesting half.** Breaking `syncMenuButton` outright reddened *both*
+assertions, which proves nothing about the new one — so the original defect was restored verbatim
+instead (open still sets `true`; the close listener writes `false` blindly). Under that, the
+pre-existing check at `mobile_test.go:595` **passed** and only the new one failed. That is the
+measurement: the old assertion does not bind to this defect, and it caught it once, in CI, by luck.
+The new one forces the ordering — `closeDrawer(); openDrawer()` in a single evaluation — and counts
+the `close` events as its positive control, so a `close` that never arrived cannot leave the
+attribute at `true` and pass having tested nothing. Red on the defect, green on the fix.
+
+### 10.2 — the smoke test's database probe was measuring a server that was about to be shut down
+
+`dial tcp …:5432: connect: connection refused`, and five of twelve assertions failing at once, which
+reads exactly like Docker being flaky.
+
+`tests/image/smoke.sh` waited with `pg_isready -U postgres`. Without `-h 127.0.0.1` that uses the
+**unix socket**, and during the postgres entrypoint's `initdb` phase the socket is served by a
+temporary server that is about to be stopped. `tests/e2e/run.sh` had already found and fixed this;
+the smoke script held the second copy of the loop, and the copy that gets fixed is the one whose
+failure was seen most recently.
+
+Measured here on the image this script actually uses, rather than cited from the other one: against a
+fresh `postgres:18.6`, the socket answers ready at **1.53 s** and TCP not until **1.95 s**. Four
+hundred milliseconds in which the old probe returns success and the very next connection is refused.
+The temporary server runs with `listen_addresses` empty, so TCP is precisely what the init phase
+cannot fake. With `-h 127.0.0.1`: **12 passed, 0 failed**.
+
+Neither of these is a retry around a flaky step. A retry would have made both symptoms go away and
+left a console that mislabels its own menu and a probe that reports on the wrong process.
+
+---
+
 ## Traceability
 
 Each requirement maps to the phase that implements it and the test that proves it.

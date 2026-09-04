@@ -193,12 +193,26 @@ function placeChrome() {
   }
 }
 
+/* What the ☰ button claims, decided by READING the dialog rather than by remembering which
+ * handler is running.
+ *
+ * `dialog.close()` fires its `close` event as a QUEUED TASK, not synchronously. So a close followed
+ * quickly by an open — pick a destination in the drawer, which closes it, then open it again — can
+ * deliver the `close` event AFTER the drawer is back on screen, and a handler that wrote 'false'
+ * because it was the close handler told a screen reader the menu was shut while it was open. Caught
+ * in CI on 2026-09-05 by TestConsoleRendersOnAPhone/drawer, on a tree that had passed the identical
+ * suite minutes earlier: it is a race, so it is green almost always. */
+function syncMenuButton() {
+  const d = document.getElementById('drawer');
+  document.getElementById('menu-open').setAttribute('aria-expanded', d.open ? 'true' : 'false');
+}
+
 function openDrawer() {
   const d = document.getElementById('drawer');
   if (d.open) return;
   if (typeof d.showModal === 'function') d.showModal();
   else d.setAttribute('open', '');
-  document.getElementById('menu-open').setAttribute('aria-expanded', 'true');
+  syncMenuButton();
 }
 
 function closeDrawer() {
@@ -218,10 +232,9 @@ async function boot() {
 
   document.getElementById('menu-open').addEventListener('click', openDrawer);
   document.getElementById('drawer-close').addEventListener('click', closeDrawer);
-  // One place to undo the button's state, so Esc, the backdrop and the ✕ cannot disagree about it.
-  document.getElementById('drawer').addEventListener('close', () => {
-    document.getElementById('menu-open').setAttribute('aria-expanded', 'false');
-  });
+  // One place to undo the button's state, so Esc, the backdrop and the ✕ cannot disagree about it
+  // — and it asks the dialog what it is rather than asserting what it must be. See syncMenuButton.
+  document.getElementById('drawer').addEventListener('close', syncMenuButton);
   // Picking a destination closes the menu; leaving it open over the page it just navigated to is
   // the drawer bug every hand-rolled one has.
   document.getElementById('mainnav').addEventListener('click', closeDrawer);
