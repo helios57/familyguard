@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -26,6 +27,16 @@ func apkRouter(t *testing.T, apkPath string) *gin.Engine {
 	s := &Server{
 		cfg: &config.Config{APKPath: apkPath},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	// The same value main.go computes at startup, by the same function, from the same file. Without
+	// it every test here would exercise the handler with its correspondence check switched off —
+	// which is how a guard ends up defined, unit-tested and never reached.
+	if apkPath != "" {
+		sum, err := provisioning.ChecksumFile(apkPath)
+		if err != nil {
+			t.Fatalf("ChecksumFile: %v", err)
+		}
+		s.packageChecksum = sum
 	}
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -130,5 +141,64 @@ func TestAPKThatVanishedIsReportedAsUnavailableRatherThanAbsent(t *testing.T) {
 	w := get(t, r, APKDownloadPath, nil)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", w.Code)
+	}
+}
+
+// The failure this endpoint exists to make visible. A new APK is installed on the node by copying
+// a file; the running process is not told, and it goes on publishing the checksum it computed at
+// startup. Every QR issued since then describes bytes that are no longer on disk, and the phone
+// finds out mid-provisioning with an error only the system log carries.
+//
+// The replacement here is deliberately the SAME SIZE as the original, because that is not a
+// contrived case: 0.1.0 and 0.1.1 of this DPC are both 13297337 bytes — the version strings are
+// the same length — so a check that compared sizes, or trusted an mtime, would have passed the
+// one swap this repository has actually performed.
+func TestAPKReplacedUnderARunningServerIsRefusedRatherThanServed(t *testing.T) {
+	before := []byte("the bytes the startup checksum was computed from")
+	after := []byte("a different build, byte for byte the same size!!")
+	if len(before) != len(after) {
+		t.Fatalf("the fixtures are %d and %d bytes; equal length is the point of this test, and a "+
+			"pair that differs in size would pass it for the wrong reason", len(before), len(after))
+	}
+
+	path := writeAPK(t, before)
+	r := apkRouter(t, path)
+
+	if err := os.WriteFile(path, after, 0o600); err != nil {
+		t.Fatalf("replace fixture: %v", err)
+	}
+
+	w := get(t, r, APKDownloadPath, nil)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 — the server served bytes it does not publish a checksum for", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "apk_changed") {
+		t.Errorf("body = %q, want the apk_changed code; apk_unavailable would send the operator "+
+			"looking for a missing file rather than a missing restart", w.Body.String())
+	}
+}
+
+// The negative control, and the reason the check hashes rather than stats: reinstalling the same
+// build moves the modification time and rewrites the inode without changing what the QR describes.
+// A guard that refused on that would take the download offline for an operation that changed
+// nothing, and the operator would learn to restart on every deploy to clear a false alarm.
+func TestAPKRewrittenWithIdenticalBytesIsStillServed(t *testing.T) {
+	body := []byte("the bytes the startup checksum was computed from")
+	path := writeAPK(t, body)
+	r := apkRouter(t, path)
+
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove fixture: %v", err)
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatalf("rewrite fixture: %v", err)
+	}
+
+	w := get(t, r, APKDownloadPath, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — identical bytes are not a changed APK", w.Code)
+	}
+	if got := w.Body.String(); got != string(body) {
+		t.Errorf("body = %q, want the file's bytes", got)
 	}
 }

@@ -490,6 +490,9 @@ class ManifestAndPlatformCallsTest {
             "android.permission.INTERNET" to "enrollment, policy, heartbeat, event stream",
             // Read-only, for the heartbeat's wifi/cellular field.
             "android.permission.ACCESS_NETWORK_STATE" to "heartbeat connectivity",
+            // Android 37 drops an app's packets to a local address without this, silently. A
+            // self-hosted control plane on the family's own LAN is the case it costs.
+            "android.permission.ACCESS_LOCAL_NETWORK" to "a control plane on the family's own network",
             // The connection is a foreground service so "lock now" locks now.
             "android.permission.FOREGROUND_SERVICE" to "ConnectionService",
             "android.permission.FOREGROUND_SERVICE_SPECIAL_USE" to "its specialUse type",
@@ -517,6 +520,12 @@ class ManifestAndPlatformCallsTest {
             "android.permission.ACCESS_FINE_LOCATION" to "the one-shot position fix",
             "android.permission.ACCESS_COARSE_LOCATION" to "its approximate fallback",
             "android.permission.ACCESS_BACKGROUND_LOCATION" to "locating a phone nobody is holding",
+            // Installing the DPC the control plane hosts, over this app (FR-15). A device owner is
+            // exempt from the user prompt but not from the declaration: without it the commit is
+            // refused before any prompt would appear. The scope is narrow by construction — the only
+            // APK this app installs is one whose checksum its own server published and whose signing
+            // certificate equals this app's own.
+            "android.permission.REQUEST_INSTALL_PACKAGES" to "installing the DPC over itself",
             // Not authored here: androidx.core injects it, and a matching signature-level
             // <permission> declaration, because ConnectionService registers the install watcher with
             // ContextCompat.RECEIVER_NOT_EXPORTED. It is scoped to this app's own package name and

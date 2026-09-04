@@ -29,10 +29,11 @@ E2E="$ROOT/tests/e2e/run.sh"
 ANDROID="$ROOT/android-dpc"
 GRADLEW="$ANDROID/gradlew"
 INSTRUMENTED="$ROOT/tests/android/instrumented.sh"
+SELF_UPDATE="$ROOT/tests/android/self-update.sh"
 IMAGE_SMOKE="$ROOT/tests/image/smoke.sh"
 MANIFESTS="$ROOT/tests/manifests/render.sh"
 
-ALL_LAYERS=(secret-scan backend manifests image e2e android-unit android-instrumented)
+ALL_LAYERS=(secret-scan backend manifests image e2e android-unit android-instrumented android-self-update)
 
 usage() {
 	printf 'layers: %s\n' "${ALL_LAYERS[*]}"
@@ -411,6 +412,46 @@ run_android_instrumented() {
 	esac
 }
 
+# ------------------------------------------------------- android-self-update ----
+#
+# FR-15, and the only layer that can see it: the server replacing the DPC on a phone. It needs both
+# of the expensive preconditions at once — a provisioned device AND the e2e harness's database and
+# server — which is exactly why it is registered here rather than left as something somebody
+# remembers to run. A feature whose only evidence is a script nobody invokes is a feature with no
+# evidence.
+#
+# It runs last, and it has to. It reboots the device and installs over the app the instrumented layer
+# just measured, so putting it earlier would leave that layer looking at a build this one chose —
+# and, more decisively, it ENROLS the device, which applies a policy carrying
+# `no_debugging_features`. The platform then switches adb off and keeps it off across reboots, so
+# every layer that needs a device is unmeasurable after this one has run. On an emulator the way
+# back is a restart with `-wipe-data`; there is no way back from a shell, because the restriction is
+# precisely the one that closes that door.
+run_android_self_update() {
+	section "android-self-update: the server replaces the DPC on the device (needs an emulator AND docker; REBOOTS it)"
+	local why
+	if why="$(android_missing)"; then
+		record android-self-update "NOT MEASURED" "$why"
+		return
+	fi
+	if [ ! -x "$SELF_UPDATE" ]; then
+		record android-self-update "NOT MEASURED" "$SELF_UPDATE is missing or not executable"
+		return
+	fi
+	local log
+	log="$(mktemp)"
+	"$SELF_UPDATE" 2>&1 | tee "$log"
+	local rc=${PIPESTATUS[0]}
+	local note
+	note="$(command grep -a '^RESULT	' "$log" | tail -n1 | cut -f3-)"
+	rm -f "$log"
+	case $rc in
+	0) record android-self-update "PASS" "$note" ;;
+	2) record android-self-update "NOT MEASURED" "${note:-the runner reported it could not measure}" ;;
+	*) record android-self-update "FAIL" "$note" ;;
+	esac
+}
+
 wants secret-scan && run_secret_scan
 wants backend && run_backend
 wants manifests && run_manifests
@@ -418,6 +459,7 @@ wants image && run_image
 wants e2e && run_e2e
 wants android-unit && run_android_unit
 wants android-instrumented && run_android_instrumented
+wants android-self-update && run_android_self_update
 
 # ---------------------------------------------------------------- summary ----
 printf '\n================ summary ================\n'

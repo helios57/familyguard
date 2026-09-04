@@ -34,6 +34,12 @@ const (
 	CmdTypeBlockYouTube   = "BLOCK_YOUTUBE_ALL"
 	CmdTypeUnblockYouTube = "UNBLOCK_YOUTUBE_ALL"
 	CmdTypeSyncPolicy     = "SYNC_POLICY"
+	// CmdTypeUpdateApp tells the phone to fetch the DPC this server is hosting and install it over
+	// itself. It is the only command whose success the acknowledgement cannot report: applying it
+	// kills the process that would send the acknowledgement, so the device answers "downloaded and
+	// verified, installing" and the *next heartbeat* — carrying app_version_code — is what says
+	// whether it worked.
+	CmdTypeUpdateApp = "UPDATE_APP"
 )
 
 // ValidCommandTypes is the closed set the API accepts. An unknown type is a 400, not a queued row
@@ -47,6 +53,7 @@ var ValidCommandTypes = map[string]bool{
 	CmdTypeBlockYouTube:   true,
 	CmdTypeUnblockYouTube: true,
 	CmdTypeSyncPolicy:     true,
+	CmdTypeUpdateApp:      true,
 }
 
 // App rule actions.
@@ -109,6 +116,15 @@ type DeviceState struct {
 	PolicyVersion int64      `json:"policy_version"`
 	LastSeenAt    *time.Time `json:"last_seen_at,omitempty"`
 	Online        bool       `json:"online"`
+
+	// AppVersionName and AppVersionCode are the DPC build actually running on the phone, as the
+	// phone reports it. They exist because the APK this server hosts is installed out of band —
+	// it is a file on the node, not part of the image — so before this, nothing anywhere could
+	// answer "is the phone running the build the server is serving?". An empty name and a zero
+	// code mean a device that has not reported one yet, which is not the same as a device on
+	// version zero and is rendered as "not reported".
+	AppVersionName string `json:"app_version_name"`
+	AppVersionCode int64  `json:"app_version_code"`
 }
 
 // Policy is a child's governance settings. DailyLimitMinutes of 0 means "no quota".

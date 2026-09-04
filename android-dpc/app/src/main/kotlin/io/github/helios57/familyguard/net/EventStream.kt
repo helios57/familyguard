@@ -20,8 +20,18 @@ import kotlinx.coroutines.withContext
  * be shown as having received an alarm it never got. So this class's entire output is "something
  * changed, go and look", and the looking is what records that it happened.
  *
- * The `connected` frame is treated as the definition of a working stream, and it is the only thing
- * that resets the backoff — see [Backoff]. Everything else is forwarded to [onWake].
+ * The `connected` frame is the definition of a working stream: it is the only thing that resets the
+ * backoff — see [Backoff] — and it also wakes a sync, which is not the redundancy it looks like.
+ *
+ * **A publish reaches the streams that are open at that instant and nothing else, and there is no
+ * second delivery path.** The DPC's own poll re-enforces from the *cache*; it fetches nothing. So a
+ * command queued while this device had no stream open is not delayed, it is lost — until some
+ * later, unrelated event happens to wake a sync that finds it. Measured on an emulator: the command
+ * was queued 1.2 s before the stream opened (2026-09-04 — the gap between the start-of-session
+ * heartbeat and the stream that opens after the inventory finishes uploading), and on the next run
+ * it was still undelivered eleven minutes and two polls later (2026-09-05). Syncing on connect
+ * closes that window for one extra fetch per connection — four an hour in steady state, since the
+ * server closes every stream at fifteen minutes.
  */
 class EventStream(
     private val api: ApiClient,
@@ -78,8 +88,10 @@ class EventStream(
                     // accepts the socket and closes it at once; resetting on connect rather than on
                     // this frame would hold such a phone at the base delay indefinitely.
                     backoff.reset()
-                    continue
                 }
+                // Including the connected frame — see the class comment. Anything published while
+                // this device had no stream open was published to nobody, and this is the only
+                // moment at which the device can find out.
                 onWake(event)
             }
         } finally {

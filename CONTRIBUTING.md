@@ -50,15 +50,22 @@ tests/run_all.sh backend e2e # only these two
 | `e2e` | Docker | black box: a real server binary, a real PostgreSQL, a real browser |
 | `android-unit` | JDK 26 and the Android SDK (platform 37.1, build-tools 37.0.0) | the DPC's JVM suite, plus the two repository-wide guards: requirement citations and documentation links |
 | `android-instrumented` | an emulator or device on API 29+ promoted to Device Owner | provisioning, suspension, DNS policy, commands, keystore-backed storage, across a real reboot |
+| `android-self-update` | both of the above at once — an emulator **and** Docker | FR-15 end to end: the control plane replaces the DPC on an enrolled, hardened phone, and the phone reports the new build back |
+
+**`android-self-update` runs last and is a one-shot per boot.** Enrolling applies the first policy,
+which carries `no_debugging_features`; the platform switches adb off and keeps it off across
+reboots, so every layer that needs a device is unmeasurable afterwards. That is the product working.
+On an emulator the way back is a restart with `-wipe-data`, and there is no way back from a shell —
+the restriction is precisely the one that closes that door.
 
 Naming layers on the command line does not make a run green: a layer you asked for that cannot run
 still exits 2. It exists so the summary can print *which* layers produced the result — the scope of a
 sweep is where its blind spot lives, and an exit status of 0 means nothing until you know what it
 covered.
 
-CI (`.github/workflows/ci.yml`) runs the first five. The instrumented layer needs hardware nobody
-gives a runner for free, so it is a local gate; if your change touches the DPC's device-facing code,
-run it and say what you saw.
+CI (`.github/workflows/ci.yml`) runs the first five. The two device layers need hardware nobody
+gives a runner for free, so they are local gates; if your change touches the DPC's device-facing
+code, run them and say what you saw.
 
 ---
 

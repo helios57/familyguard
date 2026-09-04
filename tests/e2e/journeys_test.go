@@ -58,6 +58,9 @@ type deviceStateDTO struct {
 	PolicyVersion int64      `json:"policy_version"`
 	LastSeenAt    *time.Time `json:"last_seen_at"`
 	Online        bool       `json:"online"`
+
+	AppVersionName string `json:"app_version_name"`
+	AppVersionCode int64  `json:"app_version_code"`
 }
 
 type deviceViewDTO struct {

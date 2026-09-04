@@ -10,6 +10,7 @@ import android.app.admin.DevicePolicyManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
@@ -62,6 +63,9 @@ import io.github.helios57.familyguard.recovery.RecoveryActivity
 import io.github.helios57.familyguard.recovery.RecoveryJournal
 import io.github.helios57.familyguard.recovery.RecoveryMode
 import io.github.helios57.familyguard.store.encryptedPreferences
+import io.github.helios57.familyguard.update.AndroidInstaller
+import io.github.helios57.familyguard.update.ApkInfo
+import io.github.helios57.familyguard.update.AppUpdater
 import io.github.helios57.familyguard.usage.DayAttribution
 import io.github.helios57.familyguard.usage.EncryptedUsageStore
 import io.github.helios57.familyguard.usage.ScreenOnClock
@@ -82,6 +86,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.net.URL
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -783,6 +788,26 @@ class ConnectionService : Service() {
                     }
                 }
             },
+            update = {
+                val installer = AndroidInstaller(this)
+                AppUpdater(
+                    info = {
+                        val r = api.apkInfo()
+                        ApkInfo(url = r.url, packageChecksum = r.packageChecksum, size = r.size)
+                    },
+                    // The download is deliberately NOT an ApiClient call: /dpc.apk is
+                    // unauthenticated by design — a factory-reset phone fetches it during
+                    // provisioning with no credential — and sending this device's bearer token to
+                    // an absolute URL the server named is how a token leaves the deployment it
+                    // belongs to. The URL is used, the credential is not.
+                    open = { url -> URL(url).openStream() },
+                    staging = installer::staging,
+                    identify = installer::identify,
+                    installed = installer::installed,
+                    install = installer::install,
+                    log = { Log.i(TAG, "update: $it") },
+                ).update()
+            },
         ).asMap()
         return CommandQueue(
             fetch = { api.commands() },
@@ -793,6 +818,22 @@ class ConnectionService : Service() {
             ),
         )
     }
+
+    /**
+     * This app's own version, from the package manager.
+     *
+     * Empty and zero when the package manager cannot answer about the package it is running — which
+     * should not happen and is reported as "not measured" rather than as version 0, because the
+     * server stores a zero as "never reported" and a fabricated one would read as a real build.
+     */
+    private val selfVersion: Pair<String, Long>
+        get() = try {
+            val info = packageManager.getPackageInfo(packageName, 0)
+            info.versionName.orEmpty() to info.longVersionCode
+        } catch (e: Exception) {
+            Log.w(TAG, "cannot read this app's own version: ${e.message ?: e.javaClass.simpleName}")
+            "" to 0L
+        }
 
     private fun telemetry(): DeviceTelemetry {
         val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -815,6 +856,8 @@ class ConnectionService : Service() {
                 null
             },
             screenOn = power?.isInteractive,
+            appVersionName = selfVersion.first,
+            appVersionCode = selfVersion.second,
             connectivity = when {
                 capabilities == null -> "none"
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
@@ -838,6 +881,11 @@ class ConnectionService : Service() {
      *   requirement, not a courtesy.
      * - the three location permissions: "locate now" returns "no position" on a phone whose GPS is
      *   working perfectly.
+     * - `ACCESS_LOCAL_NETWORK` (Android 37+): every packet this app sends to a control plane on the
+     *   family's own network is dropped, and dropped rather than refused — the connection times out
+     *   and the log says only that the server did not answer. This is the one the platform refuses
+     *   to hand over: the call below reports success and the permission stays denied, which is why
+     *   the loop reads the result back. See the manifest for the measurement and the way out.
      *
      * Failure is logged per permission and never fatal. On a device this app does not own every grant
      * is refused, and that is already reported far more loudly by the applier.
@@ -860,10 +908,16 @@ class ConnectionService : Service() {
             // permission is already held, so granting it first would fail on a fresh device and look
             // like a device that is not the owner.
             add(Manifest.permission.ACCESS_BACKGROUND_LOCATION to "'locate now' works only while this app is in front")
+            // Guarded by version because the permission does not exist before 37: asking to grant a
+            // name the platform has never heard of fails, and it would fail on every start of every
+            // older phone, logging a cost that phone does not pay.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN) {
+                add(Manifest.permission.ACCESS_LOCAL_NETWORK to "a control plane on the family's own network is unreachable")
+            }
         }
 
         for ((permission, cost) in needed) {
-            val granted = runCatching {
+            val accepted = runCatching {
                 dpm.setPermissionGrantState(
                     AdminReceiver.component(this),
                     packageName,
@@ -874,9 +928,15 @@ class ConnectionService : Service() {
                 Log.w(TAG, "could not grant $permission: ${it.message}")
                 false
             }
-            // Logged every time it is not granted rather than once: this runs on every start, and a
+            // Read back rather than believe the return value. `setPermissionGrantState` answers "the
+            // policy was recorded", which is not "the app holds it" — measured on Android 37, it
+            // returned true for ACCESS_LOCAL_NETWORK while checkSelfPermission stayed DENIED. A
+            // grant that is believed rather than read is a permission this app only thinks it has,
+            // and the feature behind it then fails with a symptom that names something else.
+            val held = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+            // Logged every time it is not held rather than once: this runs on every start, and a
             // permission that was revoked by hand between two starts is exactly what this must show.
-            if (!granted) Log.w(TAG, "$permission was not granted — $cost")
+            if (!held) Log.w(TAG, "$permission is not held (policy accepted=$accepted) — $cost")
         }
     }
 

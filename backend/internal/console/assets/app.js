@@ -532,7 +532,12 @@ function deviceCard(dev, desired) {
     st.battery_level !== null && st.battery_level !== undefined
       && el('span', { class: 'badge', text: st.battery_level + '%' + (st.charging ? ' charging' : '') }),
     dev.model && el('span', { class: 'badge', text: dev.model }),
-    dev.os_version && el('span', { class: 'badge', text: 'Android ' + dev.os_version }));
+    dev.os_version && el('span', { class: 'badge', text: 'Android ' + dev.os_version }),
+    // The FamilyGuard build on the phone, and nothing at all when it has not said. An enrolled
+    // device that has never reported one is running a DPC from before this field existed; showing
+    // "app 0" there would be a version no build ever had.
+    dev.enrolled && st.app_version_name
+      && el('span', { class: 'badge', text: 'app ' + st.app_version_name }));
 
   const body = [head, facts];
 
@@ -575,7 +580,14 @@ function deviceCard(dev, desired) {
 
   body.push(el('div', { class: 'btn-grid' },
     el('button', { class: 'btn btn-quiet', type: 'button', text: 'Setup QR', onclick: () => showProvisioning(dev) }),
-    el('button', { class: 'btn btn-quiet', type: 'button', text: 'Recovery code', onclick: () => showRecovery(dev) })));
+    el('button', { class: 'btn btn-quiet', type: 'button', text: 'Recovery code', onclick: () => showRecovery(dev) }),
+    // Always offered, never conditioned on a comparison this page could make: the server does not
+    // parse the APK it hosts, so it does not know its version name, and a button that appeared only
+    // when the console thought an update was due would hide the one case worth having it for — a
+    // phone whose reported version is wrong or missing. The phone compares version codes against
+    // the file it downloaded and answers "already running the current build" when there is nothing
+    // to do, which is a fact it can establish and this page cannot.
+    cmd('UPDATE_APP', 'Update app')));
 
   return el('div', { class: 'card' }, ...body.filter(Boolean));
 }

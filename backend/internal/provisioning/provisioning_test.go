@@ -171,6 +171,31 @@ func TestLocalhostIsExemptFromHTTPS(t *testing.T) {
 	}
 }
 
+// TestTheEmulatorHostAliasIsExemptToo pins the third name, and it is pinned separately from the two
+// above because it is the one with a cost story rather than an obvious one.
+//
+// 10.0.2.2 is the Android emulator's fixed alias for the machine it runs on. Without it in this
+// list, an emulator can reach a bench control plane only through `adb reverse` — and the first
+// policy the DPC applies sets `no_debugging_features`, which switches adb off and takes the tunnel
+// with it. That is not a hypothetical: it is what made the FR-15 device layer unmeasurable on
+// 2026-09-04 until this name was added.
+//
+// The neighbouring address is the negative control, and it is deliberately one digit away: a rule
+// written as a prefix or a CIDR would let 10.0.2.3 through, and the exemption is meant to name one
+// host, not a network.
+func TestTheEmulatorHostAliasIsExemptToo(t *testing.T) {
+	p := goodParams()
+	p.ServerURL = "http://10.0.2.2:8080"
+	p.APKURL = "http://10.0.2.2:8080/dpc.apk"
+	if _, err := Payload(p); err != nil {
+		t.Fatalf("the emulator host alias was rejected: %v", err)
+	}
+	p.APKURL = "http://10.0.2.3:8080/dpc.apk"
+	if _, err := Payload(p); err == nil {
+		t.Error("10.0.2.3 was accepted; the exemption names a network rather than one host")
+	}
+}
+
 // TestChecksumIsComputedFromRealBytes. A checksum carried as configuration is a value nobody
 // re-derives when the APK is rebuilt; the mismatch then shows up mid-setup on the phone.
 func TestChecksumIsComputedFromRealBytes(t *testing.T) {

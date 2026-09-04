@@ -2504,6 +2504,269 @@ cron entry in this repository can honestly claim to have done it.
 
 ---
 
+## Phase 9 — Keeping the DPC current (FR-15)
+
+The app on the phone *is* the enforcement, and until this phase the only way to replace it was to
+factory-reset the child's phone and re-scan a QR code. A fleet you cannot update is a fleet frozen
+at whatever build was current the day each phone was provisioned — and the node's own APK was
+already a version behind the server it talks to.
+
+**The shape.** The server hosts one DPC and answers `GET /device/apk-info` with the build number,
+the size and the checksum of the bytes it will serve; `UPDATE_APP` is an ordinary instant command
+(FR-9), so it queues, delivers, and acknowledges like every other one. The device downloads, checks,
+and installs over itself with `PackageInstaller` as device owner — no prompt, because a device owner
+is exempt from one, and no `REQUEST_INSTALL_PACKAGES` prompt is what makes this usable on a phone
+nobody is holding.
+
+**Five checks before anything is committed** (FR-15.3), each one because the platform's own version
+of it fails later, more quietly, or on the phone: the same package name, a strictly greater build
+number, the signer equal to the one already installed, the length the server announced, and the
+checksum the server announced. `tests/android/calibrate-update.sh` breaks each one in turn and
+records the refusal.
+
+**The acknowledgement is sent before the commit** (FR-15.4), and that is not an optimisation: the
+install kills the process that would otherwise send it. The confirmation that an update actually
+happened is therefore the build number in the *next heartbeat*, read from the package manager rather
+than from `BuildConfig` — and the DPC only gets to send one because `MY_PACKAGE_REPLACED` restarts
+the foreground service the install killed (FR-15.5). Without that receiver the feature's failure
+mode is the worst one available: a phone that updated, is managed, enforces nothing, and looks from
+the console exactly like a phone that went offline.
+
+### 9.1 — the layer that can see it, and the tunnel the product kept cutting
+
+The JVM tests prove the five checks against fakes and the e2e tests prove the endpoints against a
+real server. Neither can install anything, so `tests/android/self-update.sh` exists: it builds the
+DPC twice from one tree (`-PbuildOffset=1` adds one to the build number and changes nothing else),
+installs the lower one on a device, makes it device owner, and hands the rest to
+`TestTheServerReplacesTheDPCOnARealDevice`.
+
+**The first three runs failed identically, and the failure was the product working.** Each ended
+with *"the console still shows the phone running build 0"*, and the server's request log showed the
+same shape every time: one `POST /enroll`, one `GET /device/policy`, and then silence — no heartbeat,
+ever. The suspicion was a crash inside the policy applier. It was not. The device's own log said:
+
+```
+09-04 22:37:19.591 DevicePolicyManager: Changing user restriction no_debugging_features
+                                        on user 0 to: true caller: …io.github.helios57.familyguard…
+09-04 22:37:28.435 FamilyGuard/Connection: start: applied v1 from SERVER — …
+09-04 22:37:32.840 FamilyGuard/Connection: start: inventory not delivered: Failed to connect to /127.0.0.1:38723
+```
+
+The test reached the phone's control plane over `adb reverse`, and the first policy any device
+applies contains `no_debugging_features` — so the DPC switched off the debug bridge that the tunnel
+ran through, mid-test, exactly as it is supposed to on a child's phone. Every measurement after that
+line was of a phone with no route to the server. The apply had succeeded; the heartbeat that would
+have proved it was refused on a loopback port that no longer forwarded anywhere, and swallowed by
+the `catch (_: IOException)` that keeps a phone with no signal from spamming its log.
+
+**Three things came out of that, and the first is a habit rather than a fix.** The failure was
+unfalsifiable from the test's own output: a DPC that crashed, one that was never started, and one
+whose heartbeat was refused all print *"the console still shows build 0"*. The test now dumps the
+phone's log and its running services on failure (`dumpDeviceLogOnFailure`), and says NOT MEASURED in
+those words when `logcat -d` comes back empty — which it can, because the platform truncates that
+buffer on rotation and returns zero bytes with status 0.
+
+**The route is now `10.0.2.2`**, the emulator's fixed alias for the machine it runs on, which maps
+to that machine's loopback — so the harness still listens on `127.0.0.1` and the phone reaches the
+same socket by a name the DPC cannot revoke. The DPC already allowed it: `Enroller.CLEARTEXT_HOSTS`
+is `setOf("localhost", "127.0.0.1", "10.0.2.2")` and the debug network security config names the
+same three. The *server* allowed two of the three, and that one-name difference is what had forced
+the tunnel. `RequireProvisioningURL` now names the same three, as a map beside the function rather
+than as a chain of `==`, and `TestTheEmulatorHostAliasIsExemptToo` pins it with `10.0.2.3` as the
+negative control — one digit away, because a rule written as a prefix would let a network through
+where one host was meant.
+
+**The layer is one-shot per device, and that is stated rather than worked around.** Everything
+needing adb — install, device owner, the enrollment instrumentation, the reboot that starts the
+service the way a boot does — happens before the first sync. Everything after it is read from the
+control plane, which is how a parent sees the phone anyway. `confirmInstalledBuild` still asks the
+platform directly and reports NOT MEASURED rather than passing quietly when it cannot, because on a
+device where adb survives that read is the strongest evidence there is and an assertion that
+silently stops running is one nobody notices. Putting a device back means a restart with
+`-wipe-data`; there is no shell that can clear the restriction, since the restriction is precisely
+the one that closes that door. `run_all.sh` runs this layer last for that reason, and
+`require_one_device` now names it when it finds a device listed as `offline`.
+
+### 9.2 — the permission the platform will not let a device owner take
+
+Moving the route to `10.0.2.2` did not fix it. Run 4 failed with the same sentence, now over the new
+address: *"failed to connect to /10.0.2.2 (port 37727) from /10.0.2.16 (port 51828) after 15000ms"*.
+A shell on the same phone reached the same host and port in the same second and got HTTP 200 back,
+repeatedly, on either interface — so it was not routing, not the NAT, and not the server.
+
+The instrument that turned a twenty-minute run into a two-second one is `run-as`: the APKs are debug
+builds, so `adb shell run-as io.github.helios57.familyguard toybox nc 10.0.2.2 <port>` runs the
+identical command as the *app's* uid. Side by side against one `python3 -m http.server`:
+
+```
+shell (uid 2000)                          HTTP/1.0 200 OK
+run-as (uid 10234, the app)               nc: connect: Connection timed out
+```
+
+Which made it a per-uid question, and `dumpsys connectivity trafficcontroller` answered it:
+
+```
+sLocalNetAccessMap (default is true meaning global):
+  LocalNetAccessKey{... remoteAddress=10.0.2.0/120}: false
+```
+
+**Android 37 sorts every destination into global or local and drops an app's packets to a local one
+unless the app holds `ACCESS_LOCAL_NETWORK`.** `10.0.2.0/24` is the emulator's own subnet, so the
+bench control plane is local by construction; `adb`'s uid is exempt, which is why every shell probe
+disagreed with every app probe. Dropped rather than refused, so the app sees a connect timeout and
+its log names nothing — the same sentence a phone prints for a server that is down.
+
+This is not only a bench property. A family that self-hosts the control plane at home reaches it at
+`192.168.x.x` from phones on the same Wi-Fi, and those phones would fail exactly this way, silently.
+`guard.example.com` over the internet is global and unaffected — which is why the product had never
+shown it.
+
+**A device owner cannot grant it to itself, and the way that fails is the interesting part.**
+`setPermissionGrantState(..., GRANTED)` returns **true**, from a clean state and from a policy-fixed
+one, and `checkSelfPermission` stays `DENIED`; `POST_NOTIFICATIONS` and the three location
+permissions granted from the identical loop in the identical call. `adb shell pm grant` works, and
+the grant then survives the DPC re-applying its whole policy. So three things changed:
+
+- the app **declares** the permission, because a permission that is not declared cannot be granted by
+  anyone, and with it a parent has a route (Settings → the app → Permissions → Local network devices);
+- `grantOwnPermissions` **reads the result back** with `checkSelfPermission` instead of believing the
+  return value, and logs `"… is not held (policy accepted=true)"` — the sentence that would have
+  saved four runs. A grant that is believed rather than read is a permission the app only thinks it
+  has, and every feature behind it then fails naming something else;
+- the bench grants it explicitly (`device.sh`'s `allow_local_network`, read back from `dumpsys` and
+  reported as NOT MEASURED if it did not take), and `DEPLOYMENT.md` carries the step for a
+  control plane on the family's own network.
+
+### 9.3 — a command queued in the gap was not delayed, it was lost
+
+Run 5 got the phone enrolled, rebooted, reporting its build and taking commands — and still failed,
+with the console showing the old build four minutes after `UPDATE_APP` was queued. The first guess
+was that the deadline was simply shorter than the DPC's five-minute poll. Raising it to eight
+minutes was run 6, and run 6 failed too, with the phone visibly healthy the whole way:
+
+```
+23:55:11      POST /api/v1/devices/:id/commands  the test queues UPDATE_APP  ← no stream open yet
+23:55:12.327  start: inventory sent=265          the start sync finishes; the stream opens after it
+00:00:13      poll: screen time NOT MEASURED     the phone is alive and polling
+00:05:15      poll: screen time NOT MEASURED     …and still has not been told
+```
+
+**The poll is not a backstop.** `pollWhileAwake` calls `enforceFromCache()`: it measures, re-enforces
+and re-books, and it fetches nothing — deliberately, because the quota has to bite on a phone with no
+signal. So the event stream is the *only* path by which a command reaches a device, a publish reaches
+the streams that are open at that instant and nothing else, and the `connected` frame was being
+swallowed rather than treated as a wake-up. A command queued while a device had no stream open was
+therefore not late — it was lost, until some later unrelated event happened to wake a sync that found
+it. Every reconnect has this window, and the server closes every stream at fifteen minutes.
+
+This test lands in that window by construction rather than by luck: it waits for the heartbeat that
+reports the running build, and the stream opens a beat after it. That is what made a product defect
+reproducible instead of occasional.
+
+**The fix is in the product.** `EventStream` now forwards the `connected` frame to the wake handler
+as well as resetting the backoff, so a device syncs the moment its stream is established and finds
+anything queued while it was away. The cost is one extra fetch per connection — four an hour in
+steady state. The reasoning it replaces ("a sync per connection would mean a phone on a flapping
+network syncing continuously") was written into `EventStreamTest` as an assertion; it is now the
+opposite assertion, with the measurement in the comment, and it is calibrated: restoring the single
+`continue` takes both of the frame's tests red.
+
+`updateDeadline` stays as a named constant, now five minutes, and it covers work rather than a race:
+a 16 MB download over the emulator's NAT, the install, the process the install kills coming back on
+`MY_PACKAGE_REPLACED`, and its first heartbeat.
+
+### 9.4 — the run that passed, and what it saw
+
+Run 7 got all the way through the install and then failed on the test's own spelling: it compared the
+command state against `"acked"` while the store spells it `ACKED` (`store.CmdAcked`). Three sites,
+one of them inside `awaitCommandSettled`, which therefore recognised no terminal state at all — a
+command that had been acknowledged in under a second was reported as *"still ACKED after 5m0s"*.
+A comparison that can never be true is the same shape as everything else in this phase: it does not
+fail, it waits, and then it blames the product.
+
+**Run 8 passed in 176 s**, `RESULT PASS the server replaced build 2 with build 3 on the device, and
+the DPC reported the new build back`, and the phone's own log is the second witness:
+
+```
+00:35:22.863  FamilyGuard/Connection: wake:connected: commands done=1
+00:35:23.766  PackageManager: installation completed for package:io.github.helios57.familyguard
+00:35:25.116  FamilyGuardUpdate: this app was replaced; restarting the connection
+00:35:25.812  FamilyGuardUpdate: self-update installed
+00:35:34.301  FamilyGuard/Connection: wake:connected: commands done=1     ← the second, declined
+```
+
+Two seconds from "the phone found the command" to "the platform installed it", and the DPC back on
+the connection a second after that — on a phone whose adb had been off since the first policy
+applied. The last line is the negative control: the same command again, executed and answered
+"already running" rather than reinstalling an equal build.
+
+One measured cost is left as it is. The second command downloads the 16 MB APK again before
+declining it, because every one of the five checks is made against the *file* and none against the
+server's announcement — `ApkInfo` carries a URL, a size and a checksum, and deliberately no build
+number. That is the design (§ the five checks), and the alternative is to let a server's claim about
+its own artifact decide whether a phone downloads it. A parent pressing the button twice pays for it;
+the phone never installs on the strength of something it was told.
+
+### 9.5 — two failed READS, reported as two facts about the device
+
+The first full `tests/run_all.sh` after the feature landed went **seven layers green and stopped on
+the eighth**, and both of the ways it stopped were the same defect wearing different words:
+
+```
+android-self-update  NOT MEASURED  ACCESS_LOCAL_NETWORK is still not granted to …
+android-self-update  NOT MEASURED  dumpsys device_policy returned nothing readable …
+```
+
+Neither sentence was true. By hand, on that same device, three minutes later: `pm grant` granted the
+permission first try and it stayed granted through six reads over twelve seconds, and
+`dumpsys device_policy` answered 454 lines, ten times in a row, immediately after a reinstall. What
+both guards had actually seen was a **read that did not come back** — and each had turned that into
+a statement about the phone.
+
+That is the phase's own lesson arriving from the other side. A guard that fails closed is right to
+refuse a green, but "I could not read this" and "I read this and it says no" are different findings,
+and only one of them is about the product. Reported as the second, they send the next person to
+audit a permission model that is working.
+
+The mechanism is not mysterious, and it is not fully pinned down either. `dumpsys` gives each
+service about ten seconds; at that moment the machine was finishing two Gradle assembles, running a
+second emulator, and had just taken two `adb install -r -d`s. It does not reproduce on an idle
+machine, which is exactly why it cannot be diagnosed at the call site — so both reads are now
+**retried before they are believed**:
+
+- `dpm_dump()` is the single place `dumpsys device_policy` is read, retrying up to five times over
+  ~8 s for the one header line the service always emits, and returning 2 — never a guess — if it
+  never arrives. All three former call sites go through it.
+- `allow_local_network()` grants and reads back in the same loop, and keeps **`pm grant`'s own
+  words** for the failure message. The old version discarded them to `/dev/null`, which is why the
+  first failure could only be guessed at.
+
+Calibrated, both halves each:
+
+| probe | result |
+|---|---|
+| `dpm_dump` against an `adb` that prints nothing | `NOT MEASURED … returned nothing readable`, rc=2, **after 10 s** — the elapsed time is the evidence it retried rather than gave up |
+| `dpm_dump` against the real device | `already the device owner`, rc=0, instant |
+| `allow_local_network` against a package that is not installed | `NOT MEASURED … pm grant's last words: Failure [package not found]` — the sentence the old version threw away |
+| `allow_local_network` from the revoked, `POLICY_FIXED` state the sweep hit | granted, read back from `dumpsys`, rc=0 |
+
+The last row also kills a plausible theory that was worth killing: a permission left `POLICY_FIXED`
+by the DPC's own `setPermissionGrantState` is **still grantable** by `pm grant`, and restarting the
+DPC over a granted permission does **not** revoke it (measured over six reads). The device-owner
+call is inert here, not hostile — so the Settings remedy in DEPLOYMENT.md stands.
+
+With both retries in place the layer passed on the harder device: **157.5 s**, on a phone that had
+already been through the whole instrumented layer on the same boot, from a deliberately revoked
+permission. That is the case that had failed twice.
+
+Then, from a freshly wiped AVD, **`tests/run_all.sh` in one continuous invocation: eight layers, all
+eight PASS**, ending in `every requested layer ran and passed` — secret-scan, backend, manifests,
+image, e2e, android-unit (461 tests in 52 classes), android-instrumented (provisioned and after a
+real reboot), android-self-update (148.9 s). One sweep rather than eight remembered ones, because
+the scope of a run is where its blind spot lives, and a summary is only worth what it covered.
+
+---
+
 ## Traceability
 
 Each requirement maps to the phase that implements it and the test that proves it.
@@ -2542,6 +2805,7 @@ proven.
 | FR-13.3 installable, no desktop-only input | 4.4, 6.7 | e2e `TestTheConsoleInstallsToAPhone` — Chrome's own verdict over CDP (`Page.getAppManifest`, `Page.getInstallabilityErrors`, `Page.getManifestIcons`), opened by a fail-closed negative control on `about:blank` so that an empty error list cannot mean "this browser computes nothing". `TestConsoleNeedsNoDesktopOnlyInput` covers the second half — no `:hover`, `contextmenu`, `dblclick`, `accesskey` or mouse-only pointer event in any served asset — with a byte-count floor so an empty 200 cannot read as clean. **Calibrated 8/8** (four each, including one harness break per side); the manifest-route checks that used to stand alone here read back our own bytes and are not a statement about installing anything. Not proven: behaviour on a real cellular connection, and installation on any engine other than Chrome |
 | FR-13.4 phone states its own condition | 5.9 | `DeviceStatusTest` — 25 cases over the pure composer, including the three the console cannot see: a policy received but never applied, a device out of contact, and a phone that cannot measure usage at all. The last is the one this row exists for: `NOT_MEASURED` is a third level, carried through `ForegroundReader.spans()` returning `null` rather than an empty list, and asserted to render as prominently as a fault rather than as a zero. `SynchronizerTest` (4 tests) pins the contact stamp to receipt and nowhere else, so the line cannot report a week-old phone as freshly synced. Three independent guards keep the device token off a screen anyone holding the phone can read — the composer's output, a source scan (`ManifestAndPlatformCallsTest` *the status block never reads the device token*), and the rendered view tree (`StatusScreenTest`). Instrumented `UsageAccessTest` revokes the real `GET_USAGE_STATS` appop, **reads the mode back from the system**, and asserts the screen says so — the appop cannot be granted by `setPermissionGrantState` and a revoked one makes `queryEvents` return nothing rather than throw, which is the silent zero this whole requirement is about. **Calibrated 38/38** (32 JVM, 6 on-device) — see the record above |
 | FR-14 audit | 3.7 | e2e `TestEveryAuditedActionIsWritten` — all **21** audited actions driven over real HTTP (17 parent-side, 4 device-side), each asserted as a row naming actor type, actor id, action, target type and target *id*; nine detail keys checked so the row says *which* change was made; every row required to carry a `request_id`; and a source-scanning ratchet over `internal/httpapi/*.go` that fails when a 22nd action appears. **Calibrated 6/6** — see the record below. Also `TestRecoveryAndAudit`, which checks ten action names |
+| FR-15 keeping the DPC current | 9 | three layers, and only the third can see it. JVM: `AppUpdaterTest` drives the five checks with every dependency a function, so the whole decision runs off a device. Server + e2e: `TestAPKInfoDescribesTheFileThisServerWillHandOver`, `TestAPKInfoIsNotFoundWhenTheServerHostsNoDPC`, `TestAParentCanTellThePhoneToUpdateItself`, `TestTheHeartbeatReportsWhichDPCThePhoneIsRunning`, `TestAnAPKReplacedUnderTheRunningServerIsRefused`, and `apk_test.go`'s seven over the bytes themselves. Device: **`tests/android/self-update.sh` + `TestTheServerReplacesTheDPCOnARealDevice`**, which builds the DPC twice from one tree, enrols the lower build against a real server and watches the higher one arrive — passed 2026-09-05 in 176 s, with the phone's own log as the second witness (`wake:connected: commands done=1` → `PackageManager: installation completed` → `FamilyGuardUpdate: self-update installed`) on a device whose adb had been off since the first policy applied. Its negative control is the same command again, declined as "already running". `tests/android/calibrate-update.sh` breaks each of the five checks in turn and records the refusal. **Not proven anywhere:** the update path on a phone that is not an emulator, and the `MY_PACKAGE_REPLACED` restart on an OEM build that kills background starts more aggressively than AOSP |
 | NFR-1/2 auth | 2.4, 3.x | e2e `TestBrowserSignInJourney`, `TestBrowserSignInFailureModes`, `TestIDTokenIsVerifiedNotTrusted`, `TestSessionTokensAreForgeryResistant`, `TestOneDeviceCannotActOnAnother`; `TestVerifyRejects`, `TestVerifyAcceptsGenuineToken`, `TestVerifyDoesNotFetchJWKSPerToken`, `TestUnknownKidRefreshIsRateLimited`, `TestRefreshKeepsCacheOnBadDocument`, `TestSessionRejects`, `TestSessionRoundTrip`, `TestSessionIssuerRefusesWeakKey`, `TestBearerToken` |
 | NFR-3 no fabricated success | 3.6, 5.3, 5.5 | `TestEveryReadFailureIsReported`; and the mutation sweeps — 5.3's 39 breaks and 5.5's 39, each one a place the code could have believed a return code instead of reading state back |
 | NFR-4 persistence | 2.2 | e2e `TestStateSurvivesRestart` |

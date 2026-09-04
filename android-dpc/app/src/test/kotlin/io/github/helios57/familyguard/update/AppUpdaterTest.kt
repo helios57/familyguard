@@ -1,0 +1,221 @@
+package io.github.helios57.familyguard.update
+
+import java.io.ByteArrayInputStream
+import java.io.File
+import java.io.IOException
+import java.io.InputStream
+import java.security.MessageDigest
+import java.util.Base64
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+
+/** The url-safe unpadded base64 SHA-256 the server publishes, computed the way the server does. */
+private fun checksumOf(bytes: ByteArray): String =
+    Base64.getUrlEncoder().withoutPadding()
+        .encodeToString(MessageDigest.getInstance("SHA-256").digest(bytes))
+
+private const val SIGNER = "b62cda948ad3a08ecb2af47d1617173db9bdaf3b31bb63b036ff91addb8a8e10"
+
+private fun installed(code: Long = 2, signer: String = SIGNER) =
+    ApkIdentity(versionCode = code, versionName = "0.1.$code", signerSha256 = signer)
+
+/**
+ * The updater with every dependency under the test's control.
+ *
+ * Written as a builder rather than as six positional lambdas at each call site because each test
+ * changes exactly one of them, and a test that has to restate the other five is a test whose
+ * *unchanged* parts drift out of agreement with the others.
+ */
+private class Harness(private val folder: TemporaryFolder) {
+    var bytes: ByteArray = "a signed apk, near enough for this layer".toByteArray()
+    var declaredSize: Long? = null
+    var declaredChecksum: String? = null
+    var url = "https://guard.example.com/dpc.apk"
+    var infoFails: Exception? = null
+    var downloadFails: Exception? = null
+    var archive: ApkIdentity? = ApkIdentity(3, "0.1.2", SIGNER)
+    var current: ApkIdentity = installed()
+    var truncateTo: Int? = null
+
+    val installedFiles = mutableListOf<File>()
+
+    fun updater(): AppUpdater {
+        val staged = File(folder.root, "staged.apk")
+        return AppUpdater(
+            info = {
+                infoFails?.let { throw it }
+                ApkInfo(
+                    url = url,
+                    packageChecksum = declaredChecksum ?: checksumOf(bytes),
+                    size = declaredSize ?: bytes.size.toLong(),
+                )
+            },
+            open = { _ ->
+                downloadFails?.let { throw it }
+                val body = truncateTo?.let { bytes.copyOfRange(0, it) } ?: bytes
+                ByteArrayInputStream(body) as InputStream
+            },
+            staging = { staged },
+            identify = { archive },
+            installed = { current },
+            install = { installedFiles += it },
+        )
+    }
+}
+
+class AppUpdaterTest {
+
+    @get:Rule
+    val folder = TemporaryFolder()
+
+    @Test
+    fun `stages a newer build and hands back a commit that has not run yet`() {
+        val h = Harness(folder)
+        val outcome = h.updater().update()
+
+        val staged = outcome as? UpdateOutcome.Staged
+            ?: throw AssertionError("expected a staged update, got $outcome")
+        assertEquals(3L, staged.identity.versionCode)
+        assertEquals(2L, staged.fromVersionCode)
+        // The property the whole design rests on: committing kills the process, so the updater must
+        // not have committed by the time it returns — the command has not been acknowledged yet.
+        assertTrue(
+            "the updater installed before returning; the acknowledgement for this command would " +
+                "never be sent, and the console would show a phone that never answered",
+            h.installedFiles.isEmpty(),
+        )
+
+        staged.commit()
+        assertEquals(1, h.installedFiles.size)
+        assertTrue("the file handed to the installer must be the one that was verified",
+            h.installedFiles.single().readBytes().contentEquals(h.bytes))
+    }
+
+    @Test
+    fun `answers already-current when the phone runs the build the server hosts`() {
+        val h = Harness(folder)
+        h.archive = ApkIdentity(2, "0.1.1", SIGNER)
+        h.current = installed(code = 2)
+
+        val outcome = h.updater().update()
+        assertTrue("an equal version is not a failure: it is a parent pressing the button twice",
+            outcome is UpdateOutcome.AlreadyCurrent)
+        assertTrue(h.installedFiles.isEmpty())
+    }
+
+    @Test
+    fun `refuses a downgrade rather than reporting an install that can never happen`() {
+        val h = Harness(folder)
+        h.archive = ApkIdentity(1, "0.1.0", SIGNER)
+        h.current = installed(code = 5)
+
+        val outcome = h.updater().update()
+        val refused = outcome as? UpdateOutcome.Refused
+            ?: throw AssertionError("expected a refusal, got $outcome")
+        assertTrue("the reason must name both builds: $refused", refused.reason.contains("5"))
+        assertTrue(h.installedFiles.isEmpty())
+    }
+
+    /**
+     * The check that makes a hostile or misconfigured `apk-info` inert. The platform refuses this
+     * too — from inside the installer, after the download, with a message the parent never sees.
+     */
+    @Test
+    fun `refuses an APK signed by a different certificate`() {
+        val h = Harness(folder)
+        h.archive = ApkIdentity(9, "9.9.9", "0000000000000000000000000000000000000000000000000000000000000000")
+
+        val refused = h.updater().update() as? UpdateOutcome.Refused
+            ?: throw AssertionError("a differently-signed APK was not refused")
+        assertTrue(refused.reason.contains("certificate"))
+        assertTrue(h.installedFiles.isEmpty())
+    }
+
+    @Test
+    fun `refuses a download that does not match the checksum the server published`() {
+        val h = Harness(folder)
+        h.declaredChecksum = checksumOf("some other build entirely".toByteArray())
+
+        val refused = h.updater().update() as? UpdateOutcome.Refused
+            ?: throw AssertionError("a mismatched download was not refused")
+        assertTrue(refused.reason.contains("checksum"))
+        assertTrue(h.installedFiles.isEmpty())
+    }
+
+    /**
+     * A cut-off download is the ordinary failure on a phone, and the one that produces a file that
+     * looks fine. It is refused on size before the checksum so the parent is told the download was
+     * interrupted rather than that the file was wrong — different problem, different fix.
+     */
+    @Test
+    fun `refuses a truncated download and says it was truncated`() {
+        val h = Harness(folder)
+        h.truncateTo = 10
+
+        val refused = h.updater().update() as? UpdateOutcome.Refused
+            ?: throw AssertionError("a truncated download was not refused")
+        assertTrue("the reason must say how far it got: ${refused.reason}", refused.reason.contains("10 bytes"))
+        assertFalse("a truncated download must not be reported as a checksum problem",
+            refused.reason.contains("checksum"))
+    }
+
+    @Test
+    fun `refuses when the server hosts something that is not a readable APK`() {
+        val h = Harness(folder)
+        h.archive = null
+
+        val refused = h.updater().update() as? UpdateOutcome.Refused
+            ?: throw AssertionError("an unparseable download was not refused")
+        assertTrue(refused.reason.contains("APK"))
+    }
+
+    @Test
+    fun `reports a server that hosts no DPC as a refusal, not as an install`() {
+        val h = Harness(folder)
+        h.declaredChecksum = ""
+
+        val refused = h.updater().update() as? UpdateOutcome.Refused
+            ?: throw AssertionError("an empty checksum was not refused")
+        assertTrue(refused.reason.contains("no DPC"))
+    }
+
+    @Test
+    fun `reports the transport's own reason when the metadata call fails`() {
+        val h = Harness(folder)
+        h.infoFails = IOException("connection reset")
+
+        val refused = h.updater().update() as? UpdateOutcome.Refused
+            ?: throw AssertionError("a failed apk-info call was not refused")
+        assertTrue("the parent needs the transport's words: ${refused.reason}",
+            refused.reason.contains("connection reset"))
+    }
+
+    @Test
+    fun `reports the transport's own reason when the download fails`() {
+        val h = Harness(folder)
+        h.downloadFails = IOException("network is unreachable")
+
+        val refused = h.updater().update() as? UpdateOutcome.Refused
+            ?: throw AssertionError("a failed download was not refused")
+        assertTrue(refused.reason.contains("network is unreachable"))
+    }
+
+    /**
+     * The negative control for the size check. A server that declares no size still gets the
+     * checksum — otherwise "size 0" would switch off the verification that matters.
+     */
+    @Test
+    fun `an undeclared size still verifies the checksum`() {
+        val h = Harness(folder)
+        h.declaredSize = 0
+        h.declaredChecksum = checksumOf("a different build".toByteArray())
+
+        val refused = h.updater().update() as? UpdateOutcome.Refused
+            ?: throw AssertionError("size 0 switched off the checksum check")
+        assertTrue(refused.reason.contains("checksum"))
+    }
+}

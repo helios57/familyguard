@@ -101,6 +101,16 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// Which DPC is this process vending? Until this line existed, nothing answered that. The APK is
+	// deliberately not in the image — it is a file on the node, installed out of band — so the only
+	// record of which build a running server publishes checksums for was the checksums themselves,
+	// held in memory and printed into QR codes nobody reads back. Neither value is a secret: the
+	// signature checksum is in every provisioning payload, and the package checksum is the SHA-256
+	// of a file this server hands to anyone who asks for /dpc.apk. An empty value here is the
+	// honest report that provisioning cannot be offered, not a formatting accident.
+	log.Info("provisioning checksums computed from disk",
+		"apk_path", cfg.APKPath, "cert_path", cfg.APKCertPath,
+		"package_checksum", packageSum, "signature_checksum", signatureSum)
 
 	srv, err := httpapi.New(httpapi.Deps{
 		Config:            cfg,

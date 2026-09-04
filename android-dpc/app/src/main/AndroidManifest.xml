@@ -15,6 +15,38 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!--
+      Reaching a control plane that is on the family's own network.
+
+      From Android 37 the platform sorts every outbound destination into "global" or "local" and
+      silently DROPS an app's packets to a local one unless the app holds this. Dropped, not
+      refused: the socket sits there until the connect timeout expires, so the app's own log says
+      "failed to connect ... after 15000ms" and names nothing that could be fixed. It is
+      indistinguishable from a server that is down, and a shell on the same phone reaches the same
+      address in the same second, because `adb`'s uid is exempt.
+
+      Measured on an Android 37 emulator on 2026-09-04: `toybox nc 10.0.2.2 45051` as the shell
+      returned HTTP 200 while the identical command run under `run-as` — this app's uid, one
+      process apart — timed out, and `dumpsys connectivity trafficcontroller` showed why:
+      `sLocalNetAccessMap` carries `10.0.2.0/24: false`. That is the emulator's name for the
+      machine hosting the bench control plane, and it is the same rule a phone applies to
+      `192.168.x.x` — which is exactly where DEPLOYMENT.md's self-hosted install puts the server
+      for a family that runs it at home. Without this the product works only for a control plane
+      on the public internet, and fails on a home LAN with no diagnosable symptom.
+
+      It is a runtime permission (`dangerous`), so declaring it is not holding it — and this is the
+      one permission a device owner CANNOT grant to itself. Measured the same day on the same
+      emulator: `setPermissionGrantState(..., GRANTED)` returns **true**, from a clean state and
+      from a policy-fixed one, and `checkSelfPermission` stays DENIED; `adb shell pm grant` flips
+      it, and the DPC re-applying its whole policy afterwards leaves it granted. So the app asks
+      for it here, tries to grant it in ConnectionService.grantOwnPermissions like the location
+      ones, and — because the try silently succeeds — reads the result back and says in its log
+      that it is not held. Declaring it is what makes it grantable at all: without the line there
+      is no route, with it there is one a parent can take in Settings. DEPLOYMENT.md carries that
+      step for a control plane on the family's own network.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+
+    <!--
       The connection runs as a foreground service because the product's responsiveness claim rests
       on it: "lock now" must lock the phone, not queue until the next background window. See
       ConnectionService for why the type is `specialUse` and not `dataSync`.
@@ -99,6 +131,19 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!--
+      Installing the DPC the control plane hosts, over this app (FR-15).
+
+      A device owner installs without the "install unknown apps" prompt — that is the platform
+      privilege this whole product already rests on — but the *declaration* is still required:
+      without it `PackageInstaller.Session.commit` refuses before any prompt would have been shown,
+      and the refusal names a permission rather than the update. It is a normal permission, granted
+      at install time, and it is scoped by what it can reach: the only APK this app ever installs is
+      one it downloaded from its own control plane, whose checksum the server published and whose
+      signing certificate has to equal the one this app is already signed with.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".FamilyGuardApp"
@@ -233,6 +278,36 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+          Not exported. Both are addressed explicitly by this app or by the platform, and neither
+          does anything an outside caller could want.
+
+          The install-status receiver exists because `commit` requires a status target and because a
+          session that FAILS reports through it while this process is still alive — the only record
+          of an update that was acknowledged as starting and then did not happen.
+
+          MY_PACKAGE_REPLACED is what makes the update survivable (FR-15.5). It is delivered to
+          the new version after the platform has replaced this app, and it is the only thing that
+          restarts the foreground service: the process that held it was killed by the install.
+          Without this receiver an update leaves a phone enrolled, managed and enforcing nothing
+          until it is rebooted, which looks to a parent exactly like a phone that went offline.
+        -->
+        <receiver
+            android:name=".update.UpdateStatusReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="io.github.helios57.familyguard.INSTALL_STATUS" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".update.PackageReplacedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 

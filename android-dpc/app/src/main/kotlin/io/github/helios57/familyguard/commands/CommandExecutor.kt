@@ -5,8 +5,24 @@ import io.github.helios57.familyguard.net.DeviceCommand
 
 /** What one handler did. There is no third state: a command either ran or it did not. */
 sealed interface CommandOutcome {
-    /** [result] is whatever the parent should be shown — a position fix, a lock timestamp. */
-    data class Done(val result: Map<String, String> = emptyMap()) : CommandOutcome
+    /**
+     * [result] is whatever the parent should be shown — a position fix, a lock timestamp.
+     *
+     * [after] runs once the acknowledgement has actually been delivered, and only then. Exactly one
+     * command needs it and the reason is not a preference: `UPDATE_APP` ends by replacing this app,
+     * which kills this process at a moment the platform picks — so an acknowledgement sent
+     * afterwards is an acknowledgement that is never sent, and the console shows a command that was
+     * delivered and never answered on a phone that did exactly what it was told. Ordinary handlers
+     * leave it null and nothing changes for them.
+     *
+     * It is not a second chance to fail: the command has already been reported as done, so a throw
+     * here can only be logged. A handler that needs its work reflected in the acknowledgement must
+     * do that work before returning.
+     */
+    data class Done(
+        val result: Map<String, String> = emptyMap(),
+        val after: (() -> Unit)? = null,
+    ) : CommandOutcome
 
     /** [reason] is what the console displays under the command. It is read by a person. */
     data class Failed(val reason: String) : CommandOutcome
@@ -108,6 +124,17 @@ class CommandExecutor(
             try {
                 ack(command.id, outcome is CommandOutcome.Done, result, error)
                 if (outcome is CommandOutcome.Done) done += command.id else failed[command.id] = error
+                if (outcome is CommandOutcome.Done && outcome.after != null) {
+                    try {
+                        outcome.after.invoke()
+                    } catch (e: Exception) {
+                        // The command is already acknowledged as done, truthfully — the handler did
+                        // its work and this is the part that happens afterwards. Logged rather than
+                        // converted into a failure, because rewriting the answer now would tell the
+                        // parent the whole command failed when most of it did not.
+                        log("after-ack step of ${command.type} failed: ${e.message ?: e.javaClass.simpleName}")
+                    }
+                }
             } catch (e: Exception) {
                 // The command ran. Only the report did not arrive, and the next command in the batch
                 // is still worth running: a failed `STOP_ALARM` acknowledgement is not a reason to

@@ -147,6 +147,7 @@ The parent triggers these from the console; the device acts as soon as it receiv
 | `LOCATE_NOW` | One high-accuracy GPS fix, reported back, then location hardware released. |
 | `BLOCK_YOUTUBE_ALL` / `UNBLOCK_YOUTUBE_ALL` | FR-7. |
 | `SYNC_POLICY` | Re-fetch and re-apply policy now. |
+| `UPDATE_APP` | Install the DPC build the control plane hosts, over the one running (FR-15). |
 
 - FR-9.1 A command is only reported as delivered when the device has acknowledged it. A dispatch
   that reached nothing must surface as *not delivered*, never as success.
@@ -196,6 +197,28 @@ a device offline when it stops reporting.
 ### FR-14 Auditability
 Every policy change, command, enrollment and recovery attempt is recorded with actor, target,
 timestamp and outcome, and is readable in the console.
+
+### FR-15 Keeping the DPC current
+The app on the phone *is* the enforcement, so a phone left on an old build is a gap the parent
+cannot see and cannot close by hand: the device is locked down, and the child is not going to
+update it. Replacing the DPC is therefore the control plane's job, and it must be doable at any
+time on a device that is already enrolled and already hardened.
+
+- FR-15.1 The control plane hosts one DPC build and states, to a device that asks, its build
+  number, its size and the checksum of the bytes it will serve. The description and the bytes are
+  the same artifact: a download that does not match what was announced is refused, not installed.
+- FR-15.2 A parent can tell a device to install the hosted build, from the console, as an instant
+  command (FR-9) with the same queued / delivered / acknowledged / failed states as every other.
+- FR-15.3 The phone refuses to install anything that is not strictly newer than what it is running,
+  is not the same package, is not signed by the same signer as the app already installed, or does
+  not match the announced checksum — and refuses when it cannot check one of those rather than
+  assuming it passed. Each refusal is reported with its reason.
+- FR-15.4 The install replaces the running process, so the acknowledgement is sent before the
+  install is committed and proves only that the device accepted the command. The evidence that it
+  worked is the build number in the device's next telemetry report (FR-10), which the console shows
+  per device.
+- FR-15.5 A DPC that has replaced itself resumes enforcing on its own, without the child or the
+  parent touching the phone, and without waiting for the next reboot.
 
 ---
 

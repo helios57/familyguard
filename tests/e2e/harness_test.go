@@ -131,6 +131,10 @@ type harness struct {
 	// on a lost port race.
 	apkPath string
 
+	// publicHost is the host the server publishes itself as, when that is not the host this test
+	// talks to. Empty everywhere except the emulator layer — see withPublicHost.
+	publicHost string
+
 	client       *http.Client
 	streamClient *http.Client
 
@@ -163,6 +167,25 @@ func withSelfHostedAPK(path string) harnessOption {
 	return func(h *harness) {
 		h.apkPath = path
 		h.env["APK_PATH"] = path
+		h.bind(h.port)
+	}
+}
+
+// withPublicHost makes the server publish itself under a different name than this test reaches it
+// by. One caller: the emulator layer.
+//
+// A phone inside an Android emulator cannot use `127.0.0.1` to mean this machine — that is the
+// emulator's own loopback. `10.0.2.2` is the alias it has for its host, and it is the only address
+// that works once the DPC has applied its policy, because that policy sets `no_debugging_features`
+// and an adb tunnel does not survive it.
+//
+// Only the two values the DEVICE consumes move: PUBLIC_URL, which is what `/device/apk-info`
+// hands out and what goes into the provisioning payload, and APK_URL. `base` and `ADDR` stay on
+// loopback, so the server still listens where it always did and this test still talks to it there
+// — 10.0.2.2 is the same socket seen from inside the emulator's NAT, not a second one.
+func withPublicHost(host string) harnessOption {
+	return func(h *harness) {
+		h.publicHost = host
 		h.bind(h.port)
 	}
 }
@@ -271,12 +294,18 @@ func (h *harness) bind(port int) {
 	h.port = port
 	h.base = fmt.Sprintf("http://127.0.0.1:%d", port)
 	h.env["ADDR"] = fmt.Sprintf("127.0.0.1:%d", port)
-	h.env["PUBLIC_URL"] = h.base
+	// What the server calls itself. The same URL as `base` unless withPublicHost said otherwise,
+	// and derived from `port` either way — see the note there.
+	public := h.base
+	if h.publicHost != "" {
+		public = fmt.Sprintf("http://%s:%d", h.publicHost, port)
+	}
+	h.env["PUBLIC_URL"] = public
 	// A server that hosts the DPC publishes its own download URL, and that URL carries the port.
 	// Derived here for the same reason as PUBLIC_URL: a rebind that moved two of the three values
 	// would leave the QR pointing at a dead port while still looking entirely correct.
 	if h.apkPath != "" {
-		h.env["APK_URL"] = h.base + apkDownloadPath
+		h.env["APK_URL"] = public + apkDownloadPath
 	}
 }
 

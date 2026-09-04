@@ -7,6 +7,14 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// See `versionCode`, below. Read once, here, because `findProperty` returns Any? and the
+// conversion is the part worth getting wrong only once: a non-numeric value must fail the build
+// rather than silently become 0, which would produce two identical APKs and a self-update test
+// that passes having installed nothing.
+val buildOffset: Int = (project.findProperty("buildOffset") as String?)
+    ?.let { it.toIntOrNull() ?: throw GradleException("-PbuildOffset=$it is not a number") }
+    ?: 0
+
 android {
     namespace = "io.github.helios57.familyguard"
     // 37.1 is the newest released platform AGP 9.3 supports (its documented maximum is API 37),
@@ -25,7 +33,16 @@ android {
         // is the honest behaviour; a runtime version check that logs and continues is not.
         minSdk = 29
         targetSdk = 37
-        versionCode = 2
+        // `-PbuildOffset=1` adds to the build number and changes nothing else. It exists for one
+        // caller — tests/android/self-update.sh, which has to produce two APKs that differ only in
+        // the number the updater compares — and it defaults to 0, so a build that does not pass it
+        // is the shipped one. A property rather than an edit to this line: a run that died halfway
+        // through would otherwise leave a release built from a mutated file.
+        //
+        // versionName stays the same for both builds ON PURPOSE. FR-15.3 installs on a strictly
+        // greater versionCode, and a test whose two builds also differed by name could pass while
+        // the updater compared names.
+        versionCode = 2 + buildOffset
         versionName = "0.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

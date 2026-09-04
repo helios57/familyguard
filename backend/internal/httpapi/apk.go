@@ -1,6 +1,9 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"io"
 	"net/http"
 	"os"
 
@@ -27,7 +30,17 @@ const APKDownloadPath = "/dpc.apk"
 // claim about one artifact and the download a delivery of another, and the two drift the first time
 // a build is republished. The device then refuses the download it just made, mid-provisioning, in
 // front of a parent holding a wiped phone, with the reason visible only in a system log they cannot
-// read. Here the two cannot disagree: main.go hashes cfg.APKPath at startup, and this reads it.
+// read.
+//
+// **So the correspondence is checked here, on every request, rather than assumed.** main.go hashes
+// the file once at startup and that value goes into every QR this process issues; installing a new
+// APK without restarting therefore leaves the server publishing a checksum for bytes it no longer
+// has. That is the one failure in this system that cannot be diagnosed from the server side — the
+// phone downloads, refuses, and says "Can't set up device" — and before this check it had no
+// symptom here at all: the swap is a file copy on the node, not an event this process sees.
+// Re-hashing costs ~25 ms against ~13 MB, which is small beside sending those same bytes, and the
+// endpoint is reached once per enrolment. The file is hashed and served through ONE open
+// descriptor, so no rewrite can slip in between the check and the response.
 func (s *Server) serveAPK(c *gin.Context) {
 	if s.cfg.APKPath == "" {
 		// 404 rather than 500: this deployment does not host the DPC, which is a configuration a
@@ -35,8 +48,8 @@ func (s *Server) serveAPK(c *gin.Context) {
 		failWith(c, http.StatusNotFound, "not_found", "this server does not host the DPC")
 		return
 	}
-	info, err := os.Stat(s.cfg.APKPath)
-	if err != nil || info.IsDir() {
+	f, err := os.Open(s.cfg.APKPath)
+	if err != nil {
 		// The path is checked at startup, so reaching here means the file was removed or replaced
 		// while the server was running — which also means the checksum in every QR this server has
 		// already issued describes bytes that are no longer here.
@@ -45,13 +58,56 @@ func (s *Server) serveAPK(c *gin.Context) {
 		failWith(c, http.StatusServiceUnavailable, "apk_unavailable", "the DPC is temporarily unavailable")
 		return
 	}
+	defer f.Close()
 
-	// Set before ServeFile, which would otherwise sniff the first 512 bytes and call an APK a ZIP.
-	// Android does not care about the type, but a parent who opens the link in a browser gets a
-	// download rather than a garbled page.
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		s.log.Error("the configured APK is no longer readable",
+			"path", s.cfg.APKPath, "error", err, "request_id", RequestIDOf(c))
+		failWith(c, http.StatusServiceUnavailable, "apk_unavailable", "the DPC is temporarily unavailable")
+		return
+	}
+
+	// An empty packageChecksum means nothing was computed to compare against — the QR endpoint
+	// already refuses to issue a payload in that state, so there is no published claim to defend
+	// and hashing here would prove nothing.
+	if s.packageChecksum != "" {
+		h := sha256.New()
+		if _, err := io.Copy(h, f); err != nil {
+			s.log.Error("the configured APK could not be read to the end",
+				"path", s.cfg.APKPath, "error", err, "request_id", RequestIDOf(c))
+			failWith(c, http.StatusServiceUnavailable, "apk_unavailable", "the DPC is temporarily unavailable")
+			return
+		}
+		onDisk := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+		if onDisk != s.packageChecksum {
+			// Both values are logged because the operator's next question is "which build is
+			// this?", and neither is a secret: the right-hand one is printed in every QR.
+			s.log.Error("the APK on disk is not the one the issued provisioning checksums describe; "+
+				"the file was replaced without restarting this server",
+				"path", s.cfg.APKPath, "on_disk", onDisk, "published", s.packageChecksum,
+				"size", info.Size(), "request_id", RequestIDOf(c))
+			failWith(c, http.StatusServiceUnavailable, "apk_changed",
+				"the DPC on disk does not match the checksum this server publishes; it needs a restart")
+			return
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			s.log.Error("the configured APK could not be rewound after hashing",
+				"path", s.cfg.APKPath, "error", err, "request_id", RequestIDOf(c))
+			failWith(c, http.StatusServiceUnavailable, "apk_unavailable", "the DPC is temporarily unavailable")
+			return
+		}
+	}
+
+	// Set before ServeContent, which would otherwise sniff the first 512 bytes and call an APK a
+	// ZIP. Android does not care about the type, but a parent who opens the link in a browser gets
+	// a download rather than a garbled page.
 	c.Header("Content-Type", "application/vnd.android.package-archive")
 	c.Header("Content-Disposition", `attachment; filename="familyguard.apk"`)
-	// http.ServeFile, not io.Copy: it answers Range requests, and the provisioning downloader
+	// ServeContent, not io.Copy: it answers Range requests, and the provisioning downloader
 	// resumes a partial download rather than restarting it on a phone that walked out of Wi-Fi.
-	http.ServeFile(c.Writer, c.Request, s.cfg.APKPath)
+	// It takes the descriptor this handler already hashed rather than the path, which is what makes
+	// the check above a statement about the bytes in this response and not about a file that
+	// happened to be correct a moment earlier.
+	http.ServeContent(c.Writer, c.Request, "familyguard.apk", info.ModTime(), f)
 }

@@ -139,7 +139,8 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 		`SELECT d.id, d.child_id, d.name, d.model, d.os_version, d.locked, d.critical_packages,
 		        d.enrolled_at, d.created_at,
 		        COALESCE(s.battery_level, NULL), COALESCE(s.charging, NULL), COALESCE(s.screen_on, NULL),
-		        COALESCE(s.connectivity, ''), COALESCE(s.policy_version, 0), s.last_seen_at
+		        COALESCE(s.connectivity, ''), COALESCE(s.policy_version, 0), s.last_seen_at,
+		        COALESCE(s.app_version_name, ''), COALESCE(s.app_version_code, 0)
 		   FROM devices d
 		   LEFT JOIN device_state s ON s.device_id = d.id
 		  WHERE ($1::uuid IS NULL OR d.child_id = $1)
@@ -156,7 +157,8 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 		if err := rows.Scan(&d.ID, &d.ChildID, &d.Name, &d.Model, &d.OSVersion, &d.Locked,
 			&d.CriticalPackages, &d.EnrolledAt, &d.CreatedAt,
 			&d.State.BatteryLevel, &d.State.Charging, &d.State.ScreenOn,
-			&d.State.Connectivity, &d.State.PolicyVersion, &d.State.LastSeenAt); err != nil {
+			&d.State.Connectivity, &d.State.PolicyVersion, &d.State.LastSeenAt,
+			&d.State.AppVersionName, &d.State.AppVersionCode); err != nil {
 			return nil, err
 		}
 		d.State.DeviceID = d.ID
@@ -209,17 +211,26 @@ func (s *Store) RecoveryCode(ctx context.Context, deviceID uuid.UUID) (string, e
 // TouchDevice records that the device was heard from, and stores the telemetry it carried.
 func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceState) error {
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO device_state (device_id, battery_level, charging, screen_on, connectivity, policy_version, last_seen_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+		`INSERT INTO device_state (device_id, battery_level, charging, screen_on, connectivity, policy_version,
+		                           app_version_name, app_version_code, last_seen_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
 		 ON CONFLICT (device_id) DO UPDATE SET
 		     battery_level  = COALESCE(EXCLUDED.battery_level, device_state.battery_level),
 		     charging       = COALESCE(EXCLUDED.charging, device_state.charging),
 		     screen_on      = COALESCE(EXCLUDED.screen_on, device_state.screen_on),
 		     connectivity   = COALESCE(NULLIF(EXCLUDED.connectivity, ''), device_state.connectivity),
 		     policy_version = GREATEST(EXCLUDED.policy_version, device_state.policy_version),
+		     -- Kept, not GREATEST-ed. A downgrade is a fact about the phone, and the whole point of
+		     -- storing the version is to see what is actually installed: a MAX would make a failed
+		     -- or reverted update look like a successful one forever. A heartbeat that omits the
+		     -- fields (an older DPC) leaves what is there rather than blanking it.
+		     app_version_name = COALESCE(NULLIF(EXCLUDED.app_version_name, ''), device_state.app_version_name),
+		     app_version_code = CASE WHEN EXCLUDED.app_version_code > 0
+		                             THEN EXCLUDED.app_version_code ELSE device_state.app_version_code END,
 		     last_seen_at   = NOW(),
 		     updated_at     = NOW()`,
-		deviceID, st.BatteryLevel, st.Charging, st.ScreenOn, st.Connectivity, st.PolicyVersion)
+		deviceID, st.BatteryLevel, st.Charging, st.ScreenOn, st.Connectivity, st.PolicyVersion,
+		st.AppVersionName, st.AppVersionCode)
 	return err
 }
 
@@ -251,10 +262,11 @@ func (s *Store) SetCriticalPackages(ctx context.Context, deviceID uuid.UUID, pkg
 func (s *Store) GetDeviceState(ctx context.Context, deviceID uuid.UUID, offlineAfter time.Duration) (*DeviceState, error) {
 	var st DeviceState
 	err := s.pool.QueryRow(ctx,
-		`SELECT device_id, battery_level, charging, screen_on, connectivity, policy_version, last_seen_at
+		`SELECT device_id, battery_level, charging, screen_on, connectivity, policy_version, last_seen_at,
+		        app_version_name, app_version_code
 		   FROM device_state WHERE device_id = $1`, deviceID).
 		Scan(&st.DeviceID, &st.BatteryLevel, &st.Charging, &st.ScreenOn, &st.Connectivity,
-			&st.PolicyVersion, &st.LastSeenAt)
+			&st.PolicyVersion, &st.LastSeenAt, &st.AppVersionName, &st.AppVersionCode)
 	if err != nil {
 		return nil, mapErr(err)
 	}

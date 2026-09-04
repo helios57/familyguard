@@ -2,6 +2,7 @@ package io.github.helios57.familyguard.commands
 
 import io.github.helios57.familyguard.net.LocationRequest
 import io.github.helios57.familyguard.policy.LockManager
+import io.github.helios57.familyguard.update.UpdateOutcome
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -34,6 +35,11 @@ class CommandHandlers(
      * command in the product.
      */
     private val resync: () -> String?,
+    /**
+     * Downloads and stages the DPC the server hosts (FR-15.2). Null on a device with no updater
+     * wired, which answers `UPDATE_APP` as unimplemented rather than as silently done.
+     */
+    private val update: (() -> UpdateOutcome)? = null,
     private val now: () -> Long = { System.currentTimeMillis() },
 ) {
 
@@ -68,7 +74,36 @@ class CommandHandlers(
         BLOCK_YOUTUBE_ALL to resyncing("the YouTube killswitch is on"),
         UNBLOCK_YOUTUBE_ALL to resyncing("the YouTube killswitch is off"),
         SYNC_POLICY to resyncing("policy re-fetched and applied"),
+
+        // The one command whose result describes the future tense, and honestly so. Everything that
+        // can be checked has been checked by the time this returns — the download, its checksum, its
+        // signature, its version — and what is left is a platform call that ends this process. So
+        // the acknowledgement says what is about to be installed, and the phone's next heartbeat,
+        // carrying app_version_code, is what says it happened. See CommandOutcome.Done.after.
+        UPDATE_APP to CommandHandler { updateApp() },
     )
+
+    private fun updateApp(): CommandOutcome {
+        val run = update ?: return CommandOutcome.Failed("this device has no updater wired")
+        return when (val outcome = run()) {
+            is UpdateOutcome.Refused -> CommandOutcome.Failed(outcome.reason)
+            is UpdateOutcome.AlreadyCurrent -> CommandOutcome.Done(
+                result(
+                    "state" to "already running the build this server hosts",
+                    "version" to outcome.identity.versionName,
+                    "build" to outcome.identity.versionCode.toString(),
+                )
+            )
+            is UpdateOutcome.Staged -> CommandOutcome.Done(
+                result(
+                    "state" to "downloaded and verified; installing now",
+                    "version" to outcome.identity.versionName,
+                    "build" to "${outcome.fromVersionCode} \u2192 ${outcome.identity.versionCode}",
+                ),
+                after = outcome.commit,
+            )
+        }
+    }
 
     private fun resyncing(summary: String) = CommandHandler {
         val problem = resync()
@@ -127,6 +162,7 @@ class CommandHandlers(
         const val BLOCK_YOUTUBE_ALL = "BLOCK_YOUTUBE_ALL"
         const val UNBLOCK_YOUTUBE_ALL = "UNBLOCK_YOUTUBE_ALL"
         const val SYNC_POLICY = "SYNC_POLICY"
+        const val UPDATE_APP = "UPDATE_APP"
 
         /**
          * UTC, seconds precision, spelled out — the same reasoning as `Synchronizer.RFC3339`.

@@ -203,6 +203,9 @@ func (s *Server) Router() (*gin.Engine, error) {
 	d.POST("/commands/:id/ack", s.ackCommand)
 	d.POST("/recovery-event", s.recoveryEventReport)
 	d.GET("/stream", s.deviceStream)
+	// What DPC this server hosts, so the phone can tell whether the one it is running is the one it
+	// should be (FR-15.1). Read-only and cheap; the download itself is unauthenticated, below.
+	d.GET("/apk-info", s.apkInfo)
 
 	if err := s.mountConsole(r); err != nil {
 		return nil, err

@@ -154,15 +154,39 @@ func (p Params) validate() error {
 }
 
 // RequireProvisioningURL rejects plaintext and non-absolute URLs (FR-1.6: the APK the QR points
-// at must be downloadable, unauthenticated, over TLS). Localhost is exempted so the
-// end-to-end suite can run the real payload builder against a local server without a certificate;
-// a device can never reach localhost anyway, so the exemption cannot weaken a real deployment.
+// at must be downloadable, unauthenticated, over TLS). Three loopback names are exempted so the
+// end-to-end suite can run the real payload builder against a local server without a certificate.
+//
+// They are the same three the DPC itself allows — `Enroller.CLEARTEXT_HOSTS` is
+// `setOf("localhost", "127.0.0.1", "10.0.2.2")`, and the debug network security config names the
+// same three — and this list used to be two of them. That difference was not cosmetic: `10.0.2.2`
+// is the Android emulator's fixed alias for the host it runs on, and it is the *only* address by
+// which an emulator can reach a server on that host without an adb tunnel. With it missing, the
+// device half of FR-15 could only be driven over `adb reverse` — and the first policy the DPC
+// applies sets `no_debugging_features`, which switches adb off, so the tunnel died mid-test and
+// took every measurement after it. Measured on 2026-09-04: three runs, each one dead at
+// `DevicePolicyManager: Changing user restriction no_debugging_features on user 0 to: true`.
+//
+// None of the three weakens a real deployment, and 10.0.2.2 weakens it least of all: it is an
+// RFC1918 address that means "my host" only inside an emulator's NAT, a release DPC refuses
+// cleartext to it exactly as it refuses cleartext to localhost, and a phone that scanned a QR
+// naming it would simply fail to connect.
 //
 // Exported because the configuration loader applies the same rule at startup, and must apply the
 // same one. It carried its own copy, and the two had already drifted: config refused every http
 // URL outright, so the loopback shape this function explicitly allows was unreachable through it —
 // which made the deployment shape where the server hosts its own APK impossible to test end to end,
 // and the impossibility read as "that configuration is invalid" rather than "two rules disagree".
+// cleartextHosts is the exemption above, as data rather than as a chain of ==. Kept next to the
+// function so the list a reader checks against the DPC's is one list, in one place.
+var cleartextHosts = map[string]bool{
+	"localhost": true,
+	"127.0.0.1": true,
+	// The Android emulator's alias for its host. See the note above: this is what lets the
+	// emulator reach a bench control plane after the DPC has turned adb off.
+	"10.0.2.2": true,
+}
+
 func RequireProvisioningURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -174,7 +198,7 @@ func RequireProvisioningURL(raw string) error {
 	if u.Scheme == "https" {
 		return nil
 	}
-	if u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1") {
+	if u.Scheme == "http" && cleartextHosts[u.Hostname()] {
 		return nil
 	}
 	return fmt.Errorf("%q is not https; Android refuses a cleartext provisioning download", raw)

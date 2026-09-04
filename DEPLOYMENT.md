@@ -389,8 +389,20 @@ kubectl -n familyguard rollout restart deploy/familyguard-control-plane
 ### Replacing the APK later
 
 The signature checksum does not change as long as the signing key does not, so an updated APK signed
-with the same key can be dropped in and the pod restarted. Enrolled devices are **not** re-enrolled;
-they update through the ordinary Android install path.
+with the same key can be dropped in and the pod restarted.
+
+Enrolled devices are **not** re-enrolled. They are updated from the console: open the device and send
+**Update app**, and the phone downloads what this server now hosts and installs it over itself
+(FR-15). It is an ordinary instant command, so it queues while the phone is off and runs when it
+comes back.
+
+Two things about that are worth knowing before you use it. The phone refuses anything that is not
+strictly newer, not the same package, not signed by the same key, or that does not match the
+checksum this server published — so dropping in an APK signed with a different key does not produce
+a broken fleet, it produces a refusal with a reason under the command. And the acknowledgement
+arrives *before* the install, because the install kills the process that would otherwise send it:
+what tells you the update landed is the build number the device reports on its next heartbeat, shown
+on the device page. A phone that acknowledged and never reported a new build is a phone to look at.
 
 Signing a new APK with a **different** key breaks provisioning for new devices and cannot upgrade
 existing ones at all. There is no recovery from a lost signing key other than factory-resetting every
@@ -413,7 +425,7 @@ enrolled phone — which the fleet permits, by design, because `no_factory_reset
 The token is single-use and a replay is refused. A QR that was displayed and not used is still a key
 to a phone until it expires — treat it as a credential.
 
-### The two grants Device Owner does not give you
+### The grants Device Owner does not give you
 
 `PACKAGE_USAGE_STATS` and `SCHEDULE_EXACT_ALARM` are **appops**, not runtime permissions. No
 device-owner API can set one — `setPermissionGrantState` covers runtime permissions only — so each is
@@ -449,6 +461,39 @@ adb logcat -s FamilyGuard/Connection | grep 'enforcement wake-up'
 # sync: next enforcement wake-up at 1755500400000 (exact)     ← granted
 # sync: next enforcement wake-up at 1755500400000 (INEXACT)   ← not granted, still enforcing
 ```
+
+#### And a third, only if the control plane is on the family's own network
+
+`ACCESS_LOCAL_NETWORK` is a runtime permission, so `setPermissionGrantState` ought to cover it. It
+does not: measured on an Android 37 emulator on 2026-09-04, the call returns **true** — from a clean
+state and from a policy-fixed one — while `checkSelfPermission` stays `DENIED`. The DPC reads the
+result back rather than believing it, and says so once per start:
+
+```bash
+adb logcat -s FamilyGuard/Connection | grep ACCESS_LOCAL_NETWORK
+# android.permission.ACCESS_LOCAL_NETWORK is not held (policy accepted=true) — a control plane on
+# the family's own network is unreachable
+```
+
+**This costs nothing for the deployment this document describes.** From Android 37 the platform
+sorts every destination into *global* or *local* and drops an app's packets to a local one without
+this permission; `guard.example.com` over the internet is global, so a phone reaching the control
+plane the normal way is unaffected. It matters if you host the control plane at home and the phones
+reach it at `192.168.x.x` on the same Wi-Fi — then every request is **dropped, not refused**, the
+DPC waits out its 15 s connect timeout, and its log says only that the server did not answer. It
+reads exactly like a server that is down, and a shell on the same phone reaches the same address in
+the same second, because `adb`'s uid is exempt.
+
+The way out is a grant nobody but the phone's user can make:
+
+```bash
+adb shell pm grant io.github.helios57.familyguard android.permission.ACCESS_LOCAL_NETWORK
+adb shell dumpsys package io.github.helios57.familyguard |
+  grep 'ACCESS_LOCAL_NETWORK: granted'   # → granted=true
+```
+
+From the phone: **Settings → Apps → FamilyGuard → Permissions → Local network devices → Allow.**
+It survives the DPC re-applying its whole policy, and it survives an app update.
 
 **Device Owner can only be established on an unprovisioned device.** Once the phone has an account
 on it, the only route back is a factory reset.

@@ -56,17 +56,24 @@ class EventStreamTest {
         val stream = stream(fastBackoff()) { woken.send(it) }
 
         val job = launch { stream.run() }
+        val first = withTimeout(TIMEOUT) { woken.receive() }
         val event = withTimeout(TIMEOUT) { woken.receive() }
         job.cancel()
 
+        assertEquals("connected", first.type)
         assertEquals("policy_changed", event.type)
         assertEquals("{\"v\":7}", event.data)
     }
 
     @Test
-    fun `the connected frame is not a wake-up`() = runBlocking {
-        // It marks the stream as established, which is the backoff's business and nobody else's. A
-        // sync per connection would mean a phone on a flapping network syncing continuously.
+    fun `the connected frame is a wake-up too`() = runBlocking {
+        // It used to be swallowed, on the reasoning that a sync per connection would make a phone on
+        // a flapping network sync continuously. That reasoning was measured and found to cost more
+        // than it saved: a publish reaches the streams open at that instant and nothing else, and
+        // the DPC's poll re-enforces from cache without fetching, so a command queued while this
+        // device had no stream open is not delayed — it is lost. On an emulator on 2026-09-05 one
+        // queued 1.2 s before the stream opened was still undelivered eleven minutes and two polls
+        // later. This is the wake-up that finds it.
         body = "event: connected\ndata: {}\n\nevent: command\ndata: c1\n\n"
         val woken = Channel<SseEvent>(Channel.UNLIMITED)
         val stream = stream(fastBackoff()) { woken.send(it) }
@@ -75,7 +82,7 @@ class EventStreamTest {
         val first = withTimeout(TIMEOUT) { woken.receive() }
         job.cancel()
 
-        assertEquals("command", first.type)
+        assertEquals("connected", first.type)
     }
 
     @Test
@@ -104,8 +111,14 @@ class EventStreamTest {
         val woken = Channel<SseEvent>(Channel.UNLIMITED)
         val stream = stream(fastBackoff()) { woken.send(it) }
 
+        // Counted in `command` frames rather than in wake-ups: each connection now delivers a
+        // `connected` wake as well, so counting every wake would reach three of them inside two
+        // connections and assert nothing about reconnecting.
         val job = launch { stream.run() }
-        withTimeout(TIMEOUT) { repeat(3) { woken.receive() } }
+        withTimeout(TIMEOUT) {
+            var commands = 0
+            while (commands < 3) if (woken.receive().type == "command") commands++
+        }
         job.cancel()
 
         assertTrue("${server.requests.size}", server.requests.size >= 3)

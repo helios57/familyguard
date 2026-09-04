@@ -83,12 +83,36 @@ data class HeartbeatRequest(
     @SerialName("screen_on") val screenOn: Boolean? = null,
     @SerialName("connectivity") val connectivity: String = "",
     @SerialName("policy_version") val policyVersion: Long = 0,
+    /**
+     * The DPC build running on this phone (FR-15.4).
+     *
+     * Sent on every heartbeat rather than once at enrollment, because the value changes without an
+     * enrollment: an `UPDATE_APP` replaces this app, and the acknowledgement for that command went
+     * out *before* the install — so this field is the only thing that ever reports the update
+     * actually took effect.
+     */
+    @SerialName("app_version_name") val appVersionName: String = "",
+    @SerialName("app_version_code") val appVersionCode: Long = 0,
 )
 
 @Serializable
 data class HeartbeatResponse(
     @SerialName("policy_version") val policyVersion: Long = 0,
     @SerialName("pending_commands") val pendingCommands: Int = 0,
+)
+
+/**
+ * What the server says this phone should be running (`GET /device/apk-info`).
+ *
+ * [packageChecksum] is the SHA-256 of the APK the server serves, url-safe base64 without padding —
+ * the same value and the same encoding as the provisioning QR's package checksum, because it is
+ * literally the same number computed by the same code.
+ */
+@Serializable
+data class ApkInfoResponse(
+    @SerialName("url") val url: String = "",
+    @SerialName("package_checksum") val packageChecksum: String = "",
+    @SerialName("size") val size: Long = 0,
 )
 
 @Serializable
@@ -276,6 +300,15 @@ class ApiClient(
         require(CommandId.isValid(id)) { "refusing to build a request path from a non-UUID command id" }
         post("/api/v1/device/commands/$id/ack", json.encodeToString(AckRequest.serializer(), request))
     }
+
+    /**
+     * What DPC this server hosts, so this phone can decide whether to replace itself with it.
+     *
+     * A 404 here is a normal answer, not an outage: a control plane may host no DPC at all. It
+     * arrives as an [ApiException] the caller reports as the refusal it is.
+     */
+    fun apkInfo(): ApkInfoResponse =
+        get("/api/v1/device/apk-info").let { json.decodeFromString(ApkInfoResponse.serializer(), it) }
 
     fun reportLocation(request: LocationRequest) {
         post("/api/v1/device/location", json.encodeToString(LocationRequest.serializer(), request))

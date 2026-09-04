@@ -258,6 +258,8 @@ class Synchronizer(
                 screenOn = t.screenOn,
                 connectivity = t.connectivity,
                 policyVersion = cache.appliedVersion(),
+                appVersionName = t.appVersionName,
+                appVersionCode = t.appVersionCode,
             )
         ).pendingCommands
     }
@@ -285,4 +287,12 @@ data class DeviceTelemetry(
     val charging: Boolean? = null,
     val screenOn: Boolean? = null,
     val connectivity: String = "",
+    /**
+     * The DPC build this process is (FR-15.4). Read from the package manager rather than from
+     * `BuildConfig`, for one reason: after a self-update the running code and the installed package
+     * are the same thing again only once the process has restarted, and the package manager is the
+     * authority on which of the two the phone actually has.
+     */
+    val appVersionName: String = "",
+    val appVersionCode: Long = 0,
 )

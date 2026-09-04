@@ -34,8 +34,8 @@ person can read all of it, and — above all — **never be able to brick the ph
 |---|---|---|
 | Control plane (Go 1.26) | `backend/` | API, event stream, policy compiler, console — running and tested |
 | Parent console (vanilla JS, mobile-first) | `backend/internal/console/assets/` | served by the same binary at `/` |
-| Android DPC (Kotlin, Device Owner) | `android-dpc/` | provisioning, enrollment, sync, hardening, app/Chrome/DNS policy, screen time, instant commands, the offline recovery hatch, and the status block the phone shows for itself |
-| Test layers | `tests/` | secret-scan, backend, manifests, image, e2e, android-unit, android-instrumented |
+| Android DPC (Kotlin, Device Owner) | `android-dpc/` | provisioning, enrollment, sync, hardening, app/Chrome/DNS policy, screen time, instant commands, the offline recovery hatch, the status block the phone shows for itself, and replacing itself when the control plane hosts a newer build |
+| Test layers | `tests/` | secret-scan, backend, manifests, image, e2e, android-unit, android-instrumented, android-self-update |
 | Kubernetes manifests | `deploy/` | a complete worked example — `kubectl kustomize deploy` renders it; nothing is deployed |
 
 `IMPLEMENTATION_PLAN.md` is the authority on what is finished. It says "not measured" where a thing

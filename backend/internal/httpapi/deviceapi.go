@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/base64"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -108,6 +109,12 @@ type heartbeatRequest struct {
 	ScreenOn      *bool  `json:"screen_on"`
 	Connectivity  string `json:"connectivity"`
 	PolicyVersion int64  `json:"policy_version"`
+
+	// The DPC build running on the phone. Absent from an older device's heartbeat, and absence
+	// leaves the stored value alone rather than clearing it — the alternative would make every
+	// heartbeat from a phone that has not been updated erase the version of one that has.
+	AppVersionName string `json:"app_version_name"`
+	AppVersionCode int64  `json:"app_version_code"`
 }
 
 // heartbeat records liveness and tells the device whether it is behind.
@@ -132,6 +139,9 @@ func (s *Server) heartbeat(c *gin.Context) {
 		ScreenOn:      req.ScreenOn,
 		Connectivity:  req.Connectivity,
 		PolicyVersion: req.PolicyVersion,
+
+		AppVersionName: strings.TrimSpace(req.AppVersionName),
+		AppVersionCode: req.AppVersionCode,
 	}); err != nil {
 		s.fail(c, err)
 		return
@@ -400,4 +410,46 @@ func (s *Server) recoveryEventReport(c *gin.Context) {
 		map[string]any{"succeeded": req.Succeeded, "occurred_at": occurred.Format(time.RFC3339)})
 	s.hub.PublishParents(Event{Type: "recovery", DeviceID: dev.ID.String(), ChildID: dev.ChildID.String()})
 	c.JSON(http.StatusOK, gin.H{"recorded": true})
+}
+
+// apkInfo tells an enrolled device what the DPC it should be running is.
+//
+// **This is the metadata half of UPDATE_APP** (FR-15.1), and it exists as its own endpoint rather
+// than as command parameters for one reason: a command carries what the parent asked for, and this
+// carries what is true right now. The APK on the node can be replaced between the moment a parent
+// presses the button and the moment the phone in a school bag comes back online, and a checksum
+// baked into the queued row would then describe the previous build — which is the exact drift the
+// download handler refuses to serve.
+//
+// The checksum is the same value every provisioning QR carries, computed at startup from the file
+// on disk. Handing it out here is not a disclosure: the endpoint below it serves the very bytes it
+// hashes, unauthenticated, by design.
+//
+// Authenticated as the device, unlike /dpc.apk, because there is a device to authenticate. The
+// download must be reachable by a factory-reset phone that has no credential yet; a phone asking
+// whether it should update has been enrolled for weeks.
+func (s *Server) apkInfo(c *gin.Context) {
+	if s.cfg.APKPath == "" || s.packageChecksum == "" {
+		// Not an error state. A control plane may legitimately not host the DPC — and a device that
+		// is told so stops asking, rather than downloading something this server never described.
+		failWith(c, http.StatusNotFound, "not_found", "this server does not host the DPC")
+		return
+	}
+	info, err := os.Stat(s.cfg.APKPath)
+	if err != nil || info.IsDir() {
+		s.log.Error("the configured APK is no longer readable",
+			"path", s.cfg.APKPath, "error", err, "request_id", RequestIDOf(c))
+		failWith(c, http.StatusServiceUnavailable, "apk_unavailable", "the DPC is temporarily unavailable")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		// Absolute, from the same PublicURL the provisioning QR is built from, so the device never
+		// has to join a base to a path and never has to guess a scheme.
+		"url":              strings.TrimSuffix(s.cfg.PublicURL.String(), "/") + APKDownloadPath,
+		"package_checksum": s.packageChecksum,
+		// The size is advisory and is sent anyway: it is what lets the device refuse a download
+		// that ended early before spending the CPU to hash 13 MB, and what makes "the proxy
+		// truncated it" distinguishable from "the file changed" in the failure the parent sees.
+		"size": info.Size(),
+	})
 }
