@@ -102,6 +102,48 @@ jobs:
             echo "tag says $want, the DPC's versionName says $got" >&2
             exit 1
           fi
+      - name: Refuse a release the enrolled fleet could not install
+        # versionName is what a parent reads; versionCode is what DECIDES. FR-15 installs the hosted
+        # APK only on a strictly greater versionCode, so a release that bumped the name and left the
+        # number alone would publish an APK every enrolled phone correctly refuses — and the refusal
+        # arrives on the phone, days later, as "not newer than what is installed". Nothing else in
+        # this repository would have said a word: no test compares two releases, because no test can
+        # see more than one.
+        #
+        # Fail-closed in both directions. A tag listing that comes back empty is a failed READ, not a
+        # first release, and it would otherwise skip the whole check silently — so the listing has to
+        # find THIS tag before its silence about the others is allowed to mean anything.
+        run: |
+          set -euo pipefail
+          # Comments first: build.gradle.kts explains `versionCode` in prose that contains the word,
+          # and an authority that reads its own commentary is not an authority.
+          code_of() { sed 's|//.*||' | sed -n 's/.*versionCode *= *\([0-9][0-9]*\).*/\1/p' | head -n1; }
+          now="$(code_of <android-dpc/app/build.gradle.kts)"
+          if [ -z "$now" ]; then
+            echo "could not read versionCode out of android-dpc/app/build.gradle.kts" >&2
+            exit 2
+          fi
+          git fetch --tags --force origin
+          all="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*')"
+          if ! printf '%s\n' "$all" | grep -qx "${GITHUB_REF_NAME}"; then
+            echo "the tag listing does not contain ${GITHUB_REF_NAME} itself, so it read nothing usable" >&2
+            exit 2
+          fi
+          prev="$(printf '%s\n' "$all" | grep -vx "${GITHUB_REF_NAME}" | sed 's/^v//' | sort -V | tail -n1)"
+          if [ -z "$prev" ]; then
+            echo "${GITHUB_REF_NAME} is the first release; versionCode $now has nothing to exceed"
+            exit 0
+          fi
+          was="$(git show "v${prev}:android-dpc/app/build.gradle.kts" | code_of)"
+          if [ -z "$was" ]; then
+            echo "could not read versionCode out of v${prev}" >&2
+            exit 2
+          fi
+          if [ "$now" -le "$was" ]; then
+            echo "v${prev} shipped versionCode $was and ${GITHUB_REF_NAME} carries $now — a phone on $was would refuse this APK" >&2
+            exit 1
+          fi
+          echo "versionCode $was (v${prev}) -> $now (${GITHUB_REF_NAME})"
 
   # The same layers CI runs, re-run against the tagged tree. A tag can be pushed to a commit whose
   # CI run was cancelled, or was green before a force-push moved the branch. Re-running is a few
