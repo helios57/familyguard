@@ -2976,6 +2976,35 @@ child and device names have no length limit. **One is a real gap and is the owne
 on this cluster. A wrong selector there takes down the family's MDM and the nightly backup job, so it
 is reported rather than pushed.
 
+### 11.9 — 0.2.2, and the order the two halves have to go in
+
+Everything above was inert until a tag moved: the deployed image predated all of it. `v0.2.2`
+publishes it — `sha256:37739b4925639562837bfff32c3e4c520d5c516c263e7ed4c5ad34d6ced089f7`, agreed on
+by the publish job's `containerimage.digest` and the registry's `docker-content-digest` header for
+the `0.2.2` manifest, with `latest` answering 404 to the same query as the control that the read
+discriminates. The running pod's `imageID` is that digest.
+
+**The APK swap and the manifest commit are one release in two places, and the order is not free.**
+The server hashes `/srv/apk/familyguard.apk` once at startup, so the pod-template annotation has to
+describe what is on disk *at the moment the new pod starts*. Committing first restarts a pod that
+hashes the OLD file and then finds the new one under it — `503 apk_changed` until a second restart.
+So: swap the file, then commit. Between the two, `/dpc.apk` returned exactly that 503 with its
+reason in the body, which is the 10.3 guard observed again rather than assumed, and nothing was
+enrolled to see it.
+
+Signed with the same key — `apksigner verify --print-certs` and the exported DER agree on
+`b62cda94…`, so the DER on the node was already correct and was not touched. `aapt2 dump badging`
+on the **signed file** reports `versionCode='5' versionName='0.2.2'`; the build script is not the
+authority for what shipped. `curl https://…/dpc.apk | sha256sum` returns `c76ec970…`, the hash of
+the bytes signed locally. 0.2.1 is archived beside 0.1.0.
+
+**Migration 0003 was calibrated in production, against the family's own row.** A second `families`
+row was attempted inside a transaction that rolls back either way: refused with
+*"duplicate key value violates unique constraint `families_is_a_singleton`"*. The positive control
+is a temp-table insert in the same session, which succeeded — so the refusal is the constraint and
+not a permission. `families=1` before and after. A constraint that has never refused anything has
+not been shown to work, and this one now has.
+
 ---
 
 ## Traceability
