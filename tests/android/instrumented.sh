@@ -126,6 +126,24 @@ ran_class_count() { # ran_class_count <mark> <fully-qualified-class>
 		tr '<' '\n' | command grep -c "^testcase .*classname=\"$2\""
 }
 
+# Failures that carry a MESSAGE, which is how an assertion that fired is told from a process that
+# stopped existing.
+#
+# When `system_server` dies under a run, AGP still writes the testcase it was in the middle of and
+# gives it `<failure></failure>` — an empty element, no message, no stack. A real assertion writes
+# the throwable and its trace. After `tr '<' '\n'` the two are a line `failure>` with nothing after
+# the `>` versus a line `failure>java.lang.AssertionError: …`, so the regex asks for one character
+# after the tag and nothing else.
+#
+# This exists because the crash net below was measured swallowing a real red on its first
+# calibration: a deliberately broken test failed and the platform died in the SAME run, and the run
+# was reported NOT MEASURED. A net that catches genuine failures is worse than no net. Now a
+# message-carrying failure wins, and the crash signature only decides runs that produced none.
+messaged_failure_count() { # messaged_failure_count <mark>
+	find "$RESULTS" -name 'TEST-*.xml' -newer "$1" -exec cat {} + 2>/dev/null |
+		tr '<' '\n' | command grep -cE '^(failure|error)[^>]*>.'
+}
+
 MARK="$(mktemp)"
 trap 'rm -f "$MARK"' EXIT
 
@@ -134,8 +152,11 @@ pass() { # pass <label> <expected-minimum> <gradle-arg...>
 	shift 2
 	say "$label"
 	: >"$MARK"
-	(cd "$ANDROID" && ./gradlew --console=plain :app:connectedDebugAndroidTest "$@")
-	local rc=$?
+	local out
+	out="$(mktemp)"
+	(cd "$ANDROID" && ./gradlew --console=plain :app:connectedDebugAndroidTest "$@") 2>&1 | tee "$out"
+	# `| tee` makes $? the status of tee, which is 0 whatever gradle did.
+	local rc="${PIPESTATUS[0]}"
 	local ran
 	ran="$(ran_count "$MARK")"
 	printf '%s: gradle rc=%s, testcases executed=%s (expected at least %s)\n' "$label" "$rc" "$ran" "$min"
@@ -145,10 +166,42 @@ pass() { # pass <label> <expected-minimum> <gradle-arg...>
 		# applying `no_debugging_features`, which switches adb off; the pre-flight above is what
 		# stops the baseline doing it, and this is the net for everything else.
 		if ! reachable; then
+			rm -f "$out"
 			return 3
 		fi
+		# adb can be perfectly healthy while the PLATFORM is not. When `system_server` dies under a
+		# run — on this machine's emulator it does, see below — the device stays connected, gradle
+		# reports failing tests, and the XML holds a truncated run whose last testcase carries a
+		# `<failure>` with an EMPTY message. That is a process that stopped existing, not an assertion
+		# that fired, and reporting it as FAIL blames the product for the host's GL driver.
+		#
+		# The signature is taken from the run's own output rather than from the device afterwards,
+		# because `system_server` restarts in about twenty seconds: by the time this function could ask,
+		# the evidence is gone and the device looks fine. Nothing the DPC can do produces these lines —
+		# it cannot kill `system_server` — so this cannot swallow a real red.
+		#
+		# Measured 2026-09-05, API 37 emulator: `surfaceflinger` aborts in its `RegionSampling` thread
+		# with `Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma`, a host-emulator/guest-
+		# image mismatch with no fix available (emulator 37.1.11 and system image rev 6 are both the
+		# newest published), and takes `system_server` with it. StatusScreenTest is the class that
+		# provokes it, because it is the only one that renders.
+		#
+		# ...but only for a run that produced no assertion failure of its own. A crash and a real red
+		# can happen in the same run — measured on this net's first calibration — and the red is the
+		# more important of the two.
+		local messaged
+		messaged="$(messaged_failure_count "$MARK")"
+		if [ "$messaged" -eq 0 ] &&
+			command grep -qE "Can't find service:|Transport endpoint is not connected" "$out"; then
+			rm -f "$out"
+			return 4
+		fi
+		printf '%s: %s failing testcase(s) carry a message, so this is a red and not a dead platform\n' \
+			"$label" "$messaged"
+		rm -f "$out"
 		return 1
 	fi
+	rm -f "$out"
 	if [ "$ran" -lt "$min" ]; then
 		printf '%s passed having run %s tests; the filter matched less than it should have\n' "$label" "$ran"
 		return 2
@@ -159,23 +212,35 @@ pass() { # pass <label> <expected-minimum> <gradle-arg...>
 # Pass 1 applies the baseline and asserts against it. WipeableAsFoundTest is excluded because it
 # reads the state it finds — before pass 1 there is no state to find, and a class that has to run
 # second is a flake unless something sequences it. This script is that something.
+wait_for_unlocked_user "before pass 1"
 pass "pass 1 — provisioned state" 3 \
 	"-Pandroid.testInstrumentationRunnerArguments.notAnnotation=$SEQUENCED"
 case $? in
 0) ;;
 2) result "NOT MEASURED" "pass 1 reported success without running its tests" ;;
 3) result "NOT MEASURED" "the device went offline during pass 1, so nothing was measured (adb disconnected)" ;;
+4) result "NOT MEASURED" "the platform died under pass 1 — a device shell could not reach its own services — so the run was truncated rather than red" ;;
 *) result "FAIL" "pass 1 (provisioned state) failed — see the report under $RESULTS" ;;
 esac
 
-# The FR-2.3 evidence, named. Both classes are about the same guarantee from opposite sides:
-# WipeabilityTest asserts `no_factory_reset` is absent on a provisioned device, and
-# FactoryResetRecoveryTest sets it on purpose to show the platform would REPORT it if it were there
-# — the positive control the absence assertions cannot carry themselves — and that the DPC takes it
-# back off. A green pass 1 that ran neither is not evidence about a phone that can be reset.
+# The evidence this layer exists to produce, named. A green pass 1 that ran none of these is a
+# green about something else.
+#
+# FR-2.3, from opposite sides: WipeabilityTest asserts `no_factory_reset` is absent on a provisioned
+# device, and FactoryResetRecoveryTest sets it on purpose to show the platform would REPORT it if it
+# were there — the positive control the absence assertions cannot carry themselves — and that the
+# DPC takes it back off.
+#
+# FR-16: ManagedInstallTest is the only place the declared app set is measured against a platform.
+# Whether a device owner can install and remove a package under its OWN `no_install_apps` and
+# `no_uninstall_apps`, how narrow the lift around it may be, and whether `installedByThisApp()`
+# really separates what this app installed from what is merely installed — none of those can be
+# answered off a device, and `ManagedAppApplierTest`'s calibration showed the JVM layer binds to
+# none of them.
 for required in \
 	"io.github.helios57.familyguard.WipeabilityTest" \
-	"io.github.helios57.familyguard.FactoryResetRecoveryTest"; do
+	"io.github.helios57.familyguard.FactoryResetRecoveryTest" \
+	"io.github.helios57.familyguard.ManagedInstallTest"; do
 	n="$(ran_class_count "$MARK" "$required")"
 	printf 'pass 1: %s ran %s testcases\n' "$required" "$n"
 	[ "$n" -gt 0 ] ||
@@ -215,7 +280,11 @@ done
 # The boot receiver runs on ACTION_BOOT_COMPLETED, which the platform sends after sys.boot_completed
 # is already set. Reading the restrictions the instant the property flips would race it.
 sleep 10
-adb shell input keyevent 82 >/dev/null 2>&1 # dismiss a swipe lock; harmless if there is none
+adb shell input keyevent 82 >/dev/null 2>&1 # nudge a swipe lock; harmless if there is none
+# ...and then read the state back, because the nudge is a hope and this is the measurement. It is
+# also the more important of the two calls: `input keyevent` is silently a no-op on a device whose
+# SystemUI is not up, and the window it is supposed to close is exactly when it is not up.
+wait_for_unlocked_user "after the reboot, before pass 2"
 
 pass "pass 2 — as the boot left it" 1 \
 	"-Pandroid.testInstrumentationRunnerArguments.class=$AS_FOUND"
@@ -223,6 +292,7 @@ case $? in
 0) ;;
 2) result "NOT MEASURED" "pass 2 reported success without running WipeableAsFoundTest" ;;
 3) result "NOT MEASURED" "the device went offline during pass 2, so nothing was measured (adb disconnected)" ;;
+4) result "NOT MEASURED" "the platform died under pass 2 — a device shell could not reach its own services — so the run was truncated rather than red" ;;
 *) result "FAIL" "pass 2 (after a real reboot) failed — see the report under $RESULTS" ;;
 esac
 

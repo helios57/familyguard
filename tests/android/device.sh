@@ -54,6 +54,35 @@ fi
 
 adb() { "$ADB" ${ANDROID_SERIAL:+-s "$ANDROID_SERIAL"} "$@"; }
 
+# A user that is RUNNING but LOCKED is not a device these tests can measure, and it fails them by
+# naming the product.
+#
+# `sys.boot_completed` flips ~20 s before user 0 reaches RUNNING_UNLOCKED, and so does the package
+# service, so every readiness check this script used to make was satisfied while credential-encrypted
+# storage was still shut. In that window two different failures appear, and neither says "locked":
+#
+#   * anything that opens SharedPreferences dies with *"SharedPreferences in credential encrypted
+#     storage are not available until after user (id 0) is unlocked"* — which reads as a defect in
+#     the encrypted store;
+#   * `ActivityScenario.launch(SomeActivity::class.java)` dies with *"Unable to resolve activity
+#     for: Intent { … cmp=<TEST package>/<the activity> }"* — which reads as a manifest or a build
+#     problem. It is neither. `ActivityInvoker.getIntentForActivity` builds the intent against the
+#     TARGET context, calls `resolveActivity`, and on null silently rebuilds it against the TEST
+#     context, which can never resolve. A non-directBootAware activity does not resolve while the
+#     user is locked, so the null is the lock and the message is about the fallback.
+#
+# Measured 2026-09-05 on API 37: StatusScreenTest failed 4/4 this way across four runs, then passed
+# 4/4 unchanged once the wait below was in front of it.
+wait_for_unlocked_user() { # wait_for_unlocked_user <what-was-happening>
+	for _ in $(seq 1 120); do
+		if adb shell dumpsys user 2>/dev/null | command grep -q 'RUNNING_UNLOCKED'; then
+			return 0
+		fi
+		sleep 2
+	done
+	result "NOT MEASURED" "user 0 never reached RUNNING_UNLOCKED within 240s ($1); every test that touches credential-encrypted storage or launches an activity would have failed naming the product"
+}
+
 # `adb devices` prints a header and exits 0 with nothing attached, so the header is stripped and the
 # rest counted. Its exit status says only that adb ran.
 attached() { "$ADB" devices | tail -n +2 | command grep -c 'device$'; }

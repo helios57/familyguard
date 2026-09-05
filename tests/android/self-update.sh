@@ -151,6 +151,12 @@ adb install -r -d "$WORK/test.apk" | tail -n1
 ensure_device_owner
 allow_local_network
 
+# The enrollment instrumentation opens the encrypted credential store on its first line, so a locked
+# user fails it with a message about SharedPreferences and the layer reports "the device did not
+# enrol". Measured 2026-09-05: that is exactly how this layer failed, on a device that was fine
+# twenty seconds later. See device.sh for why every other readiness signal is satisfied first.
+wait_for_unlocked_user "before the enrollment instrumentation"
+
 # ------------------------------------------------------------------- run ----
 #
 # run.sh owns the database, the server binary and the browser precondition, and answers 2 for every

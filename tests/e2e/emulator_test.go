@@ -348,6 +348,39 @@ func (d *androidDevice) reboot() {
 	// necessarily run yet. Nothing below depends on this sleep — awaitReportedBuild polls — it just
 	// keeps the first few polls from being noise.
 	time.Sleep(5 * time.Second)
+
+	d.awaitUnlockedUser()
+}
+
+// awaitUnlockedUser blocks until user 0 is not merely running but UNLOCKED.
+//
+// `sys.boot_completed` flips roughly twenty seconds before that happens, and so does the package
+// service, so every other readiness signal is satisfied while credential-encrypted storage is still
+// shut. Everything the DPC keeps — the enrollment credential, the device token, the recovery secret
+// — lives in that storage, so in the gap the app cannot read its own state and the failure names
+// SharedPreferences rather than the lock. Measured 2026-09-05 on API 37: this layer failed with
+// *"the device did not enrol"* over
+// `IllegalStateException: SharedPreferences in credential encrypted storage are not available until
+// after user (id 0) is unlocked`, on a device that was fine moments later.
+func (d *androidDevice) awaitUnlockedUser() {
+	d.t.Helper()
+
+	deadline := time.Now().Add(4 * time.Minute)
+	for {
+		// `dumpsys user` rather than a property: there is no property for this, and `am unlock-user`
+		// answers "could not unlock user" on a device with no credential — it is the platform that
+		// unlocks, and the only honest thing to do is wait for it and say so if it never happens.
+		out, _ := d.run(20*time.Second, "shell", "dumpsys", "user")
+		if strings.Contains(out, "RUNNING_UNLOCKED") {
+			return
+		}
+		if time.Now().After(deadline) {
+			d.t.Fatalf("user 0 never reached RUNNING_UNLOCKED after the reboot; every read of the " +
+				"encrypted credential store below would have failed naming SharedPreferences " +
+				"rather than the lock")
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 // enroll runs the device half: the instrumentation that calls ConnectionService.start with the
