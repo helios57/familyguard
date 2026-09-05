@@ -528,6 +528,12 @@ It survives the DPC re-applying its whole policy, and it survives an app update.
 **Device Owner can only be established on an unprovisioned device.** Once the phone has an account
 on it, the only route back is a factory reset.
 
+**And it can only be removed by one.** `adb shell dpm remove-active-admin` refuses the shipping DPC
+— *`SecurityException: Attempt to remove non-test admin`*, measured, because the release build is
+not `testOnly`. There is no adb route out of Device Owner and no in-app one either: the DPC calls no
+`clearDeviceOwnerApp`. That is the whole reason `no_factory_reset` is in `FORBIDDEN_RESTRICTIONS` —
+the reset is not one way out among several, it is the way out.
+
 ---
 
 ## Rollback
@@ -537,7 +543,7 @@ on it, the only route back is a factory reset.
 | A bad image version | Edit the tag in `deploy/control-plane.yaml` back, commit, push, let the sync run. Never `kubectl set image` — a GitOps controller reverts it within minutes, so the rollback appears to work and then undoes itself. |
 | A bad policy on a phone | Fix it in the console. The device re-syncs on the next event or within the heartbeat interval; clears run before adds, so a partial apply leaves the phone *less* restrained, never more. |
 | The control plane is down and a phone must be freed | The DPC's offline recovery code, shown once in the console per device. |
-| Everything is wrong | Factory-reset the phone. This always works — `no_factory_reset` is in `FORBIDDEN_RESTRICTIONS`, never set, and cleared on every sync if anything else set it. |
+| Everything is wrong | Factory-reset the phone. This always works — `no_factory_reset` is in `FORBIDDEN_RESTRICTIONS`, never set, and cleared on every sync **and every boot** if anything else set it. Measured on a device, not argued: `FactoryResetRecoveryTest` sets the restriction on purpose, watches the platform report it, and watches the DPC take it back off (§11.12). |
 
 The last row is the reason the third and second exist rather than being the only options. It is the
 one guarantee that is worth more than any feature in this system.

@@ -24,6 +24,7 @@ import org.junit.runner.RunWith
  * environment problem. `tests/android/instrumented.sh` is what sequences the two passes.
  */
 @RunWith(AndroidJUnit4::class)
+@SequencedByAScript
 class WipeableAsFoundTest {
 
     @Test

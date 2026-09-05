@@ -35,6 +35,7 @@ import org.junit.runner.RunWith
  * layer that can see the device, and the reason names the script that is supposed to be driving it.
  */
 @RunWith(AndroidJUnit4::class)
+@SequencedByAScript
 class ServerDrivenEnrollmentTest {
 
     @Test

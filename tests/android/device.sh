@@ -136,12 +136,23 @@ require_one_device() {
 # Prints the dump and returns 0 when one was read; prints nothing and returns 2 when five attempts
 # over ~8 s never produced one. The header line is the readability marker because it is the one line
 # the service always emits, whoever owns the device.
+#
+# @param 1 an additional marker the caller needs present, retried for like the header.
+#
+# A dump can arrive TRUNCATED, and a truncated dump carries the header — so validating on the header
+# alone turns "the read was cut short" into a determination about the device. Measured 2026-09-05 on
+# a machine at load 30, three minutes after two Gradle installs: `Current Device Policy Manager
+# state` was there, `Enabled Device Admins` was not, and the layer reported that it could not tell
+# whether the DPC can act. Read by hand a moment later the same dump was complete and correct, admin
+# enabled, service bound. Whatever the caller is about to grep for has to be inside the retry, or
+# the retry is guarding the wrong line.
 dpm_dump() {
-	local dump attempt=0
+	local dump attempt=0 marker="${1:-}"
 	while [ "$attempt" -lt 5 ]; do
 		attempt=$((attempt + 1))
 		dump="$(adb shell dumpsys device_policy 2>/dev/null | tr -d '\r')"
-		if printf '%s' "$dump" | command grep -q 'Current Device Policy Manager state'; then
+		if printf '%s' "$dump" | command grep -q 'Current Device Policy Manager state' &&
+			{ [ -z "$marker" ] || printf '%s' "$dump" | command grep -q "$marker"; }; then
 			printf '%s\n' "$dump"
 			return 0
 		fi
@@ -172,8 +183,11 @@ owner_is_us() {
 # above catches that, and ManifestAndPlatformCallsTest catches the declaration itself.
 admin_is_enabled() {
 	local dump
-	dump="$(dpm_dump)" || return 2
-	printf '%s' "$dump" | command grep -q 'Enabled Device Admins' || return 2
+	# The section name is handed to dpm_dump rather than checked afterwards: a dump missing it is a
+	# short read, not a device with no admins, and the difference is only visible from inside the
+	# retry. `Enabled Device Admins` is emitted for every user whoever owns the device, so waiting for
+	# it cannot wait forever on a legitimately unmanaged phone — it comes back in 2 s or it is a 2.
+	dump="$(dpm_dump 'Enabled Device Admins')" || return 2
 	printf '%s\n' "$dump" |
 		awk '/Enabled Device Admins/{n = 1; next} /mPasswordOwner=/{n = 0} n' |
 		command grep -q "$PKG"

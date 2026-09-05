@@ -41,11 +41,20 @@ set -uo pipefail
 RESULTS="$ANDROID/app/build/outputs/androidTest-results/connected"
 
 AS_FOUND="io.github.helios57.familyguard.WipeableAsFoundTest"
-# The device half of the FR-15 self-update proof. It needs a live control plane and a single-use
-# enrollment token, which only tests/android/self-update.sh can hand it, and it fails rather than
-# skips without them — so this sweep, which has neither, must not run it. Excluded by name for the
-# same reason AS_FOUND is: a class that has to be sequenced is a flake unless something sequences it.
-ENROLL="io.github.helios57.familyguard.ServerDrivenEnrollmentTest"
+
+# The classes that only mean something in a position this script puts them in: AS_FOUND, which reads
+# the state a reboot left, and ServerDrivenEnrollmentTest, the device half of the FR-15 self-update
+# proof, which needs a live control plane and a single-use token only tests/android/self-update.sh
+# can hand it. Both fail rather than skip out of position, so pass 1 has to exclude them.
+#
+# Excluded by ANNOTATION, and it has to be, because AGP splits its instrumentation arguments on
+# commas. Measured 2026-09-05: `-P…notClass=$AS_FOUND,$ENROLL` reached the device as
+# `am instrument … -e notClass io.github.helios57.familyguard.WipeableAsFoundTest` — AGP's own
+# --info line — with the second class silently dropped as a malformed argument. The runner itself is
+# innocent: `am instrument -e notClass A,B` by hand excludes both. So every sweep since the FR-15
+# work landed ran ServerDrivenEnrollmentTest and reported FAIL on a filter that reads correctly.
+# One annotation is one value with no comma in it.
+SEQUENCED="io.github.helios57.familyguard.SequencedByAScript"
 
 REBOOT=yes
 case "${1:-}" in
@@ -105,6 +114,18 @@ ran_count() {
 		tr '<' '\n' | command grep -c '^testcase '
 }
 
+# The same count, restricted to one class.
+#
+# `ran_count`'s floor catches a filter that matched nothing. It cannot catch a filter that matched
+# everything EXCEPT the classes this layer exists for — which is not hypothetical: the sweep that
+# found the AGP comma defect above ran 17 testcases, comfortably over its floor of 3, while silently
+# running the wrong set. A count of the FR-2.3 classes by name is the only assertion that would have
+# been red for the right reason.
+ran_class_count() { # ran_class_count <mark> <fully-qualified-class>
+	find "$RESULTS" -name 'TEST-*.xml' -newer "$1" -exec cat {} + 2>/dev/null |
+		tr '<' '\n' | command grep -c "^testcase .*classname=\"$2\""
+}
+
 MARK="$(mktemp)"
 trap 'rm -f "$MARK"' EXIT
 
@@ -139,13 +160,27 @@ pass() { # pass <label> <expected-minimum> <gradle-arg...>
 # reads the state it finds — before pass 1 there is no state to find, and a class that has to run
 # second is a flake unless something sequences it. This script is that something.
 pass "pass 1 — provisioned state" 3 \
-	"-Pandroid.testInstrumentationRunnerArguments.notClass=$AS_FOUND,$ENROLL"
+	"-Pandroid.testInstrumentationRunnerArguments.notAnnotation=$SEQUENCED"
 case $? in
 0) ;;
 2) result "NOT MEASURED" "pass 1 reported success without running its tests" ;;
 3) result "NOT MEASURED" "the device went offline during pass 1, so nothing was measured (adb disconnected)" ;;
 *) result "FAIL" "pass 1 (provisioned state) failed — see the report under $RESULTS" ;;
 esac
+
+# The FR-2.3 evidence, named. Both classes are about the same guarantee from opposite sides:
+# WipeabilityTest asserts `no_factory_reset` is absent on a provisioned device, and
+# FactoryResetRecoveryTest sets it on purpose to show the platform would REPORT it if it were there
+# — the positive control the absence assertions cannot carry themselves — and that the DPC takes it
+# back off. A green pass 1 that ran neither is not evidence about a phone that can be reset.
+for required in \
+	"io.github.helios57.familyguard.WipeabilityTest" \
+	"io.github.helios57.familyguard.FactoryResetRecoveryTest"; do
+	n="$(ran_class_count "$MARK" "$required")"
+	printf 'pass 1: %s ran %s testcases\n' "$required" "$n"
+	[ "$n" -gt 0 ] ||
+		result "NOT MEASURED" "pass 1 passed without running $required, which is the FR-2.3 evidence this layer exists to produce"
+done
 
 if [ "$REBOOT" = no ]; then
 	result "NOT MEASURED" "pass 1 passed, but --no-reboot skipped the after-reboot pass, which is the FR-2.3 evidence"

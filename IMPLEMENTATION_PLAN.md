@@ -3097,6 +3097,146 @@ the job is not simply re-copying everything every night; the third is what shows
 binds rather than trusting a filename. **Not calibrated: the empty-source refusal** — testing it
 means emptying the directory it exists to protect, so it is a plain count guard that has never been
 observed firing.
+### 11.12 — can the phone be bricked? measured on a device, not argued from the source
+
+The owner asked the question that has to be answered before a real phone is handed over: *installed
+as Device Owner on a Galaxy S20, can it still be factory reset, or can it end up bricked?* The
+answer is yes it can be reset — and the evidence below is what makes that a measurement rather than
+a claim, because everything the repo had until now argued it from the source.
+
+**The DPC has no wipe API at all.** Grepped across `app/src/main`: no `wipeData`, no `wipeDevice`,
+no `setFactoryResetProtectionPolicy`, no `setMaximumFailedPasswordsForWipe`, no `resetPassword`, no
+`clearDeviceOwnerApp`, no `setLockTaskPackages`, no `setKeyguardDisabled`, no password policy of any
+kind. The whole `DevicePolicyManager` surface it touches is user restrictions, package
+suspend/hide, private DNS, automatic time, and `lockNow`. There is no code path that wipes the
+phone and none that can lock a parent out behind a credential.
+
+**Four layers keep `no_factory_reset` off, and three of them actively remove it rather than merely
+not adding it:**
+
+| layer | what it does | file |
+|---|---|---|
+| the Go engine | `forbiddenRestrictions` subtracted from every computed set | `backend/internal/policy/engine.go:306` |
+| the Kotlin engine | same set, same subtraction, so a phone talking to a *different* server is covered | `EnforcementEngine.compute()` |
+| `RestrictionPlanner.plan()` | filters the forbidden keys out of whatever a desired state carries | applied on every sync |
+| `RestrictionPlanner.floor()` | puts every forbidden key it finds in effect into the plan's **clear** list | provisioning compliance **and every boot** |
+
+`HardeningManager` then reads the restrictions back from `UserManager` and reports
+`stillForbidden` — an un-wipeable phone — rather than trusting the calls it made.
+
+#### the gap: an absence assertion is worth what its positive control is worth
+
+`WipeabilityTest` and `WipeableAsFoundTest` assert `no_factory_reset` is **absent**. Their positive
+control proves the *baseline* landed, which shows the gateway works. It does not show that this
+particular key would be visible if it were in effect — and the restriction constants are hand-copied
+strings that the platform accepts silently when wrong. That is not hypothetical here:
+`RESTRICTION_PRIVATE_DNS` was measurably `no_config_private_dns` on both sides, and the emulator
+dropped it without a word. A misspelled `no_factory_reset` would leave every wipeability assertion
+in this repo passing forever while the real restriction went unpoliced.
+
+`FactoryResetRecoveryTest` (new, instrumented) closes it from the other side: it **sets**
+`no_factory_reset` through the real `DpmRestrictionGateway`, asserts the platform reports it — the
+control the absence tests cannot carry — and only then asks the DPC to deal with it, once through
+`applyBaseline()` (the provisioning path) and once through `BootReceiver` (the path a real phone
+runs on every boot). An `@After` clears the restriction whatever happened above and asserts the
+device came back: it is the only test in the repo that deliberately makes a device un-wipeable, and
+leaving it that way would be worse than the bug it looks for.
+
+#### calibration
+
+Every guard was broken, watched go red, and restored.
+
+| what was broken | layer | result |
+|---|---|---|
+| `plan()` stops filtering the forbidden set | JVM | RED — `RestrictionPlannerTest > a forbidden restriction is never applied, however it arrives` **and** `RestrictionApplierTest > a forbidden restriction is never requested, whatever the server sends`; 2 of 462 |
+| `floor()` stops clearing a forbidden key it finds | JVM | RED — `RestrictionPlannerTest > the floor still clears a forbidden restriction, and only that` **and** `HardeningManagerTest > a boot still clears a forbidden restriction it finds in effect`; 2 of 462 |
+| `floor()` stops clearing, on a real device | instrumented | RED — both `FactoryResetRecoveryTest` cases, and the failure text carries the platform's own effective set with `no_factory_reset` in it: *"a boot left no_factory_reset in effect… In effect: [disallow_config_private_dns, no_add_clone_profile, …, no_factory_reset, …]"* |
+| the Go engine emits `no_factory_reset`, filter deleted | backend | RED — `TestNoRestrictionCanBlockCallingOrRecovery`: *restriction "no_factory_reset" would break emergency use* |
+
+The third row is the one that matters most: it proves the platform genuinely *reports* the
+restriction, so the green runs are absence measurements and not silence.
+
+#### the result, and the authority it was read from
+
+`tests/android/instrumented.sh` → **PASS, provisioned and after a real reboot.** Pass 1: 18
+testcases, `WipeabilityTest` 3 and `FactoryResetRecoveryTest` 2. Pass 2 after a real `adb reboot`:
+`WipeableAsFoundTest`, 1 testcase. Read back from the platform afterwards, `dumpsys user` for user 0:
+
+```
+Effective restrictions:
+  no_add_private_profile  no_add_user  no_uninstall_apps  no_add_managed_profile
+  no_install_unknown_sources  disallow_config_private_dns  no_add_clone_profile
+  no_safe_boot  no_config_date_time
+```
+
+Nine restrictions, and `no_factory_reset` is not among them. `no_safe_boot` blocks Safe Mode, which
+is not the recovery menu.
+
+#### three defects the run itself found
+
+**1. AGP splits its instrumentation arguments on commas, so pass 1 had been FAIL-by-construction
+since the FR-15 work landed.** `tests/android/instrumented.sh` excluded two classes with
+`-Pandroid.testInstrumentationRunnerArguments.notClass=$AS_FOUND,$ENROLL`. AGP's own `--info` line
+shows what reached the device:
+
+```
+am instrument -r -w -e notClass io.github.helios57.familyguard.WipeableAsFoundTest -e additionalTestOutputDir … 
+```
+
+The second class became a malformed second argument and was dropped in silence, so
+`ServerDrivenEnrollmentTest` ran in every sweep and failed every time — on a filter that reads
+correctly in the script and is correct at the runner: `am instrument -e notClass A,B` by hand
+excludes both, measured. Fixed by a marker annotation, `@SequencedByAScript`, which is one value
+with no comma in it and cannot narrow itself however many classes end up wearing it.
+
+**2. The `dumpsys device_policy` retry guarded the header, not the section its caller reads.** A
+truncated dump carries `Current Device Policy Manager state` and stops before `Enabled Device
+Admins`, and `dpm_dump` accepted it — so `admin_is_enabled` returned "could not determine" with no
+retry, and the sweep ended NOT MEASURED against a device that was fine. Measured at load 30 shortly
+after two Gradle installs; the same dump read by hand a moment later was complete, admin enabled,
+service bound. `dpm_dump` now takes the marker the caller needs and retries for it.
+
+**3. A green pass whose numeric floor could not see the wrong test set.** The sweep that found
+defect 1 ran 18 testcases against a floor of 3 — comfortably over, and running the wrong classes.
+`ran_class_count` now names `WipeabilityTest` and `FactoryResetRecoveryTest` and refuses a pass 1
+that did not run them: a filter that matched *everything except* the FR-2.3 evidence is not caught
+by counting.
+
+**And one environment fault that is not a product fault.** A crashed instrumentation run leaves its
+UiAutomation registration behind, and every later run then dies in `getUiAutomation()` with
+*"UiAutomationService … already registered!"*, which surfaces in the JUnit XML as an unrelated
+`IllegalStateException: Not connected!` from whatever `@After` ran next — here `UsageAccessTest`,
+which was green on the same device and the same code an hour earlier. Only the logcat says why. A
+reboot clears it, and the sweep was green afterwards. Recorded rather than fixed: the fix belongs in
+the runner, not here.
+
+#### what is NOT proven, and cannot be from this machine
+
+- **The recovery-menu wipe on a physical Galaxy S20.** No emulator can exercise Vol-Up + Power. What
+  is proven is that the restriction that would block the Settings reset is absent, and that no DPC
+  API can reach the bootloader path at all.
+- **Google Factory Reset Protection.** FR-2.3 says FRP is not registered and the code agrees — no
+  `setFactoryResetProtectionPolicy` anywhere, and no column to hold an account for it. What the
+  project cannot control is FRP armed by *Google* because a Google account was signed in on the
+  phone before or after enrollment. That is Samsung/Google behaviour, not this system's.
+- **`tests/android/self-update.sh` was deliberately not run.** It enrolls the device against a live
+  control plane, and the first policy it applies carries `no_debugging_features` — which switches
+  `adb` off permanently on that AVD. Running it to tidy a summary would have cost the device.
+
+#### the one hatch that does close, and it is not the reset
+
+`EnforcementEngine.compute()` adds `no_debugging_features` unconditionally once a device has synced
+— deliberately, and it is out of the pre-sync baseline for exactly this reason. On a real phone that
+means **USB debugging is off after the first successful sync, and the Developer-options toggle is
+disabled**. It is recoverable through the console or the offline recovery code, and it does not
+touch the reset. But a parent who expects to keep `adb` on a pilot phone should know it goes away,
+and turning it into a policy setting a parent can see is a decision, not a defect.
+
+Related, and measured on the emulator: **`adb shell dpm remove-active-admin` refuses** —
+*`SecurityException: Attempt to remove non-test admin`* — because the shipping DPC is not a
+`testOnly` build. There is no adb route out of Device Owner either. Factory reset is the route out,
+which is precisely why FR-2.3 is the requirement it is.
+
 ---
 
 ## Traceability
