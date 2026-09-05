@@ -1,0 +1,25 @@
+# One finding, one line, and it stays as narrow as the format allows.
+#
+# gitleaks matches an entry by FINGERPRINT — commit : file : rule : line — so an entry excuses
+# exactly one occurrence in one commit and nothing else. That is the whole reason this file is used
+# here instead of an allowlist in a `.gitleaks.toml`: a rule- or path-scoped allowlist keeps
+# excusing every future line that matches its shape, silently, and a scanner taught to ignore a
+# file's shape no longer guards that file. This project has already been bitten by the general
+# version of that — a calibration probe copied from a vendor's documentation was allowlisted by the
+# scanner's own defaults, so the probe proved nothing.
+#
+# What is being excused: `tests/e2e/apps_test.go` needed a string SHAPED like an API key, to prove
+# that a key which was never issued is rejected exactly as a bad session token is. The scheme is
+# deliberately designed to be unmistakable in a repository or a log (see `auth.APIKeyScheme`), which
+# is precisely why a plausible body behind it reads as a real key. There has never been a key with
+# that value: the server mints the whole token, and nothing outside it can produce one.
+#
+# The working tree no longer contains it — the literal is assembled from parts at the point of use,
+# so a future commit cannot reintroduce the shape without also reintroducing the reasoning. This
+# entry exists only because 592b95f is already pushed and history is not rewritten to hide a string
+# that was never a secret.
+#
+# Calibrated 2026-09-05, both directions: with this line, `gitleaks detect` reports 0 findings and
+# exits 0; with the same line pointing one row lower (…:774), the finding comes back. So the file
+# is suppressing this occurrence and not the rule, not the file, and not the scan.
+592b95f9fcdb4291a1414a5f568791a2e881ba2c:tests/e2e/apps_test.go:generic-api-key:773

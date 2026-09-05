@@ -770,7 +770,17 @@ func TestAKeyThatWasNeverIssuedIsNotDistinguishable(t *testing.T) {
 	h.signIn(primaryParent) // the family exists
 
 	shapes := map[string]string{
-		"a plausible key":   "fgk_abcd1234_ZmFrZXRva2VuZmFrZXRva2VuZmFrZXRva2Vu",
+		// Assembled rather than written as one literal, and not because the value is sensitive:
+		// there has never been a key with this body and there cannot be one, since the server mints
+		// the whole thing. The scheme is designed to make a real leak unmistakable in a repository
+		// or a log — which is exactly why a plausible-shaped literal here reads as a real key.
+		// gitleaks flagged this line as `generic-api-key` on 592b95f and failed the push.
+		//
+		// The fix is to stop writing something that looks like a secret, not to allowlist the rule.
+		// An allowlist entry outlives the line it was added for and goes on excusing every future
+		// one that matches it, silently — a scanner that has been taught to ignore this file's
+		// shape is a scanner that no longer guards this file.
+		"a plausible key":   "fgk_" + "abcd1234" + "_" + strings.Repeat("nope", 12),
 		"the prefix alone":  "fgk_",
 		"a session-shaped":  "eyJhbGciOiJIUzI1NiJ9.e30.not-a-signature",
 		"empty-ish garbage": "x",
