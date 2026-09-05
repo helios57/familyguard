@@ -3585,7 +3585,60 @@ consistent with having widened the limit everywhere.
 would create a missing one as root:0755, the server would refuse correctly, and the log would send
 whoever read it to the application instead of to the volume.
 
-**Still not measured:** the API 29 floor, and any of this on hardware rather than an emulator.
+**Still not measured at the time of the release:** the API 29 floor, and any of this on hardware
+rather than an emulator. The second half of that is partly superseded by Phase 13 — read it there.
+
+## Phase 13 — the first real phone
+
+**2026-09-06 00:55:27 UTC+2: a phone enrolled against the deployed instance and it worked.** Every
+claim below is read out of the control plane's database, not reported from the handset.
+
+The chain, from the audit log:
+
+| time | actor | action |
+|---|---|---|
+| 00:47:50 | PARENT | `PARENT_SIGNED_IN` |
+| 00:48:01 | PARENT | `DEVICE_ADDED`, then `ENROLLMENT_ISSUED` (30-minute window) |
+| 00:55:27 | DEVICE | `DEVICE_ENROLLED` |
+
+So the whole FR-1 path ran on real hardware for the first time: QR, an unauthenticated `/dpc.apk`
+download onto a factory-reset phone, device-owner provisioning, the one-shot enrollment exchange,
+and then a device credential that keeps working. The handset is a **Samsung flagship on Android 16
+(API 36)** — which matters because Samsung's device-owner behaviour is not something an emulator
+shows you, and because of what it is *not*, below.
+
+What it has done since:
+
+- `device_state` reports `app_version_name 0.3.0`, `app_version_code 6` — the phone is running the
+  build released two hours earlier, and says so itself rather than being assumed to.
+- `policy_version 1`, `connectivity wifi`, battery and screen state present; last heartbeat under
+  three minutes old at the time of reading.
+- **504 rows in `installed_apps`.** The inventory path is not a stub.
+- Six `critical_packages` reported by the device and unioned into the never-suspend set, which is
+  the FR-13.2 mechanism working with a real launcher, dialer and IME rather than an emulator's.
+
+**What this does NOT establish, recorded here rather than discovered later.**
+
+- **It is not the floor device.** API 36 is one below the API 37 emulator everything else was
+  measured on, so almost none of the floor risk is retired. The sharpest example is
+  `AndroidInstaller.installerOf`, the function that bounds what the managed-app applier may
+  uninstall: it is version-split, `getInstallSourceInfo` on API 30+ and the deprecated
+  `getInstallerPackageName` below. **That fallback has now still never executed anywhere** — not on
+  the emulator, not on this phone. The floor is API 29.
+- **FR-16 has never run on a phone.** `apps` 0 rows, `child_managed_apps` 0 rows. Everything in
+  Phase 12 above is an emulator and an e2e result. Nothing has been installed onto this handset by
+  the catalog.
+- **No command has been issued** (`commands` 0) and **the recovery code has never been redeemed**
+  (`recovery_events` 0).
+- **FR-15 self-update has not run on hardware.** The phone was provisioned directly onto 0.3.0
+  rather than upgraded onto it, so the update path is still emulator-only — the same gap 11.9
+  described, unchanged.
+- **`usage_samples` 0 and `locations` 0, and that is expected rather than a defect.**
+  `PACKAGE_USAGE_STATS` is an **appop**: declaring it in the manifest does not grant it and no
+  device-owner API can, so a parent has to walk Settings → Apps → Special app access → Usage access
+  by hand. Until that is done, a zero count here measures the grant and says nothing about the
+  feature — exactly the "zero in a window with no traffic" shape this project treats as *not
+  measured*.
 
 ## Traceability
 
