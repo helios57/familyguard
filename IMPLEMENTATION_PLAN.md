@@ -3005,6 +3005,55 @@ is a temp-table insert in the same session, which succeeded — so the refusal i
 not a permission. `families=1` before and after. A constraint that has never refused anything has
 not been shown to work, and this one now has.
 
+### 11.10 — the NetworkPolicy, and the allow the policy could not narrow
+
+11.8 left this as the owner's call because a wrong selector takes the family's MDM offline. It was
+made, and the selector that would have done exactly that is worth naming: **ingress-nginx runs
+`hostNetwork: true` on this node**, so Cilium sees its requests with the `host` identity and the
+obvious rule — `fromEndpoints: namespace: ingress` — matches nothing. A policy written that way is
+green in every renderer and takes the console, `/dpc.apk` and every enrolled phone down on sync.
+
+The gap was measured before the fix, from a pod in an unrelated namespace, with controls on both
+sides — `kubernetes.default.svc:443` OPEN to show the probe connects at all, a port with no listener
+closed to show it can tell the difference:
+
+| probe | before | after |
+|---|---|---|
+| `familyguard-db:5432` from `paperless` | **OPEN** | closed |
+| `familyguard-control-plane:8080` from `paperless` | **OPEN** | closed |
+| `kubernetes.default.svc:443` from `paperless` | OPEN | OPEN |
+
+And the service kept working across it: `/`, `/healthz`, `/readyz` (`database: ok`) and `/dpc.apk`
+all 200, the APK still hashing to `c76ec970…`, egress to `www.googleapis.com:443` and
+`oauth2.googleapis.com:443` OPEN from inside the namespace with `:80` closed as the control that the
+port scoping binds, and a real backup Job run end to end under the policy — dump, restore into a
+scratch database, row counts compared table by table, `schema_migrations=3`.
+
+`endpointSelector: {}` rather than `app=`: the nightly backup Job's pods carry only
+`job-name`/`controller-uid` labels, so a keyed selector would have left the one workload that reads
+the entire database unenforced.
+
+**One claim in the first version of that file was wrong, and the datapath is what caught it.** It
+said the host rule's `toPorts: 8080` left PostgreSQL unreachable from the host network. It does not:
+
+```
+$ cilium-dbg bpf policy get 509        # the familyguard-db endpoint
+Allow  Ingress  reserved:host  ANY       … prefix 0     ← Cilium's, not ours
+Allow  Ingress  reserved:host  8080/TCP  … prefix 24    ← ours, narrowing nothing
+```
+
+`allow-localhost` defaults to `auto`, under which the host reaches every local endpoint
+unconditionally. From the node, `10.1.0.152:5432` is still OPEN. Two things follow. The six
+hostNetwork pods on this node all carry that identity. And the explicit host rule was never what
+kept the console alive — the implicit allow was, which means the rule's *calibration* had been
+passing for the wrong reason.
+
+It is not closed, and that is a decision rather than an omission: `allow-localhost: policy` is a
+cluster-wide switch affecting host-to-pod traffic in every other namespace, and reconfiguring a
+working cluster to tighten one new app is the wrong direction. The residual is small in the shape
+that matters — PostgreSQL's data directory is a hostPath, so root on this node already holds the
+database as files whether or not it can open 5432.
+
 ---
 
 ## Traceability
