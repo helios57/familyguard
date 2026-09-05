@@ -3516,6 +3516,77 @@ in one and not the other, and is discovered by whoever could not do their job.
   stop" is the first question after a laptop goes missing, and the audit log cannot answer it alone
   — it records the parent a key acted *as*.
 
+### 12.7 — 0.3.0, and a limit that had to be carved rather than widened
+
+Everything above 12.6 was inert until a tag moved. `v0.3.0` publishes it —
+`sha256:609d62d4aef2bd336dd7e0e4188e44d7d622ce75cbfd68df5ca8954f8405b98d`, agreed on by the publish
+job's `containerimage.digest` (run 33990865516) and the registry's `docker-content-digest` header
+for the `0.3.0` manifest, read back anonymously. `latest` answers 404 to the same query, which is
+the control showing the read discriminates rather than echoing whatever it is handed. The running
+pod's `imageID` is that digest.
+
+**The secret scan failed first, and the fix is worth recording because the easy fix was the wrong
+one.** `tests/e2e/apps_test.go` needed a string *shaped* like an API key, to prove that a key which
+was never issued is refused exactly as a bad session token is. gitleaks read it as a
+`generic-api-key` and failed the push. The value was never a secret — the server mints the whole
+token, so nothing outside it can produce one — but `fgk_` is deliberately designed to be
+unmistakable in a repository or a log, and that design is what makes a plausible body behind it read
+as real. So the literal is now assembled from parts at the point of use, and the occurrence already
+in history is excused by **fingerprint** (`commit:file:rule:line`) in `.gitleaksignore` rather than
+by a rule or path allowlist, which would keep excusing every future line of the same shape. Two
+directions, measured: the entry as written gives `rc=0, no leaks found`; the same entry pointing one
+row lower gives `rc=1` and the finding returns. This project has been bitten by the general version
+of that mistake before — a calibration probe copied out of a vendor's documentation turned out to be
+allowlisted by the scanner's own defaults, so the probe measured nothing.
+
+**The APK swap goes BEFORE the manifest commit**, for the reason 11.9 recorded: the server hashes
+`/srv/apk/familyguard.apk` once at startup, so the pod-template annotation has to describe what is
+on disk when the new pod starts. Done in that order, and the evidence is that `/dpc.apk` never
+answered `503 apk_changed` at all. `aapt2 dump badging` on the **signed file** reports
+`versionCode='6' versionName='0.3.0' minSdkVersion='29'`; the build script is not the authority for
+what shipped. Same key — `apksigner verify --print-certs` prints `b62cda94…`, which is what the
+untouched DER on the node hashes to, so the certificate was not re-exported. And the two checksums
+the server computed at startup were checked against the files rather than trusted:
+
+| logged at startup | is base64url of | file |
+|---|---|---|
+| `package_checksum` `36I6i-g8F_…` | `dfa23a8b…` | the APK on the node |
+| `signature_checksum` `tizalIrToI7…` | `b62cda94…` | the DER on the node |
+
+`curl https://…/dpc.apk | sha256sum` returns `dfa23a8b…` — the bytes served over the internet are
+byte-identical to the file signed locally.
+
+**The upload limit could not be raised; it had to be carved.** The ingress caps every request body
+on this host at 2m, and that number is load-bearing: with `proxy_request_buffering` on by default,
+nginx accepts and buffers a whole body before forwarding, so a wide ceiling lets an *unauthenticated*
+client make the ingress hold that much per request against a server that refuses at 1 MiB. Widening
+it to land one endpoint would reconfigure a working limit for the sake of a new feature. So FR-16's
+upload gets a second Ingress on the same host carrying one path, `/api/v1/apps`, at 64m, with
+`proxy-request-buffering: off` — nginx forwards the headers immediately, so `requireParent` runs and
+rejects while the body is still on the wire instead of after 64 MB is buffered.
+
+Four probes, unauthenticated, against the live host:
+
+| # | probe | measured | what it shows |
+|---|---|---|---|
+| CAL R1 | `POST /api/v1/apps`, 2 bytes | **401** JSON | the route exists and nginx forwards |
+| CAL R2 | `POST /api/v1/apps`, 3 MB | **401** JSON | the carve-out holds — the *app* answered |
+| CAL R3 | `POST /api/v1/children`, 3 MB | **413** HTML | the 2m rule is untouched elsewhere |
+| CAL R4 | `POST /api/v1/children`, 2 bytes | **401** JSON | that path still works normally |
+
+R2 is the measurement; R3 is what makes it mean something. Without R3 a green R2 is equally
+consistent with having widened the limit everywhere.
+
+**The writable directory is proven by the pod being ready, not by the manifest saying so.**
+`config.go` creates a temp file in `APK_DIR` at startup and refuses to serve if it cannot — so a
+`Running`/`ready=true` pod with `restarts=0` is a positive statement that
+`/media/raid5/apps/familyguard/apps` is mounted and writable by uid 65532. The hostPath is
+`type: Directory` rather than `DirectoryOrCreate` precisely so the *other* failure is loud: kubelet
+would create a missing one as root:0755, the server would refuse correctly, and the log would send
+whoever read it to the application instead of to the volume.
+
+**Still not measured:** the API 29 floor, and any of this on hardware rather than an emulator.
+
 ## Traceability
 
 Each requirement maps to the phase that implements it and the test that proves it.
