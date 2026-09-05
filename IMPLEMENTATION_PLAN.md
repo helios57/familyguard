@@ -3054,6 +3054,49 @@ working cluster to tighten one new app is the wrong direction. The residual is s
 that matters — PostgreSQL's data directory is a hostPath, so root on this node already holds the
 database as files whether or not it can open 5432.
 
+### 11.11 — the second copy, and the array it is actually on
+
+The last of 11.8's open items. `backup.yaml` had said since it was written that its dumps land on
+the same RAID as the data and that copying them off was "a separate job"; `backup-mirror.yaml` is
+that job, at 03:50, half an hour behind the dump.
+
+**The destination is md0** — `/media/raid`, two USB-attached 16.4 TB Seagates striped as RAID0,
+xfs. It shares no spindle with md1, where the database and its dumps live (`/proc/mdstat`, and the
+target directory's `df` resolves to `/dev/md0` rather than to the root filesystem under an empty
+mountpoint). Being precise about what that buys is the point: it survives md1 dying, a bad
+migration and a `DELETE` without a `WHERE`; RAID0 has no redundancy of its own, so either of those
+two disks loses the whole copy; and both copies are still attached to this machine, so fire, theft
+and anything that gets root here still take both. Half the gap, and the half that remains is
+labelled in the file rather than quietly dropped.
+
+**A separate CronJob, not four more lines in the one that works.** If the mirror target vanishes,
+the thing that must not stop is the dump-and-verify — so a missing mirror is a red mirror, never a
+night with no backup. The verified-backup path is byte-identical; only its header comment changed,
+which does not alter the applied object.
+
+`type: Directory` on the mirror hostPath is load-bearing. Unmounted array → the pod refuses to
+start, naming the missing directory. `DirectoryOrCreate` would create it on the root filesystem
+under the empty mountpoint and mirror every dump onto the wrong disk, reporting success.
+
+Three things the job refuses to call success: an empty source directory (that means the *other*
+job is broken, and "0 files, all good" on that morning is exactly the control-that-evaluates-nothing
+this deployment keeps finding); a destination file whose name is right and whose sha256 is not; and
+a closing count on the destination below the source. Copies are written dot-prefixed and renamed,
+so an interrupted one never carries the final name.
+
+Calibrated on the real directories, three runs:
+
+| run | source | result |
+|---|---|---|
+| first, empty mirror | 21 dumps | 21 copied, 0 already correct |
+| again, nothing changed | 21 dumps | **0 copied, 21 already correct** |
+| after `truncate -s -64` on one mirrored file | 21 dumps | **MISMATCH named, 1 re-copied**, 20 already correct |
+
+and the two copies of the corrupted file hash identically afterwards. The middle row is what shows
+the job is not simply re-copying everything every night; the third is what shows the hash check
+binds rather than trusting a filename. **Not calibrated: the empty-source refusal** — testing it
+means emptying the directory it exists to protect, so it is a plain count guard that has never been
+observed firing.
 ---
 
 ## Traceability
