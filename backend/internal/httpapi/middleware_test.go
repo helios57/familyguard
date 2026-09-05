@@ -17,14 +17,19 @@ func newTestRouter(mw ...gin.HandlerFunc) *gin.Engine {
 	_ = r.SetTrustedProxies(nil)
 	r.Use(mw...)
 	r.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "pong") })
-	r.POST("/echo", func(c *gin.Context) {
+	echo := func(c *gin.Context) {
 		body, err := c.GetRawData()
 		if err != nil {
 			c.String(http.StatusRequestEntityTooLarge, "too large")
 			return
 		}
 		c.String(http.StatusOK, "%d", len(body))
-	})
+	}
+	r.POST("/echo", echo)
+	// A second route, and a parameterised one, so BodyLimit's per-route exemption can be tested
+	// against the MATCHED route rather than against a string that happens to look like a path.
+	r.POST("/upload", echo)
+	r.POST("/echo/:id", echo)
 	return r
 }
 
@@ -111,7 +116,7 @@ func TestHSTSOnlyOverTLS(t *testing.T) {
 }
 
 func TestBodyLimit(t *testing.T) {
-	r := newTestRouter(BodyLimit(1024))
+	r := newTestRouter(BodyLimit(1024, nil))
 
 	small := httptest.NewRequest(http.MethodPost, "/echo", strings.NewReader(strings.Repeat("a", 512)))
 	w := httptest.NewRecorder()
@@ -125,6 +130,47 @@ func TestBodyLimit(t *testing.T) {
 	r.ServeHTTP(w, big)
 	if w.Code == http.StatusOK {
 		t.Fatalf("a body past the limit was accepted: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// TestBodyLimitRaisesOnlyTheNamedRoute covers the exemption APK uploads need.
+//
+// The negative half is the point. An exemption keyed on anything but the matched route would be
+// reachable from a path that merely resembles it, and the whole value of the small default is that
+// an oversized request to any other endpoint is refused before it is read.
+func TestBodyLimitRaisesOnlyTheNamedRoute(t *testing.T) {
+	r := newTestRouter(BodyLimit(1024, map[string]int64{"/upload": 8192}))
+	body := func() *strings.Reader { return strings.NewReader(strings.Repeat("a", 4096)) }
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/upload", body()))
+	if w.Code != http.StatusOK || w.Body.String() != "4096" {
+		t.Fatalf("the exempt route did not get the larger limit: %d %s", w.Code, w.Body.String())
+	}
+
+	// Same size, a route that was not named: still refused. Without this the test above would pass
+	// just as well against a BodyLimit that raised the cap for everything.
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/echo", body()))
+	if w.Code == http.StatusOK {
+		t.Fatalf("an unexempt route accepted an oversized body: %d %s", w.Code, w.Body.String())
+	}
+
+	// A path that resolves to a DIFFERENT registered route must not inherit the exemption by
+	// looking like it. c.FullPath() is "/echo/:id" here, not "/upload".
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/echo/upload", body()))
+	if w.Code == http.StatusOK {
+		t.Fatalf("a lookalike path inherited the exemption: %d %s", w.Code, w.Body.String())
+	}
+
+	// And a smaller entry in the map cannot LOWER the default, which would be a silent way to make
+	// one endpoint stricter than the configuration says.
+	r = newTestRouter(BodyLimit(1024, map[string]int64{"/upload": 16}))
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/upload", strings.NewReader(strings.Repeat("a", 512))))
+	if w.Code != http.StatusOK || w.Body.String() != "512" {
+		t.Fatalf("a smaller map entry lowered the default: %d %s", w.Code, w.Body.String())
 	}
 }
 

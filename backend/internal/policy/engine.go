@@ -202,6 +202,30 @@ type Settings struct {
 	BlockedPackages []string `json:"blocked_packages"`
 	AllowedPackages []string `json:"allowed_packages"`
 	BlockedDomains  []string `json:"blocked_domains"`
+
+	// ManagedApps is the set of applications a parent has declared this child's phone should have
+	// (FR-16). It is a declared SET, not a queue of install commands: the device converges on it at
+	// every sync, so an install that failed retries by itself and an app a child managed to remove
+	// comes back, without a parent noticing anything went wrong.
+	ManagedApps []ManagedApp `json:"managed_apps"`
+}
+
+// ManagedApp is one entry of that set: which application, which exact build, and everything the
+// phone needs to fetch and verify it without asking a second question.
+//
+// The version is pinned rather than left as "latest" on purpose. The phone verifies the checksum it
+// was given here against the bytes it downloads, so a URL that resolved to a newer build between
+// the sync and the download would fail that check — and the failure would read as a corrupted
+// download rather than as a race. Naming the version makes the two requests describe one artifact.
+type ManagedApp struct {
+	PackageName string `json:"package_name"`
+	VersionCode int64  `json:"version_code"`
+	VersionName string `json:"version_name"`
+	// Checksum is base64url without padding, of the SHA-256 of the file — the same encoding
+	// /device/apk-info publishes for the DPC, so the phone has one checksum format and not two.
+	Checksum string `json:"checksum"`
+	Size     int64  `json:"size"`
+	URL      string `json:"url"`
 }
 
 // Input is everything the engine needs. Nothing else is consulted.
@@ -247,6 +271,18 @@ type DesiredState struct {
 	UsedMinutes      int `json:"used_minutes"`
 	RemainingMinutes int `json:"remaining_minutes"`
 
+	// ManagedApps is passed through from the settings, sorted by package name and never nil. The
+	// engine does not decide anything about it — which applications a child has is a parent's
+	// declaration, not a computed consequence of bedtime — but it travels in the desired state
+	// rather than beside it so that the device has exactly one description of what it must make
+	// true, and so that the shared vectors cover it.
+	//
+	// A managed app is not exempt from anything. It is suspended at bedtime, hidden by a block
+	// rule and counted against the quota like any other app: installing an application and
+	// governing it are separate decisions, and a parent who declares one has not thereby allowed
+	// it at midnight.
+	ManagedApps []ManagedApp `json:"managed_apps"`
+
 	// NextChangeAt is the next instant at which this output would differ, RFC 3339 in the policy's
 	// zone, or "" if nothing is scheduled. The device sets one exact alarm for it instead of
 	// polling, which is what keeps NFR-10 (idle while the screen is off) achievable.
@@ -289,6 +325,8 @@ func Compute(in Input) (DesiredState, error) {
 		domains.addAll(YouTubeDomains)
 	}
 	out.BlockedDomains = domains.sorted()
+
+	out.ManagedApps = normalizeManagedApps(in.Settings.ManagedApps)
 
 	out.AllowInstalls = in.Settings.AllowChildInstalls
 	restrictions := newSet([]string{
@@ -546,5 +584,43 @@ func (s set) sorted() []string {
 		out = append(out, v)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// normalizeManagedApps sorts the declared set and drops what a device could not act on.
+//
+// Sorted and never nil for the same reason every other slice here is: the Kotlin engine has to
+// produce byte-identical JSON for the shared vectors, and "nil vs empty" is a difference that only
+// shows up in the comparison and never in a test that reads the field.
+//
+// An entry missing its package name, its URL or its checksum is DROPPED rather than passed through.
+// The phone cannot install it — there is nothing to fetch, or nothing to verify against — so
+// carrying it would produce a device that reports a failure every sync, forever, about a row nobody
+// can see is malformed. Dropping it makes the app simply absent, which is the state the console
+// already renders as "not available".
+//
+// Duplicates by package name collapse to the highest version code. Two rows for one package is not
+// reachable through the API (a child's set is keyed by package), but the engine is also fed by
+// vectors and by whatever a future caller builds, and "install both versions of one package" is not
+// a thing a phone can do.
+func normalizeManagedApps(apps []ManagedApp) []ManagedApp {
+	best := make(map[string]ManagedApp, len(apps))
+	for _, a := range apps {
+		a.PackageName = strings.TrimSpace(a.PackageName)
+		a.URL = strings.TrimSpace(a.URL)
+		a.Checksum = strings.TrimSpace(a.Checksum)
+		if a.PackageName == "" || a.URL == "" || a.Checksum == "" {
+			continue
+		}
+		if existing, ok := best[a.PackageName]; ok && existing.VersionCode >= a.VersionCode {
+			continue
+		}
+		best[a.PackageName] = a
+	}
+	out := make([]ManagedApp, 0, len(best))
+	for _, a := range best {
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PackageName < out[j].PackageName })
 	return out
 }

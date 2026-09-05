@@ -345,6 +345,67 @@ class ApiClient(
         return connection
     }
 
+    /**
+     * Opens an authenticated download of an absolute URL the server named, and refuses to send this
+     * device's credential anywhere else.
+     *
+     * The managed-app APKs (FR-16.3) are served from a device-authenticated route, so unlike
+     * `/dpc.apk` — which a factory-reset phone fetches with no credential at all — this one has to
+     * carry the bearer. And the URL comes out of the desired state, which is to say out of the
+     * network: attaching a token to whatever absolute URL arrived is how a token leaves the
+     * deployment it belongs to, and it would leave silently, to a host that answered 200.
+     *
+     * So the origin is checked against this client's own base URL and the credential is sent only
+     * on a match. Compared as scheme + host + port rather than as a string prefix, because
+     * `https://guard.example.com.attacker.test/` is a prefix match on `https://guard.example.com`
+     * and a completely different server. A mismatch throws rather than downloading anonymously:
+     * this route answers 401 without the token, so an anonymous attempt would fail later, further
+     * from the reason, and after the bytes.
+     */
+    fun openDownload(url: String): InputStream {
+        val target = try {
+            URL(url)
+        } catch (e: Exception) {
+            throw IOException("the server named a download URL this device cannot parse: $url")
+        }
+        val base = URL(baseUrl)
+        if (!sameOrigin(base, target)) {
+            throw IOException(
+                "refusing to send this device's credential to ${origin(target)}; this device is " +
+                    "enrolled with ${origin(base)}"
+            )
+        }
+        val connection = openConnection(target)
+        connection.requestMethod = "GET"
+        connection.connectTimeout = connectTimeoutMillis
+        // A managed app can be tens of megabytes on a phone's connection, and the read timeout is
+        // per read rather than for the whole transfer — but 30s of no bytes at all on a download
+        // that is progressing does not happen, and a longer one only delays noticing a dead socket.
+        connection.readTimeout = readTimeoutMillis
+        connection.setRequestProperty("Accept", "application/vnd.android.package-archive")
+        val bearer = token()
+            ?: throw IllegalStateException("GET $url needs a device token and this device has none")
+        connection.setRequestProperty("Authorization", "Bearer $bearer")
+        val status = connection.responseCode
+        if (status !in 200..299) {
+            val body = readAll(connection.errorStream)
+            connection.disconnect()
+            throw asApiException(status, body)
+        }
+        return connection.inputStream
+    }
+
+    /** Scheme, host and port — the three things that decide which server this is. */
+    private fun sameOrigin(a: URL, b: URL): Boolean =
+        a.protocol.equals(b.protocol, ignoreCase = true) &&
+            a.host.equals(b.host, ignoreCase = true) &&
+            effectivePort(a) == effectivePort(b)
+
+    /** `URL.getPort()` is -1 when the URL omits it, so :443 and an implicit 443 must not differ. */
+    private fun effectivePort(u: URL): Int = if (u.port == -1) u.defaultPort else u.port
+
+    private fun origin(u: URL): String = "${u.protocol}://${u.host}:${effectivePort(u)}"
+
     private fun get(path: String): String {
         val connection = connect(path, "GET", authenticated = true)
         return complete(connection)

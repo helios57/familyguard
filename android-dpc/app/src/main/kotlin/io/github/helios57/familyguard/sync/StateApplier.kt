@@ -216,9 +216,14 @@ class DnsApplier(private val dns: DnsPolicyManager) : StateApplier {
 }
 
 /**
- * The five appliers, in the order that decides what a half-applied phone is left enforcing.
+ * The appliers, in the order that decides what a half-applied phone is left enforcing.
  *
- * Restrictions first because they are what holds when everything after them has failed; DNS after
+ * Managed apps first, when there are any: an application installed in this pass is then suspended
+ * or hidden by the pass's own app work, rather than sitting usable on a child's phone until the
+ * next sync. It also puts the two restrictions it lifts back before [RestrictionApplier] asserts
+ * the authoritative set over them, so the lift is repaired within the same pass even if it failed.
+ *
+ * Restrictions next because they are what holds when everything after them has failed; DNS after
  * the app work because it is the only one that can be refused for a reason outside the device (a
  * host that is not answering), and a refusal there must not cost the other three. The lock is last
  * of all: it is the only applier the child can *see* happen, so the silent work finishes before the
@@ -231,17 +236,27 @@ class DnsApplier(private val dns: DnsPolicyManager) : StateApplier {
  *
  * @param policy null on a device this app does not own, which is not an error here — see
  * [NoDeviceOwnerApplier] for why that case must report a problem rather than a clean apply.
+ * @param managedApps the FR-16 pass, or null to leave the phone's applications alone. **The
+ * recovery release passes null, and must.** Its released state carries no declared set, and an
+ * empty declared set is indistinguishable from "the parent withdrew everything" — a parent
+ * unlocking a phone in an emergency would have every application this system installed removed
+ * from it. Releasing a lock is not a statement about which apps a child should have.
  */
-fun deviceApplier(policy: DeviceOwnerPolicy?, serverUrl: String): StateApplier {
+fun deviceApplier(
+    policy: DeviceOwnerPolicy?,
+    serverUrl: String,
+    managedApps: StateApplier? = null,
+): StateApplier {
     if (policy == null) return NoDeviceOwnerApplier
     return CompositeApplier(
-        listOf(
-            "restrictions" to RestrictionApplier(policy.hardening),
-            "apps" to AppApplier(policy.apps),
-            "chrome" to ChromeApplier(policy.chrome, ChromeApplier.allowlistFor(serverUrl)),
-            "dns" to DnsApplier(policy.dns),
-            "lock" to LockApplier(policy.lock),
-        )
+        buildList {
+            managedApps?.let { add("managed" to it) }
+            add("restrictions" to RestrictionApplier(policy.hardening))
+            add("apps" to AppApplier(policy.apps))
+            add("chrome" to ChromeApplier(policy.chrome, ChromeApplier.allowlistFor(serverUrl)))
+            add("dns" to DnsApplier(policy.dns))
+            add("lock" to LockApplier(policy.lock))
+        }
     )
 }
 

@@ -19,3 +19,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "familyguard"
 include(":app")
+
+// A second, tiny application whose only purpose is to be installed by the managed-install tests.
+// See fixture-app/build.gradle.kts.
+include(":fixture-app")

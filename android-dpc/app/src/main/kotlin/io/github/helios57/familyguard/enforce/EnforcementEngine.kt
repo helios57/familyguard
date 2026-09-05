@@ -214,6 +214,7 @@ object EnforcementEngine {
             safeSearch = true,
             youtubeRestrictedMode = true,
             allowInstalls = input.settings.allowChildInstalls,
+            managedApps = normalizeManagedApps(input.settings.managedApps),
             userRestrictions = restrictions.toList(),
             quotaMinutes = quota,
             usedMinutes = input.usedMinutesToday,
@@ -386,6 +387,39 @@ object EnforcementEngine {
         sortedSetOf<String>().apply { addAll(items.nonEmpty()) }
 
     private fun Iterable<String>.nonEmpty() = filter { it.isNotEmpty() }
+
+    /**
+     * Sorts the declared set and drops what this device could not act on.
+     *
+     * Sorted and never null for the same reason every other list here is: the Go engine has to
+     * produce byte-identical JSON for the shared vectors, and "null vs empty" is a difference that
+     * shows up only in that comparison and never in a test that reads the field.
+     *
+     * An entry missing its package name, its URL or its checksum is DROPPED rather than passed on.
+     * The phone cannot install it — there is nothing to fetch, or nothing to verify against — so
+     * carrying it would produce a device reporting the same failure every sync, forever, about a
+     * row nobody can see is malformed. Dropping it makes the app simply absent, which is what the
+     * console already renders as "not available".
+     *
+     * Duplicates by package name collapse to the highest version code. Two rows for one package is
+     * not reachable through the API, but this engine is also fed by the shared vectors, and
+     * "install both versions of one package" is not a thing a phone can do.
+     */
+    private fun normalizeManagedApps(apps: List<ManagedApp>): List<ManagedApp> {
+        val best = LinkedHashMap<String, ManagedApp>()
+        for (raw in apps) {
+            val app = raw.copy(
+                packageName = raw.packageName.trim(),
+                url = raw.url.trim(),
+                checksum = raw.checksum.trim(),
+            )
+            if (app.packageName.isEmpty() || app.url.isEmpty() || app.checksum.isEmpty()) continue
+            val existing = best[app.packageName]
+            if (existing != null && existing.versionCode >= app.versionCode) continue
+            best[app.packageName] = app
+        }
+        return best.values.sortedBy { it.packageName }
+    }
 }
 
 /** Thrown for input the engine refuses to guess at. */
@@ -413,6 +447,36 @@ data class Settings(
     @SerialName("blocked_packages") val blockedPackages: List<String> = emptyList(),
     @SerialName("allowed_packages") val allowedPackages: List<String> = emptyList(),
     @SerialName("blocked_domains") val blockedDomains: List<String> = emptyList(),
+    /**
+     * The applications a parent has declared this child's phone should have (FR-16).
+     *
+     * A declared SET, not a queue of install commands: the device converges on it at every sync, so
+     * an install that failed retries by itself and an app a child managed to remove comes back —
+     * without a parent having to notice anything went wrong.
+     */
+    @SerialName("managed_apps") val managedApps: List<ManagedApp> = emptyList(),
+)
+
+/**
+ * One entry of that set: which application, which exact build, and everything the phone needs to
+ * fetch and verify it without asking a second question.
+ *
+ * The version is pinned rather than left as "latest". The phone compares [checksum] against the
+ * bytes it downloads, so a URL that resolved to a newer build between the sync and the download
+ * would fail that comparison — and the failure would read as a corrupted download rather than as a
+ * race.
+ *
+ * [checksum] is base64url without padding, of the SHA-256 of the whole file: the same encoding
+ * `/device/apk-info` publishes for the DPC, so this phone has one checksum format and not two.
+ */
+@Serializable
+data class ManagedApp(
+    @SerialName("package_name") val packageName: String = "",
+    @SerialName("version_code") val versionCode: Long = 0,
+    @SerialName("version_name") val versionName: String = "",
+    @SerialName("checksum") val checksum: String = "",
+    @SerialName("size") val size: Long = 0,
+    @SerialName("url") val url: String = "",
 )
 
 @Serializable
@@ -447,4 +511,17 @@ data class DesiredState(
     @SerialName("remaining_minutes") val remainingMinutes: Int = 0,
     @SerialName("next_change_at") val nextChangeAt: String = "",
     @SerialName("policy_version") val policyVersion: Long = 0,
+    /**
+     * Passed through from the settings, sorted by package name and never null.
+     *
+     * The engine decides nothing about it — which applications a child has is a parent's
+     * declaration, not a computed consequence of bedtime — but it travels in the desired state
+     * rather than beside it, so the device has exactly one description of what it must make true
+     * and the shared vectors cover it.
+     *
+     * A managed app is exempt from nothing. It is suspended at bedtime, hidden by a block rule and
+     * counted against the quota like any other app: installing an application and governing it are
+     * separate decisions, and a parent who declared one has not thereby allowed it at midnight.
+     */
+    @SerialName("managed_apps") val managedApps: List<ManagedApp> = emptyList(),
 )

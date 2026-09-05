@@ -100,6 +100,21 @@ type desiredStateDTO struct {
 	RemainingMinutes      int      `json:"remaining_minutes"`
 	NextChangeAt          string   `json:"next_change_at"`
 	PolicyVersion         int64    `json:"policy_version"`
+	// FR-16: the applications this child's phone is declared to have, and everything it needs to
+	// fetch and verify each one. See apps_test.go.
+	ManagedApps []managedAppEntryDTO `json:"managed_apps"`
+}
+
+// managedAppEntryDTO is one entry of that set as the DEVICE receives it — deliberately a different
+// shape from the console's managedAppDTO, which joins a declaration to catalog metadata a phone has
+// no use for.
+type managedAppEntryDTO struct {
+	PackageName string `json:"package_name"`
+	VersionCode int64  `json:"version_code"`
+	VersionName string `json:"version_name"`
+	Checksum    string `json:"checksum"`
+	Size        int64  `json:"size"`
+	URL         string `json:"url"`
 }
 
 // policyInputDTO is the second half of the policy response: what the device needs in order to

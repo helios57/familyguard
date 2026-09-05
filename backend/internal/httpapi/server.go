@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/helios57/familyguard/backend/internal/auth"
+	"github.com/helios57/familyguard/backend/internal/catalog"
 	"github.com/helios57/familyguard/backend/internal/config"
 	"github.com/helios57/familyguard/backend/internal/enforce"
 	"github.com/helios57/familyguard/backend/internal/policy"
@@ -51,6 +52,7 @@ type Server struct {
 	verifier *auth.OIDCVerifier
 	sessions *auth.SessionIssuer
 	resolver *enforce.Resolver
+	catalog  *catalog.Catalog
 	hub      *Hub
 	log      *slog.Logger
 	now      func() time.Time
@@ -85,7 +87,8 @@ func New(d Deps) (*Server, error) {
 		store:             d.Store,
 		verifier:          d.Verifier,
 		sessions:          d.Sessions,
-		resolver:          enforce.New(d.Store),
+		resolver:          enforce.New(d.Store, d.Config.PublicURL.String()),
+		catalog:           catalog.New(d.Config.APKDir, d.Store, d.Logger, d.Config.DPCPackage()),
 		hub:               NewHub(d.Logger),
 		log:               d.Logger,
 		now:               d.Now,
@@ -94,6 +97,11 @@ func New(d Deps) (*Server, error) {
 		packageChecksum:   d.PackageChecksum,
 	}, nil
 }
+
+// Catalog exposes the app catalog so the caller can scan the directory at startup. Doing it there
+// rather than in New keeps the scan — which reads every APK on the node — out of the path of every
+// test that constructs a server.
+func (s *Server) Catalog() *catalog.Catalog { return s.catalog }
 
 // Hub exposes the event hub so the caller can shut it down with the server.
 func (s *Server) Hub() *Hub { return s.hub }
@@ -120,7 +128,7 @@ func (s *Server) Router() (*gin.Engine, error) {
 		gin.Recovery(),
 		RequestID(),
 		SecurityHeaders(),
-		BodyLimit(s.cfg.MaxBodyBytes),
+		BodyLimit(s.cfg.MaxBodyBytes, map[string]int64{uploadAppRoute: s.cfg.MaxUploadBytes}),
 		CORS(s.cfg.AllowedOrigins),
 		RateLimit(limiter),
 		s.accessLog(),
@@ -151,8 +159,10 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.GET("/me", s.me)
 	p.GET("/family", s.getFamily)
 	p.GET("/parents", s.listParents)
-	p.POST("/parents", s.requireRole(store.RolePrimaryAdmin), s.createParent)
-	p.DELETE("/parents/:id", s.requireRole(store.RolePrimaryAdmin), s.deleteParent)
+	// requireInteractiveParent, here and on /api-keys below: these are the routes that hand out or
+	// take away a credential, and an API key that can mint one outlives its own revocation.
+	p.POST("/parents", s.requireInteractiveParent(), s.requireRole(store.RolePrimaryAdmin), s.createParent)
+	p.DELETE("/parents/:id", s.requireInteractiveParent(), s.requireRole(store.RolePrimaryAdmin), s.deleteParent)
 
 	p.GET("/children", s.listChildren)
 	p.POST("/children", s.createChild)
@@ -184,6 +194,29 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.GET("/devices/:id/desired-state", s.deviceDesiredState)
 	p.GET("/devices/:id/commands", s.listCommands)
 	p.POST("/devices/:id/commands", s.createCommand)
+	// The application catalog (FR-16). Uploading is an admin action: a package that lands here can
+	// be declared for a child and will install itself on their phone without anyone tapping
+	// anything, which is a larger authority than editing a bedtime.
+	p.GET("/apps", s.listApps)
+	p.POST("/apps", s.requireRole(store.RolePrimaryAdmin, store.RoleAdmin), s.uploadApp)
+	p.POST("/apps/scan", s.requireRole(store.RolePrimaryAdmin, store.RoleAdmin), s.scanApps)
+	p.DELETE("/apps/:id", s.requireRole(store.RolePrimaryAdmin, store.RoleAdmin), s.deleteApp)
+	p.GET("/children/:id/managed-apps", s.listManagedApps)
+	p.PUT("/children/:id/managed-apps/:package", s.declareManagedApp)
+	p.DELETE("/children/:id/managed-apps/:package", s.withdrawManagedApp)
+
+	// API keys (FR-17). Minting one hands out this family's whole parent surface, so it is
+	// PRIMARY_ADMIN only — the same bar as adding a parent, which is what it amounts to.
+	//
+	// Listing stays key-reachable: reading which credentials exist is not one of them, and an MCP
+	// server that can answer "what keys does this family have" is useful. Everything that changes
+	// the set is console-only.
+	k := p.Group("/api-keys", s.requireRole(store.RolePrimaryAdmin))
+	k.GET("", s.listAPIKeys)
+	k.POST("", s.requireInteractiveParent(), s.createAPIKey)
+	k.POST("/:id/revoke", s.requireInteractiveParent(), s.revokeAPIKey)
+	k.DELETE("/:id", s.requireInteractiveParent(), s.deleteAPIKey)
+
 	p.GET("/audit", s.listAudit)
 	// The console reads this stream with fetch() rather than EventSource, because EventSource
 	// cannot carry an Authorization header — and the alternatives are a cookie (which brings CSRF
@@ -206,6 +239,10 @@ func (s *Server) Router() (*gin.Engine, error) {
 	// What DPC this server hosts, so the phone can tell whether the one it is running is the one it
 	// should be (FR-15.1). Read-only and cheap; the download itself is unauthenticated, below.
 	d.GET("/apk-info", s.apkInfo)
+	// A managed application's bytes, addressed by the exact version the policy named. Device
+	// authenticated, unlike /dpc.apk: a phone asking for one of these has been enrolled for weeks,
+	// and there is no provisioning wizard here with nothing to present.
+	d.GET("/apps/:package/:versionCode", s.deviceDownloadApp)
 
 	if err := s.mountConsole(r); err != nil {
 		return nil, err

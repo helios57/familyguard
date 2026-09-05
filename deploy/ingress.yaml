@@ -7,8 +7,14 @@ metadata:
   name: familyguard-ingress
   annotations:
     cert-manager.io/cluster-issuer: lets-encrypt
-    # The DPC download. ~15 MB today, and an APK only grows. The default limit is 1 MB, and the
-    # failure is a 413 at the moment a parent is standing over a factory-reset phone.
+    # Two things cross this limit, and the larger one is the upload. The DPC download is ~15 MB
+    # today and an APK only grows; the default limit is 1 MB, and the failure is a 413 at the moment
+    # a parent is standing over a factory-reset phone. The catalog upload (FR-16) sends a whole APK
+    # the other way, so this value is also the real ceiling on what can be added to the catalog:
+    # nginx refuses first, with its own 413 and none of the server's message, so a value below
+    # MAX_UPLOAD_BYTES makes the server's cap unreachable and its error text unreadable. Keep the
+    # two in step — 64m here and MAX_UPLOAD_BYTES=67108864 is a consistent pair; the server's
+    # default of 256 MB against this 64m is not.
     nginx.ingress.kubernetes.io/proxy-body-size: "64m"
     # Two server-sent-event streams are held open through here: the device stream and the parent
     # console's. The default 60s read timeout cuts both once a minute. The reconnect is invisible —

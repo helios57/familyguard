@@ -9,6 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"github.com/helios57/familyguard/backend/internal/store"
 )
 
 // Context keys. Values are read back with the helpers below rather than by string literal, so a
@@ -17,7 +19,14 @@ const (
 	ctxRequestID = "fg.request_id"
 	ctxParent    = "fg.parent"
 	ctxDevice    = "fg.device"
+	// ctxActorKind is set only when the parent was authenticated by an API key. Absent means a
+	// person signed in, which is why the reader defaults to PARENT rather than requiring every
+	// handler to know about keys.
+	ctxActorKind = "fg.actor_kind"
 )
+
+// ctxAPIKeyActor is the audit actor type for a request that arrived with an API key.
+const ctxAPIKeyActor = store.ActorAPIKey
 
 // RequestID assigns every request an id, echoes it, and makes it available for log lines and error
 // responses so a parent reporting a failure can be matched to a server-side record.
@@ -86,11 +95,25 @@ func isTLS(r *http.Request) bool {
 
 // BodyLimit caps request bodies. Without it a single request can stream until the process runs out
 // of memory, and no rate limit helps because it is one request.
-func BodyLimit(maxBytes int64) gin.HandlerFunc {
+func BodyLimit(maxBytes int64, larger map[string]int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.Request.Body != nil {
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		if c.Request.Body == nil {
+			c.Next()
+			return
 		}
+		limit := maxBytes
+		// Routed on the matched route, not on the raw URL. gin resolves the route before it runs
+		// this chain, so c.FullPath() is the registered pattern — which means the exemption cannot
+		// be reached by a path that merely looks like the upload endpoint, and cannot be missed by
+		// one that carries a query string.
+		//
+		// The exemption is per route rather than global because raising the cap for everything is
+		// the change that would actually cost something: every JSON endpoint would then accept
+		// megabytes, and the body limit's job is to make an unauthenticated request cheap to refuse.
+		if n, ok := larger[c.FullPath()]; ok && n > limit {
+			limit = n
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		c.Next()
 	}
 }

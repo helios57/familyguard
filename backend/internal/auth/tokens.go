@@ -1,5 +1,7 @@
-// Package auth issues and verifies the two credentials in the system: a parent's session token,
-// derived from a verified Google ID token, and a device's bearer token, issued once at enrollment.
+// Package auth issues and verifies the three credentials in the system: a parent's session token,
+// derived from a verified Google ID token; a device's bearer token, issued once at enrollment; and
+// an API key, which acts as a named parent so that a script or an MCP server can drive the same
+// surface a browser drives (FR-17).
 //
 // Every failure path in this package denies. There is no branch where a verification error, a
 // network failure or an unparseable token results in an authenticated caller.
@@ -294,3 +296,45 @@ func BearerToken(header string) string {
 	}
 	return strings.TrimSpace(header[len(prefix):])
 }
+
+// ---- API keys (FR-17) --------------------------------------------------------------------------
+
+// APIKeyScheme is the visible prefix every API key carries.
+//
+// It exists so the two credentials that arrive in the same Authorization header can be told apart
+// without trying both. Trying both is worse than it sounds: a session token that fails JWT
+// verification would then be looked up as a key hash, so every expired session would cost a
+// database round trip, and — the part that actually matters — the failure a client is told about
+// would be whichever branch happened to run last. A scheme prefix makes the routing a string
+// comparison and the error message the truth.
+//
+// It is also what makes a leaked key findable. `fgk_` in a repository or a log is unmistakable, and
+// secret scanners can be given one pattern rather than "a 43-character base64 string".
+const APIKeyScheme = "fgk_"
+
+// APIKeyPrefixLen is how much of the key is stored in the clear, for display and for matching a
+// key in somebody's script against the row that authorises it. It is not a secret and not enough
+// of one to be useful: 8 characters of base64url is 48 bits, and the remaining 256 bits are what
+// authenticates.
+const APIKeyPrefixLen = 8
+
+// NewAPIKey mints a key.
+//
+// The returned token is the ONLY time the plaintext exists. Everything persisted is the prefix and
+// the hash, so neither a database dump nor a later read can produce a working credential — the same
+// arrangement device tokens use, for the same reason.
+func NewAPIKey() (token, prefix string, hash []byte, err error) {
+	buf := make([]byte, TokenBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", "", nil, fmt.Errorf("read random: %w", err)
+	}
+	secret := base64.RawURLEncoding.EncodeToString(buf)
+	prefix = secret[:APIKeyPrefixLen]
+	// The prefix is part of the token rather than a separate field a client has to send. One string
+	// to copy, one header to set, and no way to present a key whose prefix does not belong to it.
+	token = APIKeyScheme + prefix + "_" + secret[APIKeyPrefixLen:]
+	return token, prefix, HashToken(token), nil
+}
+
+// IsAPIKey reports whether a bearer token is an API key rather than a parent session.
+func IsAPIKey(token string) bool { return strings.HasPrefix(token, APIKeyScheme) }

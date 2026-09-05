@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  No components on purpose. See fixture-app/build.gradle.kts: this package exists to be installed,
+  upgraded and removed by the managed-install tests, and anything it declared would be another way
+  for the fixture rather than the feature under test to fail.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:allowBackup="false"
+        android:hasCode="false"
+        android:label="FamilyGuard test fixture" />
+</manifest>

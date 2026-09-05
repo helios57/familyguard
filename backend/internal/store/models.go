@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -159,6 +160,52 @@ type InstalledApp struct {
 	FirstSeenAt time.Time  `json:"first_seen_at"`
 	LastSeenAt  time.Time  `json:"last_seen_at"`
 	RemovedAt   *time.Time `json:"removed_at,omitempty"`
+}
+
+// App is one registered APK in the catalog (FR-16.1).
+//
+// Every field but Label and Source is read out of the file by internal/apk, never supplied by a
+// caller. FileName is relative to the configured APK directory.
+type App struct {
+	ID           uuid.UUID `json:"id"`
+	PackageName  string    `json:"package_name"`
+	VersionCode  int64     `json:"version_code"`
+	VersionName  string    `json:"version_name"`
+	Label        string    `json:"label"`
+	SHA256       string    `json:"sha256"`
+	SignerSHA256 string    `json:"signer_sha256"`
+	SizeBytes    int64     `json:"size_bytes"`
+	MinSDK       int       `json:"min_sdk"`
+	FileName     string    `json:"file_name"`
+	Source       string    `json:"source"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// Where a catalog entry came from.
+const (
+	AppSourceNode   = "NODE"
+	AppSourceUpload = "UPLOAD"
+)
+
+// ErrSignerChanged is returned when a package is registered under a different key from the one
+// pinned at its first registration (FR-16.4). It is deliberately distinct from ErrConflict: a
+// duplicate version is an operator repeating themselves, and a signer change is either a rebuild
+// with a new key or a substituted file, which are the two things a person has to be told apart.
+var ErrSignerChanged = errors.New("this package is pinned to a different signing key")
+
+// APIKey is a non-interactive credential that acts as a parent (FR-17).
+//
+// Token is set only by CreateAPIKey, and only on the response that creates it: the plaintext is
+// never stored, so no read can return it.
+type APIKey struct {
+	ID         uuid.UUID  `json:"id"`
+	Name       string     `json:"name"`
+	Prefix     string     `json:"prefix"`
+	ParentID   uuid.UUID  `json:"parent_id"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	Token      string     `json:"token,omitempty"`
 }
 
 type UsageSample struct {

@@ -70,6 +70,16 @@ fi
   notmeasured "no chrome/chromium found (set E2E_CHROME); the rendered mobile layout cannot be measured"
 echo "browser: $CHROME ($("$CHROME" --version 2>/dev/null || echo 'version unknown'))"
 
+# The real APKs the catalog tests register. Built by tests/apk/regenerate-fixtures.sh and committed,
+# because a suite that generates them would need Gradle and the Android SDK to test a Go parser.
+# Their absence is NOT MEASURED rather than a skip: the catalog is the half of FR-16 that decides
+# what installs itself on a child's phone, and a suite that quietly drops it still says PASS.
+APK_FIXTURES="$ROOT/backend/internal/apk/testdata"
+for fixture in fixture-v1.apk fixture-v2.apk fixture-v3.apk fixture-othersigner.apk; do
+  [ -s "$APK_FIXTURES/$fixture" ] || \
+    notmeasured "$APK_FIXTURES/$fixture is missing; run tests/apk/regenerate-fixtures.sh"
+done
+
 WORK="$(mktemp -d)" || notmeasured "could not create a work directory"
 
 # ---- build ----------------------------------------------------------------
@@ -129,6 +139,7 @@ export E2E_PG_PORT="$PG_PORT"
 export E2E_PG_USER=postgres
 export E2E_PG_PASSWORD="$PG_PASSWORD"
 export E2E_CHROME="$CHROME"
+export E2E_APK_FIXTURES="$APK_FIXTURES"
 
 echo "running the suite…"
 (cd "$HERE" && "$GO" test -count=1 -timeout 15m "$@" ./...)

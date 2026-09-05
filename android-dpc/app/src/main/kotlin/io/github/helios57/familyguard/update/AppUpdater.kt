@@ -7,8 +7,21 @@ import java.io.OutputStream
 import java.security.MessageDigest
 import java.util.Base64
 
-/** What the control plane says the DPC on this phone should be (`GET /device/apk-info`). */
+/**
+ * What the control plane says one application on this phone should be.
+ *
+ * Two sources produce it and they are different endpoints for the same shape: `GET
+ * /device/apk-info` for the DPC's own build (FR-15.1), and one entry of the desired state's
+ * `managed_apps` for an application a parent declared (FR-16.3).
+ *
+ * [packageName] is what the caller expects the archive to contain, and it is stated rather than
+ * inferred. The self-update path passes this app's own package, so an `apk-info` pointing at some
+ * other application is refused before it is parsed for a version; the managed-app path passes the
+ * package the parent declared, so a catalog row whose file was swapped for a different application
+ * cannot install that application instead.
+ */
 data class ApkInfo(
+    val packageName: String,
     val url: String,
     val packageChecksum: String,
     val size: Long,
@@ -23,6 +36,7 @@ data class ApkInfo(
  * compared with another value produced by the same reader.
  */
 data class ApkIdentity(
+    val packageName: String,
     val versionCode: Long,
     val versionName: String,
     val signerSha256: String,
@@ -49,14 +63,20 @@ sealed interface UpdateOutcome {
 }
 
 /**
- * Downloads the DPC this server hosts and installs it over this app (FR-15).
+ * Downloads an APK the server hosts and installs it on this phone.
  *
- * **Why the server gets to do this at all.** The APK is not in the control plane's container image;
- * it is a file on the node, installed out of band, and a phone provisioned six months ago has
- * whatever build was current that day. Without this, every fix to the enforcement half of the
- * product needs a factory reset and a re-scan of a QR code, on a phone that belongs to a child.
+ * Two callers, one decision. The DPC replacing itself (FR-15) and a declared application arriving
+ * on a child's phone (FR-16.3) differ only in which package they name and in when the install is
+ * committed; every check between the URL and the session is the same, and writing it twice is
+ * writing the second copy without the reasons.
  *
- * **Five checks, in this order, before anything is committed.** Each one is here because the
+ * **Why the server gets to replace this app at all.** The APK is not in the control plane's
+ * container image; it is a file on the node, installed out of band, and a phone provisioned six
+ * months ago has whatever build was current that day. Without this, every fix to the enforcement
+ * half of the product needs a factory reset and a re-scan of a QR code, on a phone that belongs to
+ * a child.
+ *
+ * **Six checks, in this order, before anything is committed.** Each one is here because the
  * platform's own version of the same check fails later, more quietly, or on the phone:
  *
  *  1. **The size the server declared.** A download that ends early is the ordinary failure on a
@@ -69,27 +89,37 @@ sealed interface UpdateOutcome {
  *  3. **It parses as an APK.** `getPackageArchiveInfo` returning null on a file that hashed
  *     correctly means the server is hosting something that is not an APK, which is a deployment
  *     mistake and not a device problem.
- *  4. **The signing certificate matches the app already installed.** The platform enforces this
- *     too, and refuses the session with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` — after the download,
- *     from inside the installer, with a message nobody sees. Checking here names it. It is also the
- *     check that makes a hostile `apk-info` pointing somewhere else useless: a package signed by
- *     another key cannot replace this one, and it will not be downloaded into a session either.
- *  5. **The version code strictly increases.** Android refuses a downgrade, so installing one is
+ *  4. **It is the package that was asked for.** A different package does not replace anything — it
+ *     installs *alongside*, so a self-update pointed at the wrong file would leave two device
+ *     policy apps on one phone, and a declared app whose file was swapped would put an application
+ *     on a child's phone that no parent chose. The platform reports neither as an error: both are
+ *     successful installs of something else.
+ *  5. **The signing certificate matches the app already installed** — when there is one. The
+ *     platform enforces this too, and refuses the session with
+ *     `INSTALL_FAILED_UPDATE_INCOMPATIBLE`: after the download, from inside the installer, with a
+ *     message nobody sees. Checking here names it. On a **first** install there is nothing on the
+ *     phone to compare against and the check is skipped rather than faked — what the first build of
+ *     a managed app is trusted against is the catalog's signer pin (FR-16.4), which lives at the
+ *     server because that is where the second build can be compared with the first.
+ *  6. **The version code strictly increases.** Android refuses a downgrade, so installing one is
  *     not a risk — reporting it as an install that will never happen is. An equal version code is
- *     the ordinary case (a parent pressing the button twice) and is answered as "already current"
- *     rather than as an error.
+ *     the ordinary case (a parent pressing the button twice, or a managed app that is already
+ *     converged) and is answered as "already current" rather than as an error.
  *
  * Every dependency is a function rather than an Android type, so the whole decision above runs in
  * the JVM suite. The platform half — the package parser and the installer session — is
  * [AndroidInstaller], and it is what the emulator layer exercises.
+ *
+ * @param installed what the phone currently has of that package, or null when it has none. Null is
+ * a state and not a failure: it is every first install of a managed app.
  */
 class AppUpdater(
     private val info: () -> ApkInfo,
     private val open: (url: String) -> InputStream,
     private val staging: () -> File,
     private val identify: (File) -> ApkIdentity?,
-    private val installed: () -> ApkIdentity,
-    private val install: (File) -> Unit,
+    private val installed: (packageName: String) -> ApkIdentity?,
+    private val install: (file: File, packageName: String) -> Unit,
     private val log: (String) -> Unit = {},
 ) {
 
@@ -99,8 +129,11 @@ class AppUpdater(
         } catch (e: Exception) {
             return UpdateOutcome.Refused("the server did not say which build to install (${reason(e)})")
         }
+        if (want.packageName.isBlank()) {
+            return UpdateOutcome.Refused("the server did not say which application to install")
+        }
         if (want.packageChecksum.isBlank()) {
-            return UpdateOutcome.Refused("the server hosts no DPC to install")
+            return UpdateOutcome.Refused("the server hosts no build of ${want.packageName} to install")
         }
 
         val file = staging()
@@ -124,28 +157,51 @@ class AppUpdater(
 
             val archive = identify(file)
                 ?: return UpdateOutcome.Refused("the server is hosting a file that is not a readable APK")
-            val current = installed()
 
-            if (!archive.signerSha256.equals(current.signerSha256, ignoreCase = true)) {
+            if (archive.packageName != want.packageName) {
                 return UpdateOutcome.Refused(
-                    "the download is signed by a different certificate than the app on this phone, " +
-                        "so it can never replace it"
-                )
-            }
-            if (archive.versionCode == current.versionCode) {
-                return UpdateOutcome.AlreadyCurrent(current)
-            }
-            if (archive.versionCode < current.versionCode) {
-                return UpdateOutcome.Refused(
-                    "the server hosts build ${archive.versionCode} and this phone runs " +
-                        "${current.versionCode}; Android does not install a downgrade"
+                    "the download is ${archive.packageName} and this phone was told to install " +
+                        "${want.packageName}; it would install alongside rather than replace"
                 )
             }
 
-            log("staged ${archive.versionName} (build ${archive.versionCode}) over ${current.versionName}")
+            // Null is "nothing of this package is on the phone", which is every first install of a
+            // managed app. The two checks below are about REPLACING something, so with nothing to
+            // replace they have no question to answer and are skipped rather than given a
+            // stand-in — an ApkIdentity of zeroes would compare its empty signer against a real one
+            // and refuse every first install.
+            val current = installed(want.packageName)
+            if (current != null) {
+                if (!archive.signerSha256.equals(current.signerSha256, ignoreCase = true)) {
+                    return UpdateOutcome.Refused(
+                        "the download is signed by a different certificate than the app on this phone, " +
+                            "so it can never replace it"
+                    )
+                }
+                if (archive.versionCode == current.versionCode) {
+                    return UpdateOutcome.AlreadyCurrent(current)
+                }
+                if (archive.versionCode < current.versionCode) {
+                    return UpdateOutcome.Refused(
+                        "the server hosts build ${archive.versionCode} and this phone runs " +
+                            "${current.versionCode}; Android does not install a downgrade"
+                    )
+                }
+            }
+
+            log(
+                "staged ${archive.packageName} ${archive.versionName} (build ${archive.versionCode}) over " +
+                    (current?.versionName?.ifEmpty { "build ${current.versionCode}" } ?: "nothing")
+            )
             // The staged file outlives this function on purpose: the installer reads it during the
             // commit, which happens after the acknowledgement. It is deleted by the next update.
-            return UpdateOutcome.Staged(archive, current.versionCode) { install(file) }
+            //
+            // fromVersionCode is 0 for a first install, which is the same number the server already
+            // uses for "never reported" — there is no build to have come from, and inventing one
+            // would put a version in the audit trail that was never on the phone.
+            return UpdateOutcome.Staged(archive, current?.versionCode ?: 0L) {
+                install(file, want.packageName)
+            }
         } catch (e: Exception) {
             return UpdateOutcome.Refused(reason(e))
         }

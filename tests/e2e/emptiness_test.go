@@ -295,6 +295,11 @@ func allCollections(childID, deviceID string) []collection {
 	return []collection{
 		{"/children", "children", "ListChildren", stageFresh},
 		{"/devices", "devices", "ListDevices", stageFresh},
+		// The catalog and the credentials that reach it (FR-16, FR-17). Both are empty on a fresh
+		// system in the strongest sense: an application only exists here because someone put it
+		// there, and a key only exists because someone minted it.
+		{"/apps", "apps", "ListApps", stageFresh},
+		{"/api-keys", "api_keys", "ListAPIKeys", stageFresh},
 		{"/children/" + childID + "/app-rules", "rules", "ListAppRules", stageCreated},
 		{"/children/" + childID + "/blocked-domains", "domains", "ListBlockedDomains", stageCreated},
 		{"/devices/" + deviceID + "/apps", "apps", "ListInstalledApps", stageCreated},
@@ -303,6 +308,7 @@ func allCollections(childID, deviceID string) []collection {
 		{"/devices/" + deviceID + "/commands", "commands", "ListCommands", stageCreated},
 		{"/devices/" + deviceID + "/usage", "packages", "UsageForDay", stageCreated},
 		{"/devices/" + deviceID + "/usage", "history", "UsageHistory", stageCreated},
+		{"/children/" + childID + "/managed-apps", "managed_apps", "ManagedPackages", stageCreated},
 		{"/device/commands", "commands", "PendingCommands", stageEnrolled},
 	}
 }
@@ -332,6 +338,11 @@ var collectionsCoveredElsewhere = map[string]string{
 		"other array in that tree",
 	"DeviceIDsForChild": "never serialised. It fans a policy change out to a child's devices " +
 		"inside the server and its result is a list of ids, not a response body",
+	"ManagedAppsForChild": "not its own endpoint; it arrives inside the policy response as " +
+		"desired.managed_apps and input.settings.managed_apps, which section 7 scans for nulls " +
+		"along with every other array in that tree. The console reads the DECLARATION instead, " +
+		"through ManagedPackages above, because a declaration with no build behind it is a state " +
+		"a parent has to be able to see and the device is never told about",
 }
 
 // expectEmptyArray asserts one field arrived as the literal `[]`.

@@ -69,6 +69,39 @@ the reason given at that line.
 Every rejected credential returns the same opaque error. A probe cannot learn *which* part of a
 token was wrong.
 
+### Parent → control plane, with no browser (API keys)
+
+An API key is a **second spelling of the same parent**, not a second kind of account. It carries no
+scopes: it authenticates as the parent that created it and reaches exactly what that parent's
+browser session reaches. A separate permission model would be a second source of truth, and the
+failure mode of two of those is a grant that exists in one and not the other, discovered by whoever
+could not do their job.
+
+- The token is `fgk_` + an 8-character prefix + 256 bits of randomness. The scheme prefix is what
+  lets the two credentials arriving in one `Authorization` header be told apart by a string
+  comparison rather than by trying both — trying both means every expired session costs a database
+  round trip and the error a client is told about is whichever branch ran last. It also makes a
+  leaked key findable: `fgk_` is one pattern a secret scanner can be given.
+- Only the SHA-256 is stored. The plaintext exists once, in the response that mints it, and cannot
+  be reproduced — not by another request, not by an operator with database access.
+- The prefix is stored in the clear and is not a secret: 8 characters of base64url is 48 bits, and
+  the other 256 are what authenticates. It is what names a key in an audit entry without being able
+  to use it.
+- **A key cannot mint credentials.** `requireInteractiveParent` refuses one on the routes that hand
+  out authority — creating a session, adding a parent, creating or revoking another key (FR-17.2).
+  A stolen key is therefore bounded to the family's data and cannot be used to grow a second,
+  independent foothold that survives its own revocation.
+- **There is no expiry**, and that is a decision (FR-17.3). The realistic holder is a long-running
+  MCP server, so an expiry offered would be set to "never" — a field that does nothing — or set and
+  forgotten, which is an outage whose cause is a date. Revocation is immediate, it is checked in
+  the same `WHERE` clause that resolves the key so there is no gap to slip through, and
+  `last_used_at` is what tells you which key to revoke.
+- Revoked keys stay listed. A key that vanishes on revocation leaves nobody able to answer "was
+  that credential ever used, and when did it stop" — the first question after a laptop goes missing,
+  and one the audit log cannot answer alone because it records the parent a key acted *as*.
+- The audit log distinguishes a key from a person (FR-17.4): the actor type is recorded, so "the
+  MCP server changed bedtime" and "a parent changed bedtime" are not the same line.
+
 ### Device → control plane
 
 A device authenticates with an opaque 32-byte bearer token issued once at enrollment. Only its
@@ -93,6 +126,55 @@ themselves and how many were refused (`TestCriticalPackagesAreBoundedAndShaped`)
 six packages is a phone; two hundred is a claim somebody made up, and before the cap the row simply
 grew. The built-in whitelist is the floor underneath all of it and is unaffected by any of this, so
 the worst case of refusing every reported entry is a device with the default exemptions.
+
+### Catalog → phone (managed applications)
+
+FR-16 lets a parent put an arbitrary APK on a child's phone. That is the largest new piece of
+authority in the system, so what bounds it is written out rather than implied.
+
+**The server does not verify signatures, and does not claim to.** `internal/apk` reads the APK
+Signing Block far enough to extract the SHA-256 of the signer's X.509 certificate in DER form — the
+same number `Signature.toByteArray()` gives the DPC — and stops. No content digest is recomputed and
+no signature is checked. The server's use of that identity is **trust on first registration**: the
+first build of a package pins its signer, and a later build signed by anyone else is refused with
+409 `signer_changed`. Real verification happens where it can be enforced, in the platform installer
+on the phone, which will not replace an installed package whose signer changed. A verifier here
+would be a second, weaker implementation of a check the device already makes properly.
+
+- **Uploading is admin-only** (`PRIMARY_ADMIN`/`ADMIN`); declaring which child gets an already-known
+  package is any parent. Adding an artifact to the family is a different act from choosing who runs
+  it.
+- **A package name from a stranger's file is never allowed to shape a path.** It must match
+  `^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)*$` before it can become part of a filename.
+  `filepath.Base` alone would already stop traversal; this stops the question being asked.
+- **The DPC's own package is reserved** (FR-16.6). It already has an update path, and a catalog
+  entry for it would give the phone two descriptions of what version of itself to run — and would
+  point the applier's uninstall branch at the app doing the uninstalling.
+- **Row first, then file.** The database is the authority, so a race is resolved against it; the
+  file lands only once a row exists to name it. File-first produces an orphan on every failed
+  insert, and an orphan in a directory an operator also writes to is indistinguishable from a file
+  they put there on purpose.
+- **The device download is device-authenticated**, unlike `/dpc.apk`. A phone asking for a managed
+  app has been enrolled for weeks; there is no provisioning wizard here with nothing to present.
+- **The DPC will not carry its bearer token to another origin.** A managed app's URL arrives over
+  the network, so `ApiClient.openDownload` compares scheme, host and effective port against the
+  control plane's own and throws rather than downloading — a policy that named
+  `https://example.invalid/x.apk` gets a refusal, not an anonymous fetch and not a leaked
+  credential.
+- **What the phone installs is checked against what it was told**, six ways, before the platform is
+  asked: size, checksum, that the archive parses, that it *is* the package that was named (an APK
+  with a different id would install alongside rather than replace), that its signer matches the
+  installed copy where there is one, and that the version is not a downgrade.
+- **The install restriction is lifted for the platform call and nothing else.** The download
+  happens with `no_install_apps` still in force; only the installer session and the uninstall run
+  inside `HardeningManager.withoutRestrictions`, which restores what it **read back** rather than
+  what it was asked for, in a `finally`, with the next sync's authoritative `apply()` as a second
+  net. `no_install_unknown_sources` is deliberately *not* lifted: a Device Owner install does not
+  need it, and lifting it would open the phone's own sideloading path for the duration.
+- **Removal is bounded by the platform's own record.** The applier's uninstall candidates are what
+  `getInstallSourceInfo` says this app installed, minus its own package. Withdrawing a declaration
+  cannot reach an app the child or the OEM installed, and a self-update cannot make the applier
+  uninstall the device owner.
 
 ### Browser → control plane
 
@@ -152,6 +234,11 @@ that admits a gap.
   storage — a full phone stops recording usage and stops taking policy
   (`a response that does not end is abandoned instead of filling the phone`).
 - **Traffic analysis.** The system does not hide from the network that a phone is managed.
+- **A parent installing something harmful on their own child's phone.** FR-16 is a loaded gun
+  pointed where the operator points it. The catalog refuses the DPC's own package and pins a
+  signer; it does not and cannot judge what an APK does. The controls are that uploading is
+  admin-only, that every registration and declaration is audited with the package, version and
+  signer, and that the child can always factory-reset the phone (property 1).
 
 ## Secrets
 

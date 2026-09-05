@@ -65,7 +65,9 @@ func (w want) String() string {
 }
 
 func TestEveryAuditedActionIsWritten(t *testing.T) {
-	h := newHarness(t)
+	// With an APK directory, so the catalog's actions (FR-16) are drivable here rather than being
+	// permanently listed as uncovered — an exclusion list is how a ratchet stops ratcheting.
+	h, apkDir := catalogHarness(t)
 
 	// PARENT_SIGNED_IN, before anything else can have written a row.
 	parent := h.signIn(primaryParent)
@@ -192,6 +194,52 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 	h.call(http.MethodPost, "/device/recovery-event", enrolled.DeviceToken,
 		map[string]any{"succeeded": true}).expect(http.StatusOK)
 	byDevice("RECOVERY_CODE_USED", device.ID)
+
+	// ---- the application catalog and API keys (FR-16, FR-17) ----
+	//
+	// Every one of these changes what a child's phone will install or who can reach this family's
+	// data, so each has to leave a row. APP_REGISTERED in particular is the only record of which
+	// bytes entered the catalog and which key signed them.
+	var registered appDTO
+	h.uploadRaw(parent.Token, fixtureAPK(t, "fixture-v1.apk"), "").
+		expect(http.StatusCreated).decode(&registered)
+	byParent("APP_REGISTERED", "app", registered.ID)
+
+	// A scan with the directory already holding that one file: it registers nothing new, and must
+	// still say it ran. "Nothing to do" and "never ran" are the two states an operator has to be
+	// able to tell apart.
+	h.call(http.MethodPost, "/apps/scan", parent.Token, nil).expect(http.StatusOK)
+	byParent("APP_DIRECTORY_SCANNED", "app", "")
+
+	h.call(http.MethodPut, "/children/"+child.ID+"/managed-apps/"+fixturePackage, parent.Token, nil).
+		expect(http.StatusNoContent)
+	byParent("APP_DECLARED", "child", child.ID)
+
+	h.call(http.MethodDelete, "/children/"+child.ID+"/managed-apps/"+fixturePackage, parent.Token, nil).
+		expect(http.StatusNoContent)
+	byParent("APP_WITHDRAWN", "child", child.ID)
+
+	h.call(http.MethodDelete, "/apps/"+registered.ID, parent.Token, nil).expect(http.StatusNoContent)
+	byParent("APP_DELETED", "app", registered.ID)
+
+	var key apiKeyDTO
+	h.call(http.MethodPost, "/api-keys", parent.Token, map[string]any{"name": "audited"}).
+		expect(http.StatusCreated).decode(&key)
+	byParent("API_KEY_CREATED", "api_key", key.ID)
+
+	h.call(http.MethodPost, "/api-keys/"+key.ID+"/revoke", parent.Token, nil).expect(http.StatusOK)
+	byParent("API_KEY_REVOKED", "api_key", key.ID)
+
+	h.call(http.MethodDelete, "/api-keys/"+key.ID, parent.Token, nil).expect(http.StatusNoContent)
+	byParent("API_KEY_DELETED", "api_key", key.ID)
+
+	// The directory is the server's, and this test used it: nothing here should have left the
+	// deleted application's bytes behind.
+	if entries, err := os.ReadDir(apkDir); err != nil {
+		t.Errorf("read the apk directory: %v", err)
+	} else if len(entries) != 0 {
+		t.Errorf("the apk directory still holds %d file(s) after the app was deleted", len(entries))
+	}
 
 	// ---- and the removals, last ----
 	h.call(http.MethodDelete, "/devices/"+device.ID, parent.Token, nil).expect(http.StatusNoContent)

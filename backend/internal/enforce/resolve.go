@@ -13,7 +13,12 @@ package enforce
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,13 +42,74 @@ type Source interface {
 	ListBlockedDomains(ctx context.Context, childID uuid.UUID) ([]string, error)
 	ListInstalledApps(ctx context.Context, deviceID uuid.UUID, includeSystem bool) ([]store.InstalledApp, error)
 	UsageMinutesForDay(ctx context.Context, deviceID uuid.UUID, day string) (int, error)
+	ManagedAppsForChild(ctx context.Context, childID uuid.UUID) ([]store.App, error)
 }
 
 // Resolver computes a device's desired state from stored policy and telemetry.
-type Resolver struct{ src Source }
+type Resolver struct {
+	src Source
+	// baseURL is where the phone can reach this control plane, with no trailing slash. It is here
+	// rather than in the engine because it is deployment configuration, not policy: the same
+	// declared set resolves to different URLs on dev and on the family's own server, and the engine
+	// has to stay a pure function that the phone can run offline with the same result.
+	baseURL string
+}
 
 // New builds a Resolver over any Source. *store.Store satisfies Source.
-func New(src Source) *Resolver { return &Resolver{src: src} }
+//
+// baseURL is the public origin the device reaches — the same one the provisioning payload and
+// /device/apk-info publish, so a phone never has to join a base to a path or guess a scheme.
+func New(src Source, baseURL string) *Resolver {
+	return &Resolver{src: src, baseURL: strings.TrimSuffix(baseURL, "/")}
+}
+
+// ManagedAppDownloadPath is where a device fetches one managed application. Exported because the
+// route registration and this URL builder must be the same shape, and a second copy of a path
+// string is a 404 that only appears on a phone.
+func ManagedAppDownloadPath(packageName string, versionCode int64) string {
+	return fmt.Sprintf("/api/v1/device/apps/%s/%d.apk", url.PathEscape(packageName), versionCode)
+}
+
+// managedApps turns catalog rows into what the phone needs to fetch and verify each one.
+func (r *Resolver) managedApps(rows []store.App) []policy.ManagedApp {
+	out := make([]policy.ManagedApp, 0, len(rows))
+	for _, a := range rows {
+		checksum, err := checksumB64(a.SHA256)
+		if err != nil {
+			// A row whose stored digest is not a SHA-256 cannot be verified on the phone, and the
+			// engine drops an entry with an empty checksum for exactly that reason. Skipped here so
+			// the reason is one thing rather than two.
+			continue
+		}
+		out = append(out, policy.ManagedApp{
+			PackageName: a.PackageName,
+			VersionCode: a.VersionCode,
+			VersionName: a.VersionName,
+			Checksum:    checksum,
+			Size:        a.SizeBytes,
+			URL:         r.baseURL + ManagedAppDownloadPath(a.PackageName, a.VersionCode),
+		})
+	}
+	return out
+}
+
+// checksumB64 re-encodes the catalog's hex digest as the base64url the device compares against.
+//
+// Two encodings of one number is a smell, and this is the seam where it is paid for rather than
+// spread: the catalog stores hex because that is what every other tool prints (sha256sum,
+// apksigner, the console), and the device receives base64url because that is the format
+// /device/apk-info already publishes and the DPC already computes. Converting here means the phone
+// has one comparison and the operator has one readable digest.
+func checksumB64(hexDigest string) (string, error) {
+	raw, err := hex.DecodeString(hexDigest)
+	if err != nil {
+		return "", err
+	}
+	if len(raw) != sha256.Size {
+		return "", fmt.Errorf("digest is %d bytes, not a SHA-256", len(raw))
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
 
 // Resolve reads every input the engine needs and computes the desired state for one device at one
 // instant.
@@ -86,6 +152,10 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 	if err != nil {
 		return nil, nil, fmt.Errorf("installed apps: %w", err)
 	}
+	managed, err := r.src.ManagedAppsForChild(ctx, dev.ChildID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("managed apps: %w", err)
+	}
 
 	blocked, allowed := splitRules(rules)
 	in := policy.Input{
@@ -103,6 +173,7 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 			BlockedPackages:    blocked,
 			AllowedPackages:    allowed,
 			BlockedDomains:     domains,
+			ManagedApps:        r.managedApps(managed),
 		},
 		Installed:        installedApps(apps),
 		UsedMinutesToday: used,

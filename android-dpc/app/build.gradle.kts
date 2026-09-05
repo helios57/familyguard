@@ -1,4 +1,5 @@
 import com.android.build.api.artifact.SingleArtifact
+import com.android.build.api.variant.DeviceTestBuilder
 import com.android.build.api.variant.HostTestBuilder
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -189,6 +190,65 @@ abstract class StageTestFixture : DefaultTask() {
     }
 }
 
+/**
+ * Stages the fixture application's APK where an instrumented test can read it.
+ *
+ * The input is AGP's APK *directory* rather than a file — it holds `output-metadata.json` beside
+ * the archive — so the task picks the single `.apk` inside it and fails loudly on none or several.
+ * "Several" is the case worth refusing rather than guessing at: the day someone adds an ABI split
+ * to the fixture, a task that took `first()` would stage an arbitrary one of them and the install
+ * test would go red for a reason nowhere near the change.
+ */
+@CacheableTask
+abstract class StageApkFixture : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val apkDirectory: ConfigurableFileCollection
+
+    @get:Input
+    abstract val assetName: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun stage() {
+        val apks = apkDirectory.asFileTree.matching { include("**/*.apk") }.files.sortedBy { it.path }
+        val apk = when (apks.size) {
+            1 -> apks.single()
+            0 -> throw GradleException(
+                "the fixture application produced no APK; the managed-install tests have nothing to install"
+            )
+            else -> throw GradleException(
+                "the fixture application produced ${apks.size} APKs (${apks.joinToString { it.name }}); " +
+                    "the managed-install tests need exactly one, and picking would hide which"
+            )
+        }
+        val target = outputDirectory.get().asFile
+        target.mkdirs()
+        apk.copyTo(target.resolve(assetName.get()), overwrite = true)
+    }
+}
+
+/**
+ * The fixture application's debug APK, taken by configuration name rather than by attribute.
+ *
+ * See fixture-app/build.gradle.kts for why the name is explicit.
+ */
+val fixtureApkV1: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+val fixtureApkV2: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
+
+dependencies {
+    fixtureApkV1(project(mapOf("path" to ":fixture-app", "configuration" to "fixtureApkV1")))
+    fixtureApkV2(project(mapOf("path" to ":fixture-app", "configuration" to "fixtureApkV2")))
+}
+
 val policyVectorsSource = rootProject.layout.projectDirectory.file("../backend/internal/policy/vectors.json")
 val recoveryVectorsSource =
     rootProject.layout.projectDirectory.file("../backend/internal/auth/recovery-vectors.json")
@@ -236,5 +296,31 @@ androidComponents {
             )
         }
         testResources.addGeneratedSourceDirectory(mergedManifest, StageTestFixture::outputDirectory)
+
+        // ---- and the one fixture the INSTRUMENTED tests need ----
+        //
+        // A real APK for a package that is not this one. ManagedInstallTest installs it, upgrades
+        // it and removes it again, which is the only way to find out what the platform actually
+        // does when a device owner installs under its own restrictions — and the answer decided the
+        // shape of FR-16 rather than confirming it (IMPLEMENTATION_PLAN.md 12.1).
+        //
+        // It rides in the test APK's assets rather than being pushed with adb because the test has
+        // to hand the installer a file the DPC's own uid can read, and /data/local/tmp is not that.
+        val deviceTest = variant.deviceTests[DeviceTestBuilder.ANDROID_TEST_TYPE]
+            ?: throw GradleException(
+                "variant ${variant.name} has no androidTest component; the fixture APK has nowhere to go"
+            )
+        val assets = deviceTest.sources.assets
+            ?: throw GradleException(
+                "variant ${variant.name}'s androidTest component exposes no asset sources; " +
+                    "the fixture APKs cannot be staged"
+            )
+        listOf("V1" to fixtureApkV1, "V2" to fixtureApkV2).forEach { (revision, configuration) ->
+            val stage = tasks.register<StageApkFixture>("stage${suffix}FixtureApk$revision") {
+                apkDirectory.from(configuration)
+                assetName.set("fixture-app-${revision.lowercase()}.apk")
+            }
+            assets.addGeneratedSourceDirectory(stage, StageApkFixture::outputDirectory)
+        }
     }
 }

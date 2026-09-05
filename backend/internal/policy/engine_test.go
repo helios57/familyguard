@@ -98,21 +98,22 @@ func TestSharedVectors(t *testing.T) {
 // stays green when a case is replaced by an unrelated one, whereas this fails by name.
 func TestVectorsCoverTheEnforcementRequirements(t *testing.T) {
 	must := []string{
-		"FR-3.4", // daily limit
-		"FR-4.1", // bedtime window, may cross midnight
-		"FR-4.2", // leaving the window un-suspends
-		"FR-5.2", // blocked app suspended and hidden
-		"FR-5.3", // free-installation mode
-		"FR-5.4", // new app waits for approval
-		"FR-5.5", // critical whitelist
-		"FR-6.2", // per-child filtering endpoint
-		"FR-6.4", // domain removal restores access
-		"FR-7.1", // youtube apps
-		"FR-7.2", // youtube dns
-		"FR-7.3", // youtube browser blocklist
-		"FR-7.4", // the inverse lifts all of it
-		"FR-8",   // tracking-only
-		"NFR-6",  // unbrickable
+		"FR-3.4",  // daily limit
+		"FR-4.1",  // bedtime window, may cross midnight
+		"FR-4.2",  // leaving the window un-suspends
+		"FR-5.2",  // blocked app suspended and hidden
+		"FR-5.3",  // free-installation mode
+		"FR-5.4",  // new app waits for approval
+		"FR-5.5",  // critical whitelist
+		"FR-6.2",  // per-child filtering endpoint
+		"FR-6.4",  // domain removal restores access
+		"FR-7.1",  // youtube apps
+		"FR-7.2",  // youtube dns
+		"FR-7.3",  // youtube browser blocklist
+		"FR-7.4",  // the inverse lifts all of it
+		"FR-8",    // tracking-only
+		"FR-16.3", // the declared set of managed apps reaches the device
+		"NFR-6",   // unbrickable
 	}
 	covered := map[string]bool{}
 	for _, v := range loadVectors(t) {

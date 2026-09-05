@@ -98,6 +98,37 @@ class HardeningManager(
         carryOut(RestrictionPlanner.plan(gateway.current(), desired), desired)
 
     /**
+     * Runs [body] with [keys] not in effect, and puts back exactly the ones that were.
+     *
+     * The device owner's own hardening is what stops the device owner installing an application a
+     * parent asked for: `no_install_apps` and `no_uninstall_apps` are set for the *user*, and the
+     * user this app runs as is the one they are set on. So the restriction has to come off around
+     * the operation — and the whole design of this function is about how briefly.
+     *
+     * **What is restored is what was read back, not what was asked for.** A key the parent had not
+     * turned on is left off: putting back a restriction that was never in effect would harden the
+     * phone past what the parent chose, in a function whose job is to change nothing.
+     *
+     * **`finally`, and a second net behind it.** An exception on the way through restores the
+     * keys. A process killed mid-window does not — nothing can — but the next sync's
+     * [apply] rewrites the authoritative restriction set from the server's desired state, so the
+     * lift heals on its own within one sync interval rather than lasting until someone notices.
+     *
+     * The caller is responsible for keeping [body] short: it must be the platform call and not the
+     * download that precedes it. See `ManagedAppApplier`, which stages every APK before it opens
+     * this window and does nothing inside it but commit sessions.
+     */
+    fun <T> withoutRestrictions(keys: Collection<String>, body: () -> T): T {
+        val lifted = gateway.current().filterTo(mutableSetOf()) { it in keys }
+        lifted.forEach { runCatching { gateway.clear(it) } }
+        try {
+            return body()
+        } finally {
+            lifted.forEach { runCatching { gateway.add(it) } }
+        }
+    }
+
+    /**
      * Clears run before adds. Not for efficiency — the two sets are disjoint by construction — but
      * because `clear` is the half that restores the escape hatch. If this process is killed halfway
      * through (a provisioning flow the user backs out of, a boot receiver that runs out of time),

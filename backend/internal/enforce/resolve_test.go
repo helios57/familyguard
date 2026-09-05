@@ -2,8 +2,12 @@ package enforce
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +27,7 @@ type fakeSource struct {
 	domains  []string
 	apps     []store.InstalledApp
 	usage    map[string]int
+	managed  []store.App
 	fail     map[string]error
 	usageDay string // the day key the resolver actually asked for
 }
@@ -64,6 +69,13 @@ func (f *fakeSource) ListInstalledApps(context.Context, uuid.UUID, bool) ([]stor
 	return f.apps, nil
 }
 
+func (f *fakeSource) ManagedAppsForChild(context.Context, uuid.UUID) ([]store.App, error) {
+	if err := f.fail["managed"]; err != nil {
+		return nil, err
+	}
+	return f.managed, nil
+}
+
 func (f *fakeSource) UsageMinutesForDay(_ context.Context, _ uuid.UUID, day string) (int, error) {
 	f.usageDay = day
 	if err := f.fail["usage"]; err != nil {
@@ -71,6 +83,11 @@ func (f *fakeSource) UsageMinutesForDay(_ context.Context, _ uuid.UUID, day stri
 	}
 	return f.usage[day], nil
 }
+
+// testBaseURL stands for the deployment's public origin. Written with a trailing slash on purpose:
+// the resolver has to trim it, and a URL with a double slash in the middle is the kind of thing
+// that works in a browser and fails in an HTTP client on a phone.
+const testBaseURL = "https://guard.example.com/"
 
 func baseSource() *fakeSource {
 	enrolled := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
@@ -94,7 +111,7 @@ func baseSource() *fakeSource {
 
 func resolve(t *testing.T, f *fakeSource, at time.Time) (*policy.DesiredState, *policy.Input) {
 	t.Helper()
-	got, in, err := New(f).Resolve(context.Background(), f.device.ID, at)
+	got, in, err := New(f, testBaseURL).Resolve(context.Background(), f.device.ID, at)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -163,7 +180,7 @@ func TestUnknownTimezoneIsAnErrorNotAFallback(t *testing.T) {
 	f := baseSource()
 	f.policy.Timezone = "Mars/Olympus_Mons"
 
-	got, _, err := New(f).Resolve(context.Background(), f.device.ID, time.Now())
+	got, _, err := New(f, testBaseURL).Resolve(context.Background(), f.device.ID, time.Now())
 	if err == nil {
 		t.Fatal("an unknown time zone resolved successfully")
 	}
@@ -336,11 +353,11 @@ func TestAppRulesSplitByAction(t *testing.T) {
 // because the response looks entirely normal.
 func TestEveryReadFailureIsReported(t *testing.T) {
 	boom := errors.New("database is down")
-	for _, key := range []string{"device", "policy", "usage", "rules", "domains", "apps"} {
+	for _, key := range []string{"device", "policy", "usage", "rules", "domains", "apps", "managed"} {
 		t.Run(key, func(t *testing.T) {
 			f := baseSource()
 			f.fail[key] = boom
-			got, _, err := New(f).Resolve(context.Background(), f.device.ID, time.Now())
+			got, _, err := New(f, testBaseURL).Resolve(context.Background(), f.device.ID, time.Now())
 			if err == nil {
 				t.Fatalf("a failing %s read produced a desired state", key)
 			}
@@ -351,5 +368,98 @@ func TestEveryReadFailureIsReported(t *testing.T) {
 				t.Error("a desired state came back alongside the error")
 			}
 		})
+	}
+}
+
+// TestManagedAppsReachTheDeviceAsSomethingItCanFetch covers the seam where the catalog's row
+// becomes an instruction to a phone: the URL it downloads from and the checksum it compares.
+//
+// The digest is asserted against a value computed here from known bytes rather than copied out of
+// the resolver's answer. An assertion that re-encodes the input the same way the code does passes
+// whichever encoding the code picked, which is precisely the mistake available at this seam — the
+// store speaks hex and the device speaks base64url, and only one of them is right on the wire.
+func TestManagedAppsReachTheDeviceAsSomethingItCanFetch(t *testing.T) {
+	raw := sha256.Sum256([]byte("the muplay apk bytes"))
+	f := baseSource()
+	f.managed = []store.App{{
+		PackageName: "net.muplay.player",
+		VersionCode: 7,
+		VersionName: "1.4.0",
+		SHA256:      hex.EncodeToString(raw[:]),
+		SizeBytes:   4200000,
+	}}
+
+	_, in, err := New(f, testBaseURL).Resolve(context.Background(), f.device.ID, time.Now())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(in.Settings.ManagedApps) != 1 {
+		t.Fatalf("managed apps: %#v", in.Settings.ManagedApps)
+	}
+	got := in.Settings.ManagedApps[0]
+
+	if want := base64.RawURLEncoding.EncodeToString(raw[:]); got.Checksum != want {
+		t.Errorf("checksum is %q, want the base64url the phone compares: %q", got.Checksum, want)
+	}
+	if strings.ContainsAny(got.Checksum, "+/=") {
+		t.Errorf("checksum %q is not URL-safe base64", got.Checksum)
+	}
+	// Absolute, no double slash, and carrying the exact version — the three things that make the
+	// phone's second request describe the same artifact as its first.
+	want := "https://guard.example.com/api/v1/device/apps/net.muplay.player/7.apk"
+	if got.URL != want {
+		t.Errorf("url is %q, want %q", got.URL, want)
+	}
+	if got.Size != 4200000 || got.VersionCode != 7 || got.VersionName != "1.4.0" {
+		t.Errorf("the build was not carried through: %#v", got)
+	}
+}
+
+// TestAManagedAppWithAnUnusableDigestIsNotSentToThePhone. The engine drops an entry with no
+// checksum; this is the other half — a row whose digest is not a SHA-256 at all must arrive there
+// as no checksum rather than as a string the phone will compare and always fail.
+func TestAManagedAppWithAnUnusableDigestIsNotSentToThePhone(t *testing.T) {
+	for name, digest := range map[string]string{
+		"not hex":   "zzzz",
+		"too short": hex.EncodeToString([]byte("sixteen bytes!!!")),
+		"empty":     "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := baseSource()
+			f.managed = []store.App{{PackageName: "net.muplay.player", VersionCode: 7, SHA256: digest}}
+			_, in, err := New(f, testBaseURL).Resolve(context.Background(), f.device.ID, time.Now())
+			if err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			if len(in.Settings.ManagedApps) != 0 {
+				t.Fatalf("an unverifiable app was sent to the phone: %#v", in.Settings.ManagedApps)
+			}
+		})
+	}
+
+	// The positive control. Without it every case above would also pass against a resolver that
+	// dropped every managed app, whatever its digest.
+	f := baseSource()
+	raw := sha256.Sum256([]byte("good"))
+	f.managed = []store.App{{PackageName: "net.muplay.player", VersionCode: 7, SHA256: hex.EncodeToString(raw[:])}}
+	_, in, err := New(f, testBaseURL).Resolve(context.Background(), f.device.ID, time.Now())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(in.Settings.ManagedApps) != 1 {
+		t.Fatal("a valid digest was dropped too; the cases above measured nothing")
+	}
+}
+
+// TestTheDownloadPathEscapesWhatItInterpolates. A package name is not arbitrary, but this function
+// builds a URL by interpolation and the store's column is free text — the guard belongs where the
+// string is built, not only where it is validated.
+func TestTheDownloadPathEscapesWhatItInterpolates(t *testing.T) {
+	got := ManagedAppDownloadPath("com.example/../../etc", 1)
+	if strings.Contains(got, "..") && !strings.Contains(got, "%2F") {
+		t.Fatalf("path traversal survived interpolation: %q", got)
+	}
+	if want := "/api/v1/device/apps/com.example%2F..%2F..%2Fetc/1.apk"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

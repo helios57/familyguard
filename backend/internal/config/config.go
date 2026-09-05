@@ -70,6 +70,19 @@ type Config struct {
 	// is why it is preferred over the APK's own hash rather than an alternative to it.
 	APKCertPath string
 
+	// APKDir is the managed-app catalog's one storage location (FR-16.1).
+	//
+	// All three ways an APK gets into the catalog put the file HERE: a scan of this directory at
+	// startup, an upload from the console, and the same upload endpoint driven by an API key. One
+	// location rather than one per route, because the alternative is a catalog row whose file lives
+	// somewhere the other two routes cannot see — and the symptom of that is a phone that downloads
+	// nothing, reported as the phone's fault.
+	//
+	// Distinct from APKPath, which is the DPC's own file and is served by a different, deliberately
+	// unauthenticated route. The DPC is not a catalog entry: it is installed by the provisioning
+	// wizard before any of this exists.
+	APKDir string
+
 	// FamilyName names the single family this deployment serves. It is cosmetic — every
 	// authorization decision is made against the parents table — but it is what the console shows.
 	FamilyName string
@@ -78,6 +91,12 @@ type Config struct {
 
 	RateLimitPerMinute int
 	MaxBodyBytes       int64
+	// MaxUploadBytes applies to the one endpoint that receives a file (FR-16.2). It is separate
+	// from MaxBodyBytes rather than a raise of it: the general cap exists so an unauthenticated
+	// request is cheap to refuse, and an APK is three orders of magnitude larger than any JSON this
+	// API accepts. Raising the general one to fit an APK would make every endpoint an easy way to
+	// make this server read 256 MB.
+	MaxUploadBytes     int64
 	CommandTTL         time.Duration
 	DeviceOfflineAfter time.Duration
 
@@ -108,6 +127,7 @@ func Load() (*Config, error) {
 		OAuthTokenURL:       envOr("OAUTH_TOKEN_URL", DefaultOAuthTokenURL),
 		APKPath:             os.Getenv("APK_PATH"),
 		APKCertPath:         os.Getenv("APK_CERT_PATH"),
+		APKDir:              os.Getenv("APK_DIR"),
 		FamilyName:          envOr("FAMILY_NAME", "Family"),
 		DPCComponent:        envOr("DPC_COMPONENT", "io.github.helios57.familyguard/.admin.AdminReceiver"),
 		LogLevel:            envOr("LOG_LEVEL", "info"),
@@ -213,6 +233,29 @@ func Load() (*Config, error) {
 			fail("%s: %v", p.name, err)
 		}
 	}
+	if c.APKDir != "" {
+		// It must be a DIRECTORY, and it must be writable, and both are checked here rather than at
+		// the first upload. A read-only mount is the likely mistake — the DPC's own APK is mounted
+		// read-only today, and copying that stanza is the obvious way to configure this one — and
+		// its symptom without this check is a parent uploading a 30 MB file over a phone connection
+		// and being told "internal error" at the end of it.
+		info, err := os.Stat(c.APKDir)
+		switch {
+		case err != nil:
+			fail("APK_DIR: %v", err)
+		case !info.IsDir():
+			fail("APK_DIR: %s is not a directory", c.APKDir)
+		default:
+			probe, err := os.CreateTemp(c.APKDir, ".writable-*")
+			if err != nil {
+				fail("APK_DIR: %s is not writable: %v", c.APKDir, err)
+			} else {
+				name := probe.Name()
+				_ = probe.Close()
+				_ = os.Remove(name)
+			}
+		}
+	}
 
 	if u, err := parseIssuer(c.OIDCIssuer); err != nil {
 		fail("OIDC_ISSUER: %v", err)
@@ -268,6 +311,19 @@ func Load() (*Config, error) {
 		fail("MAX_BODY_BYTES must be at least 1024, got %d", maxBody)
 	} else {
 		c.MaxBodyBytes = int64(maxBody)
+	}
+
+	// 256 MB. The DPC is 16 MB and the largest thing anyone would sensibly manage this way is a
+	// game; the ceiling is what apk.MaxSize will read, and a value above it would be a cap the
+	// parser then rejects a second time with a worse message.
+	maxUpload, err := envInt("MAX_UPLOAD_BYTES", 256<<20)
+	if err != nil {
+		fail("MAX_UPLOAD_BYTES: %v", err)
+	} else if int64(maxUpload) < c.MaxBodyBytes {
+		fail("MAX_UPLOAD_BYTES (%d) is below MAX_BODY_BYTES (%d), which would make the upload "+
+			"endpoint stricter than every other endpoint", maxUpload, c.MaxBodyBytes)
+	} else {
+		c.MaxUploadBytes = int64(maxUpload)
 	}
 
 	if len(problems) > 0 {
@@ -329,4 +385,17 @@ func envInt(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%q is not an integer", v)
 	}
 	return n, nil
+}
+
+// DPCPackage is the package name half of DPC_COMPONENT.
+//
+// The component is "<package>/<class>" and is validated at startup, so the split cannot fail here;
+// an unexpected value yields "" and the caller treats that as "no package is reserved" rather than
+// reserving the empty string, which would reject every APK.
+func (c *Config) DPCPackage() string {
+	pkg, _, ok := strings.Cut(c.DPCComponent, "/")
+	if !ok {
+		return ""
+	}
+	return pkg
 }

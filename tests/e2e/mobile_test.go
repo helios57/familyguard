@@ -363,7 +363,10 @@ func TestTheConsoleInstallsToAPhone(t *testing.T) {
 }
 
 func TestConsoleRendersOnAPhone(t *testing.T) {
-	h := newHarness(t)
+	// With an application catalog, because the FR-16 card is only drawn when the deployment has
+	// one. Without it the Apps screen renders a single line of prose where the switches are, and
+	// this file would report a measured layout for a card it never saw.
+	h, _ := catalogHarness(t)
 	seedAFamilyWorthLookingAt(t, h)
 
 	b := startBrowser(t)
@@ -717,6 +720,69 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 		}
 		b.eval("document.getElementById('sheet-close').click()", nil)
 	})
+
+	// The catalog sheet (FR-16). It is measured separately for the same reason the provisioning one
+	// is — it is not in the DOM until it opens — and it is worth measuring because it holds the two
+	// controls in the whole console that a phone lays out worst: a native `<input type="file">`,
+	// whose button is drawn by the browser and ignores most of what the stylesheet asks for, and a
+	// list whose rows carry a package name, a build number, a size and a minimum SDK on one line.
+	t.Run("app catalog sheet", func(t *testing.T) {
+		defer b.focus(t)()
+		b.switchTab(t, "apps", "#view .list li")
+		b.waitFor(`[...document.querySelectorAll('#view button')]`+
+			`.some((x) => /catalog|add an app/i.test(x.textContent))`,
+			20*time.Second, "the catalog button on the apps view")
+		b.eval(`(() => {
+  const buttons = [...document.querySelectorAll('#view button')];
+  const open = buttons.find((x) => /catalog|add an app/i.test(x.textContent));
+  if (!open) throw new Error('no catalog button on the apps view: ' +
+    buttons.map((x) => x.textContent.trim()).join(' | '));
+  open.click();
+})()`, nil)
+		b.waitFor("document.getElementById('sheet').open", 20*time.Second, "the catalog sheet")
+		b.waitFor("document.querySelector('#sheet-body input[type=file]') !== null",
+			20*time.Second, "the upload control to render")
+
+		b.measure(t, "app catalog sheet").check(t, "app catalog sheet")
+
+		// The file input, named. `check` above already refuses a tap target under 44 px, but it
+		// reports the offender by tag and class; a browser-drawn file picker is the one control most
+		// likely to be it, and a failure that says "input.something is 32 px" is a slower read than
+		// one that says the upload button is too small to hit.
+		var upload struct {
+			Height float64 `json:"height"`
+			Right  float64 `json:"right"`
+			Font   float64 `json:"font"`
+		}
+		b.eval(`(() => {
+  const f = document.querySelector('#sheet-body input[type=file]');
+  const r = f.getBoundingClientRect();
+  return { height: r.height, right: r.right, font: parseFloat(getComputedStyle(f).fontSize) };
+})()`, &upload)
+		if upload.Height < minTapPx {
+			t.Errorf("the APK file input is %.0f px tall, under the %.0f px this console promises; "+
+				"picking a file is the first act of adding an app", upload.Height, minTapPx)
+		}
+		if upload.Right > phoneWidth+0.5 {
+			t.Errorf("the APK file input reaches %.0f px on a %d px screen: the browser's own "+
+				"'Choose file' button is drawn at its intrinsic width and has pushed it off",
+				upload.Right, phoneWidth)
+		}
+		if upload.Font < minInputFontPx {
+			t.Errorf("the APK file input's font is %.0f px, under %.0f: iOS Safari zooms the whole "+
+				"page in on focus below that", upload.Font, minInputFontPx)
+		}
+
+		// The catalog list has to have something in it, or everything above measured an empty sheet.
+		var rows int
+		b.eval("document.querySelectorAll('#sheet-body .list li').length", &rows)
+		if rows < 1 {
+			t.Fatalf("the catalog sheet lists %d builds; the seed registered one, so this "+
+				"measured a sheet with no content in it and the row layout is NOT MEASURED", rows)
+		}
+
+		b.eval("document.getElementById('sheet-close').click()", nil)
+	})
 }
 
 // seedAFamilyWorthLookingAt fills the console with the content a layout has to survive: two
@@ -770,6 +836,16 @@ func seedAFamilyWorthLookingAt(t *testing.T, h *harness) {
 		h.call(http.MethodPost, "/children/"+child.ID+"/blocked-domains", parent.Token,
 			map[string]any{"domain": domain}).expect(http.StatusCreated)
 	}
+
+	// A real application in the catalog, so the FR-16 card has a switch to draw and the row has a
+	// package name long enough to be the one that overflows a 360 px column. The fixture is the same
+	// APK the catalog suite registers — a hand-made row would have no size, no signer and no minimum
+	// SDK, which are three of the four things the row prints.
+	h.uploadRaw(parent.Token, fixtureAPK(t, "fixture-v1.apk"),
+		"?label=An+application+with+a+name+long+enough+to+need+the+ellipsis").
+		expect(http.StatusCreated)
+	h.call(http.MethodPut, "/children/"+child.ID+"/managed-apps/"+fixturePackage, parent.Token, nil).
+		expect(http.StatusNoContent)
 
 	// A third parent, with an address long enough to be the one that overflows. The other two are
 	// already there: the harness bootstraps both, so adding `secondParent` here would be a 409 and

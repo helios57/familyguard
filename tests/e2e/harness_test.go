@@ -62,6 +62,10 @@ var (
 	// extra: without it the suite would still report PASS having never laid a page out, which is
 	// the exact shape of coverage that is not there.
 	chromeBin string
+	// The directory holding the three real APKs the catalog tests register. Real ones, not
+	// fabricated bytes: the server parses the manifest and the signing block, so a fixture written
+	// by this suite would only ever prove the parser agrees with the suite's idea of an APK.
+	apkFixtures string
 
 	dbSeq atomic.Int64
 )
@@ -90,6 +94,7 @@ func TestMain(m *testing.M) {
 	pgUser = read("E2E_PG_USER")
 	pgPassword = read("E2E_PG_PASSWORD")
 	chromeBin = read("E2E_CHROME")
+	apkFixtures = read("E2E_APK_FIXTURES")
 
 	if len(missing) > 0 {
 		fmt.Fprintf(os.Stderr,
@@ -104,6 +109,13 @@ func TestMain(m *testing.M) {
 	if _, err := os.Stat(chromeBin); err != nil {
 		fmt.Fprintf(os.Stderr, "NOT MEASURED: E2E_CHROME %q: %v\n", chromeBin, err)
 		os.Exit(2)
+	}
+	for _, name := range []string{"fixture-v1.apk", "fixture-v2.apk", "fixture-v3.apk", "fixture-othersigner.apk"} {
+		if _, err := os.Stat(filepath.Join(apkFixtures, name)); err != nil {
+			fmt.Fprintf(os.Stderr, "NOT MEASURED: E2E_APK_FIXTURES %q: %v\n"+
+				"run tests/apk/regenerate-fixtures.sh\n", apkFixtures, err)
+			os.Exit(2)
+		}
 	}
 	os.Exit(m.Run())
 }
@@ -169,6 +181,12 @@ func withSelfHostedAPK(path string) harnessOption {
 		h.env["APK_PATH"] = path
 		h.bind(h.port)
 	}
+}
+
+// withAPKDir gives the server a directory to hold applications in (FR-16). Without it every
+// catalog route answers "not configured", which is its own test.
+func withAPKDir(dir string) harnessOption {
+	return func(h *harness) { h.env["APK_DIR"] = dir }
 }
 
 // withPublicHost makes the server publish itself under a different name than this test reaches it

@@ -29,10 +29,13 @@ ones that fail silently, so they come first, and each says what its own absence 
 | Image | `ghcr.io/helios57/familyguard-control-plane`, pinned by semver, never `:latest` |
 | Database | `postgres:18.6`, `hostPath /srv/familyguard/postgres`, uid/gid 50140 |
 | APK | `hostPath /srv/familyguard/apk`, mounted read-only at `/srv/apk` |
+| App catalog | `hostPath /srv/familyguard/apps`, mounted **writable** at `/srv/apps` — optional, see §3 |
 
-Two `hostPath`s rather than PersistentVolumeClaims, because the reference target is a single node and
-a `hostPath` is an honest description of what a single-node volume is. On a cluster with more than
-one node, replace both with PVCs; that is the one substitution in `deploy/` that is not a string.
+Three `hostPath`s rather than PersistentVolumeClaims, because the reference target is a single node
+and a `hostPath` is an honest description of what a single-node volume is. On a cluster with more
+than one node, replace all three with PVCs; that is the one substitution in `deploy/` that is not a
+string. The catalog one is `ReadWriteOnce`-shaped like the others but is the only volume the control
+plane writes to, so on a multi-node cluster it also pins the pod.
 
 ## Order of operations
 
@@ -97,6 +100,60 @@ A QR carrying only the first is one that provisioning refuses.
 Neither checksum is ever typed into configuration. Both are computed from the bytes on disk at
 startup, because a checksum that is typed rather than computed verifies whatever it was typed from —
 which, after the next rebuild, is nothing.
+
+#### The catalog directory, if this deployment hosts applications
+
+FR-16 lets a parent install other applications on a child's phone — a music player, a homework app.
+It is **optional**: leave `APK_DIR` unset and the console says the server is not set up to host
+applications, in words, instead of showing controls that would 404.
+
+To enable it, create a *second* directory, writable by the container's user:
+
+```bash
+ssh k8s-node 'sudo mkdir -p /srv/familyguard/apps && sudo chown 65532:65532 /srv/familyguard/apps'
+```
+
+Three things about that command are load bearing:
+
+- **A second directory, not a subdirectory of `apk/`.** `/srv/apk` is mounted read-only, because
+  nothing should be able to overwrite the DPC the provisioning QR's checksum was computed from.
+- **`chown 65532`** — the distroless `nonroot` uid the pod runs as. The container's root filesystem
+  is read-only and this is the only writable path it has. The server `stat`s the directory at
+  startup, writes a probe file into it, and **refuses to start** if either fails, so a
+  root-owned directory is a pod that never becomes ready rather than a parent who uploads 30 MB
+  over a phone connection and is told "internal error" at the end of it.
+- The manifest declares it `type: Directory`, not `DirectoryOrCreate`, for exactly that reason: an
+  auto-created one is owned by root and the check above would then refuse.
+
+Then there are three ways an APK gets into the catalog, and all three put the file here:
+
+| Route | Who | When |
+|---|---|---|
+| **Upload** in the console — Apps → *Manage catalog* | any admin parent | the normal way |
+| `POST /api/v1/apps` with the APK as the body or as a `multipart/form-data` `apk` part | an admin parent's session **or an API key** (FR-17) | scripts, an MCP server |
+| **Scan the server folder** — copy `.apk` files in over SSH, then press the button | any admin parent | a large file, or a batch |
+
+Nothing is trusted from the filename. The package name, version, minimum SDK and the SHA-256 of the
+signing certificate are all read out of the archive, and the first build of a package **pins** its
+signer: a later build signed with a different key is refused rather than installed. The DPC's own
+package is refused outright — it has its own update path.
+
+Two environment variables bound the size, and they have to agree with the ingress:
+
+| Variable | Default | What it is |
+|---|---|---|
+| `APK_DIR` | *(unset — feature off)* | where the catalog's files live |
+| `MAX_UPLOAD_BYTES` | `268435456` (256 MB) | the cap on the upload endpoint only |
+
+`MAX_UPLOAD_BYTES` is separate from `MAX_BODY_BYTES` rather than a raise of it: the general cap
+exists so that an unauthenticated request is cheap to refuse, and raising it to fit an APK would
+make every endpoint an easy way to make this server read a quarter of a gigabyte.
+
+The ingress caps the request first. `deploy/ingress.yaml` sets `proxy-body-size: 64m`, so with the
+defaults **nginx** 413s at 64 MB and the server's own 256 MB limit is never reached — and nginx's
+413 carries none of the server's message. Set the two to the same number. 64 MB is a reasonable
+ceiling for a family: it holds any APK a parent would sensibly install and is well under what a
+phone will download over a home connection.
 
 ### 4. The application secret
 
@@ -437,6 +494,66 @@ on the device page. A phone that acknowledged and never reported a new build is 
 Signing a new APK with a **different** key breaks provisioning for new devices and cannot upgrade
 existing ones at all. There is no recovery from a lost signing key other than factory-resetting every
 enrolled phone — which the fleet permits, by design, because `no_factory_reset` is never set.
+
+---
+
+## Installing another app on a child's phone
+
+Requires `APK_DIR` (above). The model is a **declared set, not a queue of commands**: you say which
+packages a child's phone should have, the phone re-reads that set on every sync, and it installs
+what is missing and removes what has been withdrawn. There is no "install" button to press twice,
+and no way for the phone and the console to end up disagreeing about what was asked for.
+
+1. **Put the APK in the catalog** — Apps → *Manage catalog* → choose a file → Upload. Or copy
+   `.apk` files into `/srv/familyguard/apps` over SSH and press *Scan the server folder*, which is
+   the better route for something large.
+2. **Turn the switch on** for the child, on the Apps screen. That is the whole declaration.
+3. The phone acts on its next sync — immediately if it is online, when it comes back if it is not.
+
+To remove it, turn the switch off. The phone uninstalls it.
+
+Things worth knowing before you rely on it:
+
+- **The phone will put it back.** If the child uninstalls a declared app, the next sync reinstalls
+  it. That is convergence, not a command being retried, so it also survives the phone being
+  reset and re-enrolled.
+- **Only what this DPC installed is ever removed.** The uninstall candidates come from Android's own
+  record of which installer put a package there. Withdrawing a declaration cannot touch an app the
+  child or the manufacturer installed.
+- **A new build replaces the old one automatically.** Upload a newer version and every phone that
+  has the package declared upgrades itself. The catalog keeps the older builds; delete them when you
+  are sure.
+- **The signing key is pinned on first upload.** A rebuild with a different key is refused with
+  "signer changed" rather than installed — which is the same rule Android enforces on the phone, met
+  earlier and with a message that says what happened.
+- **The DPC itself cannot be a catalog entry.** It updates over its own path; see *Replacing the APK
+  later*.
+- Bedtime, the daily limit and app rules all still apply to a managed app. Installing something is
+  not exempting it.
+
+## API keys, for scripts and MCP servers
+
+Everything a parent can do in the console can be done with an API key instead of a browser session —
+including uploading an APK and declaring it for a child.
+
+Create one under **Family → API keys**. The token is shown **once**, at that moment, and is not
+recoverable afterwards; only its SHA-256 is stored. It looks like `fgk_…` and goes in the ordinary
+header:
+
+```bash
+curl -H "Authorization: Bearer fgk_…" https://guard.example.com/api/v1/children
+```
+
+- A key **is** the parent that created it — same family, same role, no separate permissions to keep
+  in step.
+- A key **cannot** create sessions, add parents, or mint or revoke other keys. A stolen key cannot
+  grow itself a second foothold that survives being revoked.
+- Keys do not expire. Revoke instead; it takes effect on the next request. `last_used_at` on the
+  list is what tells you which of them is still in use.
+- Revoked keys stay in the list, because "was this ever used, and when did it stop" is the first
+  question after a laptop goes missing.
+- The audit log records that a key acted, and which one, distinctly from a parent acting in a
+  browser.
 
 ---
 

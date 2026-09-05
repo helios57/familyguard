@@ -143,6 +143,36 @@ def main():
                 fail(f"the volume holding {apk} is mounted writable at {m['mountPath']}")
         return
 
+    if what == "catalog-dir-writable":
+        # The mirror image of apk-mount-readonly, and the reason it is a separate assertion is that
+        # the obvious way to configure APK_DIR is to copy the stanza above — which carries
+        # `readOnly: true` and produces a pod that refuses to start with a message about a directory
+        # nobody changed. The check is skipped, loudly, when the deployment sets no APK_DIR: the
+        # catalog is optional (FR-16), and a deployment that hosts no applications is correct.
+        dep = find(docs, "Deployment", "familyguard-control-plane")
+        pod = dep["spec"]["template"]["spec"]
+        env = {e["name"]: e.get("value") for e in containers(pod)[0].get("env", [])}
+        apk_dir = env.get("APK_DIR")
+        if not apk_dir:
+            print("APK_DIR is unset: this deployment hosts no application catalog, nothing to check")
+            return
+        apk = env.get("APK_PATH") or ""
+        mounts = containers(pod)[0].get("volumeMounts", [])
+        owning = [m for m in mounts if m["mountPath"].rstrip("/") == apk_dir.rstrip("/")]
+        if not owning:
+            fail(f"APK_DIR is {apk_dir} but no volumeMount covers it, so uploads would land on the "
+                 "container's read-only root filesystem")
+        for m in owning:
+            if m.get("readOnly"):
+                fail(f"APK_DIR {apk_dir} is mounted readOnly; the server writes uploads here and "
+                     "checks for it at startup, so this deployment never becomes ready")
+        # Sharing one volume with the DPC's own APK is the other half of the same mistake: it would
+        # either make the DPC overwritable or make the catalog read-only, depending which stanza won.
+        if apk and (apk.startswith(apk_dir.rstrip("/") + "/") or apk_dir.rstrip("/") == apk.rsplit("/", 1)[0]):
+            fail(f"APK_DIR {apk_dir} also holds APK_PATH {apk}: the DPC the provisioning checksum "
+                 "was computed from would be writable by an upload")
+        return
+
     if what == "probes":
         dep = find(docs, "Deployment", "familyguard-control-plane")
         c = dep["spec"]["template"]["spec"]["containers"][0]

@@ -122,6 +122,24 @@ spec:
               value: "/srv/apk/familyguard.der"
             - name: APK_URL
               value: "https://guard.example.com/dpc.apk"
+            # Where the managed-app catalog keeps the APKs a parent chooses to install on a child's
+            # phone (FR-16). Optional: leave it unset and the console says so, in words, instead of
+            # showing controls that would 404. Distinct from APK_PATH above — that is the DPC's own
+            # file, served unauthenticated to a phone being provisioned; this directory is served
+            # only to an enrolled, authenticated device.
+            #
+            # It is the one directory this process WRITES to, so it cannot be the read-only `apk`
+            # mount and cannot be a subdirectory of it.
+            - name: APK_DIR
+              value: "/srv/apps"
+            # Set here rather than left at the server's 256 MB default, because the ceiling that
+            # matters is whichever of the two is LOWER and nginx is in front: `ingress.yaml` caps a
+            # body at 64m, so a 100 MB upload would be refused by the proxy with an HTML 413 that
+            # never reaches the app and never reaches the audit log. Keeping the pair explicit is
+            # what makes the two numbers visibly one decision — 64m and 67108864 — instead of a
+            # default nobody chose sitting behind a limit somebody did.
+            - name: MAX_UPLOAD_BYTES
+              value: "67108864"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -149,6 +167,10 @@ spec:
             - name: apk
               mountPath: /srv/apk
               readOnly: true
+            # Writable, deliberately, and the only writable path in a container whose root
+            # filesystem is read-only. Uploads land here and a scan reads here.
+            - name: apps
+              mountPath: /srv/apps
           resources:
             requests:
               cpu: 50m
@@ -187,6 +209,15 @@ spec:
             # build artifacts, not configuration, and far too large for a ConfigMap. Read-only in
             # the container. See DEPLOYMENT.md for building and signing them.
             path: /srv/familyguard/apk
+            type: Directory
+        - name: apps
+          hostPath:
+            # `Directory`, not `DirectoryOrCreate`. Kubelet creates a missing one owned by root with
+            # mode 0755, and this pod runs as 65532 — so the auto-created directory is one the
+            # server cannot write to, and the server checks writability at startup and refuses.
+            # That refusal is correct and the cause would be this line. Create it yourself and
+            # chown it to 65532:65532; see DEPLOYMENT.md.
+            path: /srv/familyguard/apps
             type: Directory
 ---
 apiVersion: v1

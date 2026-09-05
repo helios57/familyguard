@@ -109,6 +109,30 @@ async function api(path, options = {}) {
   return body;
 }
 
+/* upload sends a file, and is the one request that is not JSON.
+ *
+ * `api` above serialises its body and sets a JSON content type, which is exactly wrong for an APK.
+ * Written as a second function rather than as a flag on the first because the two share nothing but
+ * the bearer: no Accept negotiation, no 204, and a body that must not be read into a string. */
+async function upload(path, file, label) {
+  const form = new FormData();
+  form.append('apk', file, file.name);
+  if (label) form.append('label', label);
+  const headers = { 'Accept': 'application/json' };
+  if (state.session) headers['Authorization'] = 'Bearer ' + state.session.token;
+  // No Content-Type: the browser sets it, with the multipart boundary. Setting it by hand produces
+  // a boundary-less header and a body the server cannot parse, and the failure blames the file.
+  const res = await fetch(API + path, { method: 'POST', headers, body: form });
+  if (res.status === 401) {
+    signOut('Your session expired. Please sign in again.');
+    throw new ApiError(401, 'unauthorized', 'session expired');
+  }
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!res.ok) throw new ApiError(res.status, body && body.error, body && body.message);
+  return body;
+}
+
 /* ---- helpers ------------------------------------------------------------ */
 
 const el = (tag, attrs = {}, ...kids) => {
@@ -161,6 +185,14 @@ const fmtTime = (iso) => {
   if (mins < 60) return mins + ' min ago';
   if (mins < 60 * 24) return Math.round(mins / 60) + ' h ago';
   return d.toLocaleDateString();
+};
+
+/* Megabytes, one decimal, because an APK is the one number in this console a parent compares
+ * against their own phone's storage. Bytes would be unreadable and "large" would be a judgement. */
+const fmtSize = (bytes) => {
+  if (!bytes) return '';
+  const mb = bytes / (1024 * 1024);
+  return (mb >= 10 ? Math.round(mb) : Math.round(mb * 10) / 10) + ' MB';
 };
 
 const fmtMinutes = (m) => {
@@ -744,9 +776,14 @@ function renderRules(data) {
 /* ---- apps --------------------------------------------------------------- */
 
 async function loadApps() {
-  const [rules, devices] = await Promise.all([
+  const [rules, devices, catalog, managed] = await Promise.all([
     api('/children/' + state.childId + '/app-rules'),
     api('/devices?child_id=' + encodeURIComponent(state.childId)),
+    // The catalog is family-wide and the declared set is per child; both are needed to draw one
+    // switch per application, because "in the catalog" and "declared for this child" are different
+    // facts and the switch is the second one.
+    api('/apps').catch(() => ({ apps: [], configured: false })),
+    api('/children/' + state.childId + '/managed-apps').catch(() => ({ managed_apps: [] })),
   ]);
   const list = devices.devices || [];
   const perDevice = await Promise.all(list.map((d) =>
@@ -765,7 +802,30 @@ async function loadApps() {
     apps: [...byPackage.values()].sort(sortApps),
     ruleFor,
     enrolled: list.some((d) => d.enrolled),
+    catalog: catalog.apps || [],
+    catalogConfigured: catalog.configured === true,
+    managed: managed.managed_apps || [],
   };
+}
+
+/* One row per package, newest build first.
+ *
+ * The catalog holds every version ever registered — that is what makes a rollback possible — but a
+ * parent chooses an APPLICATION, and the phone is sent one version of it. Showing every build as
+ * its own switch would ask them to pick a version code. */
+function catalogByPackage(apps) {
+  const byPackage = new Map();
+  for (const a of apps) {
+    const seen = byPackage.get(a.package_name);
+    if (!seen) byPackage.set(a.package_name, { newest: a, versions: [a] });
+    else {
+      seen.versions.push(a);
+      if (a.version_code > seen.newest.version_code) seen.newest = a;
+    }
+  }
+  return [...byPackage.values()]
+    .sort((x, y) => (x.newest.label || x.newest.package_name)
+      .localeCompare(y.newest.label || y.newest.package_name));
 }
 
 function sortApps(a, b) {
@@ -773,12 +833,179 @@ function sortApps(a, b) {
   return (a.label || a.package_name).localeCompare(b.label || b.package_name);
 }
 
+/* ---- the applications a parent chooses (FR-16) --------------------------- */
+
+/* The catalog card, drawn above the inventory.
+ *
+ * Two lists that look alike and are not: this one is what a parent DECIDES the phone should have,
+ * the one below is what the phone REPORTS it has. They are kept apart, and each says which it is,
+ * because a parent who confuses them either blocks an app expecting it to be removed or withdraws
+ * one expecting it to be merely hidden. */
+function managedAppsCard(data) {
+  const card = el('div', { class: 'card full' },
+    el('div', { class: 'card-head' },
+      el('h2', { text: 'Apps you install' }),
+      el('button', {
+        class: 'btn btn-quiet', type: 'button', text: 'Manage catalog',
+        onclick: () => openCatalogSheet(data),
+      })));
+
+  if (!data.catalogConfigured) {
+    // Not an error, and not a blank list. A deployment may legitimately host no applications, and
+    // "empty" and "not set up" need different actions from whoever is reading.
+    card.append(el('p', { class: 'muted', text: 'This server is not set up to host applications. Set APK_DIR on the control plane and give it a writable folder.' }));
+    return card;
+  }
+
+  const declared = new Set(data.managed.map((m) => m.package_name));
+  const groups = catalogByPackage(data.catalog);
+
+  // A package a parent declared whose build is no longer in the catalog. It is in the declared set
+  // and the phone is told nothing about it, so it must be visible: silence here is an app a parent
+  // believes they installed.
+  const orphans = data.managed.filter((m) => !m.available);
+
+  if (!groups.length && !orphans.length) {
+    card.append(el('p', { class: 'muted', text: 'No applications have been added to this family yet.' }));
+    card.append(el('button', {
+      class: 'btn btn-primary btn-block', type: 'button', text: 'Add an app',
+      onclick: () => openCatalogSheet(data),
+    }));
+    return card;
+  }
+
+  const toggle = async (pkg, on) => {
+    await act(on ? 'Added to this phone' : 'Removed from this phone', () =>
+      on
+        ? api('/children/' + state.childId + '/managed-apps/' + encodeURIComponent(pkg), { method: 'PUT' })
+        : api('/children/' + state.childId + '/managed-apps/' + encodeURIComponent(pkg), { method: 'DELETE' }));
+    refresh();
+  };
+
+  card.append(el('ul', { class: 'list' },
+    groups.map(({ newest, versions }) => el('li', {},
+      el('span', { class: 'label' },
+        el('b', { text: newest.label || newest.package_name }),
+        el('small', {
+          text: newest.package_name + ' · ' + (newest.version_name || 'build ' + newest.version_code) +
+            (versions.length > 1 ? ' · ' + versions.length + ' builds' : '') +
+            (newest.size_bytes ? ' · ' + fmtSize(newest.size_bytes) : ''),
+        })),
+      el('label', { class: 'switch switch-bare' },
+        el('input', {
+          type: 'checkbox',
+          checked: declared.has(newest.package_name),
+          'aria-label': 'Install ' + (newest.label || newest.package_name) + ' on this phone',
+          onchange: (e) => toggle(newest.package_name, e.target.checked),
+        })))),
+    orphans.map((m) => el('li', {},
+      el('span', { class: 'label' },
+        el('b', { text: m.package_name }),
+        el('small', { class: 'warn', text: 'chosen for this phone, but no build of it is in the catalog — nothing will be installed' })),
+      el('button', {
+        class: 'btn btn-quiet btn-danger', type: 'button', text: 'Remove',
+        onclick: () => toggle(m.package_name, false),
+      })))));
+
+  card.append(el('p', { class: 'muted', text: 'The phone installs these by itself and puts one back if it is removed. Bedtime and app rules still apply to them.' }));
+  return card;
+}
+
+/* The catalog itself: what this family can install, and the two ways in.
+ *
+ * A sheet rather than a sixth tab, because adding an application is a rare administrative act and
+ * the thing a parent does often — deciding which child gets it — is the switch on the card behind
+ * this. */
+function openCatalogSheet(data) {
+  const body = el('div', { class: 'stack' });
+
+  const status = el('p', { class: 'muted' });
+  const say = (message, isError) => {
+    status.textContent = message;
+    status.className = isError ? 'warn' : 'muted';
+  };
+
+  const file = el('input', {
+    type: 'file', accept: '.apk,application/vnd.android.package-archive',
+    'aria-label': 'Choose an APK file',
+  });
+  const label = el('input', { type: 'text', placeholder: 'Name (optional)', 'aria-label': 'Name for this app' });
+
+  const form = el('form', {
+    class: 'stack',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      const chosen = file.files && file.files[0];
+      if (!chosen) { say('Choose an APK file first.', true); return; }
+      say('Uploading ' + chosen.name + '…');
+      // Nothing here names the package: the server reads it, the version and the signer out of the
+      // archive. A name typed in the box is a display label and cannot change what is installed.
+      const out = await act('Added ' + chosen.name, () => upload('/apps', chosen, label.value.trim()));
+      if (out) { closeSheet(); refresh(); }
+    },
+  },
+    el('label', { class: 'field' }, el('span', { text: 'Upload an APK' }), file),
+    label,
+    el('button', { class: 'btn btn-primary btn-block', type: 'submit', text: 'Upload' }));
+
+  const scan = el('button', {
+    class: 'btn btn-block', type: 'button', text: 'Scan the server folder',
+    onclick: async () => {
+      const out = await act('Folder scanned', () => api('/apps/scan', { method: 'POST' }));
+      if (!out) return;
+      const failed = Object.entries(out.failed || {});
+      if (failed.length) {
+        // Named rather than counted. "3 files could not be read" sends an operator to look at all
+        // of them; the filename and the reason sends them to the one that is wrong.
+        say(failed.map(([name, why]) => name + ': ' + why).join('\n'), true);
+      } else {
+        say((out.registered || []).length + ' new application(s) registered.');
+      }
+      refresh();
+    },
+  });
+
+  const rows = catalogByPackage(data.catalog).flatMap(({ versions }) =>
+    versions.sort((a, b) => b.version_code - a.version_code).map((a) => el('li', {},
+      el('span', { class: 'label' },
+        el('b', { text: (a.label || a.package_name) + ' ' + (a.version_name || a.version_code) }),
+        el('small', {
+          text: a.package_name + ' · build ' + a.version_code + ' · ' + fmtSize(a.size_bytes) +
+            ' · min SDK ' + a.min_sdk + ' · ' + (a.source === 'NODE' ? 'from the server folder' : 'uploaded'),
+        })),
+      el('button', {
+        class: 'btn btn-quiet btn-danger', type: 'button', text: 'Delete',
+        onclick: async () => {
+          if (!confirm('Delete ' + a.package_name + ' build ' + a.version_code + ' from the catalog?')) return;
+          await act('Deleted', () => api('/apps/' + a.id, { method: 'DELETE' }));
+          closeSheet();
+          refresh();
+        },
+      }))));
+
+  body.append(
+    form,
+    el('p', { class: 'muted', text: 'Or copy .apk files into the server\'s app folder and scan it. Nothing is trusted from the file name — the package, the version and the signing key are read out of the archive.' }),
+    scan,
+    status,
+    el('h3', { text: 'In the catalog' }),
+    rows.length
+      ? el('ul', { class: 'list' }, rows)
+      : el('p', { class: 'muted', text: 'Nothing yet.' }));
+
+  openSheet('App catalog', body);
+}
+
 function renderApps(data) {
+  const managed = managedAppsCard(data);
+
   if (!data.apps.length) {
     // Two different reasons for the same blank list, and they need different next steps: there is no
     // phone, or there is one and it has not reported yet. Saying "set up a phone" to somebody who
     // already did is the empty state telling them to redo work they have done.
-    return [data.enrolled
+    // The managed card stays: choosing what a phone should have does not depend on the phone
+    // having reported yet, and a parent setting one up wants to pick the apps before it arrives.
+    return [managed, data.enrolled
       ? emptyCard('▦', 'No apps reported yet',
         'The phone is enrolled but has not sent its list of installed apps. It does that shortly after setup and then once a day.')
       : emptyCard('▦', 'No apps reported yet',
@@ -869,8 +1096,9 @@ function renderApps(data) {
 
   paint();
 
-  return [el('div', { class: 'card full' },
-    el('div', { class: 'card-head' }, el('h2', { text: 'Apps' })),
+  return [managed, el('div', { class: 'card full' },
+    el('div', { class: 'card-head' }, el('h2', { text: 'Apps on the phone' })),
+    el('p', { class: 'muted', text: 'What the phone reports it has. Allowing or blocking one here does not install or remove it.' }),
     el('div', { class: 'toolbar' }, search, filter, system),
     count,
     list)];
@@ -951,12 +1179,115 @@ function renderActivity(data) {
 /* ---- family ------------------------------------------------------------- */
 
 async function loadFamily() {
-  const parents = await api('/parents');
-  return { parents: parents.parents || [] };
+  const isPrimary = state.parent && state.parent.role === 'PRIMARY_ADMIN';
+  const [parents, keys] = await Promise.all([
+    api('/parents'),
+    // Only a primary admin may list keys, so anyone else gets a 403 rather than an empty list. The
+    // catch keeps the whole screen from failing on a call the reader was never entitled to make.
+    isPrimary ? api('/api-keys').catch(() => ({ api_keys: [] })) : Promise.resolve(null),
+  ]);
+  return { parents: parents.parents || [], keys: keys && (keys.api_keys || []), isPrimary };
+}
+
+/* ---- API keys (FR-17) ---------------------------------------------------- */
+
+/* A key is the same parent, arriving without a browser.
+ *
+ * The card says so in those words rather than talking about scopes, because there are none: a key
+ * reaches everything its creator reaches. The one exception — it cannot mint another credential —
+ * is stated here too, since it is the reason revoking one is enough. */
+function apiKeysCard(data) {
+  const card = el('div', { class: 'card full' },
+    el('div', { class: 'card-head' }, el('h2', { text: 'API keys' })));
+
+  if (!data.isPrimary) {
+    card.append(el('p', { class: 'muted', text: 'Only the primary admin can see or create API keys.' }));
+    return card;
+  }
+
+  card.append(el('p', { class: 'muted', text: 'A key lets a script or an assistant act as you, without a browser. It reaches everything you reach, except creating or revoking another key or parent.' }));
+
+  const keys = data.keys || [];
+  if (keys.length) {
+    card.append(el('ul', { class: 'list' }, keys.map((k) => el('li', {},
+      el('span', { class: 'label' },
+        el('b', { text: k.name }),
+        el('small', {
+          class: k.revoked_at ? 'warn' : null,
+          // The prefix, never the key. It is what identifies one in a log or a config file, and it
+          // cannot be used for anything.
+          text: k.prefix + '… · ' + (k.revoked_at
+            ? 'revoked ' + fmtTime(k.revoked_at)
+            : 'last used ' + fmtTime(k.last_used_at)),
+        })),
+      k.revoked_at
+        ? el('button', {
+          class: 'btn btn-quiet btn-danger', type: 'button', text: 'Delete',
+          onclick: async () => {
+            if (!confirm('Delete the record of ' + k.name + '? The audit trail will point at nothing.')) return;
+            await act('Key deleted', () => api('/api-keys/' + k.id, { method: 'DELETE' }));
+            refresh();
+          },
+        })
+        : el('button', {
+          class: 'btn btn-quiet btn-danger', type: 'button', text: 'Revoke',
+          onclick: async () => {
+            if (!confirm('Revoke ' + k.name + '? Anything using it stops working immediately.')) return;
+            await act('Key revoked', () => api('/api-keys/' + k.id + '/revoke', { method: 'POST' }));
+            refresh();
+          },
+        })))));
+  } else {
+    card.append(el('p', { class: 'muted', text: 'No keys yet.' }));
+  }
+
+  card.append(el('form', {
+    class: 'field-row',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      const input = e.target.querySelector('input');
+      const name = input.value.trim();
+      if (!name) return;
+      const created = await act('Key created', () => api('/api-keys', { method: 'POST', body: { name } }));
+      if (created) showKeyOnce(created);
+      refresh();
+    },
+  },
+    el('input', { type: 'text', placeholder: 'What is it for?', 'aria-label': 'Name for the new key', autocapitalize: 'none' }),
+    el('button', { class: 'btn btn-primary', type: 'submit', text: 'Create' })));
+
+  return card;
+}
+
+/* The one time the token is readable.
+ *
+ * Only its hash is stored, so this cannot be shown again by any request, by an operator, or by
+ * reading the database. The sheet says that at the moment the value is on screen rather than in
+ * documentation nobody is looking at while copying a secret. */
+function showKeyOnce(key) {
+  const value = el('code', { class: 'code-block', text: key.token });
+  const copy = el('button', {
+    class: 'btn btn-primary btn-block', type: 'button', text: 'Copy',
+    onclick: async () => {
+      try {
+        await navigator.clipboard.writeText(key.token);
+        toast('Copied');
+      } catch (err) {
+        // A clipboard the browser refuses is not a failure of this feature: the value is on screen
+        // and can be selected. Saying so beats a toast that reads like the key was not created.
+        toast('Could not copy — select the key and copy it by hand.', true);
+      }
+    },
+  });
+  openSheet('Copy this key now', el('div', { class: 'stack' },
+    el('p', { text: 'This is the only time ' + key.name + ' can be read. Only a hash of it is stored, so it cannot be shown again.' }),
+    value,
+    copy,
+    el('p', { class: 'muted', text: 'Send it as an Authorization: Bearer header. If it leaks, revoke it here — that is immediate, and a key cannot create another one to survive its own revocation.' })));
 }
 
 function renderFamily(data) {
-  const isPrimary = state.parent && state.parent.role === 'PRIMARY_ADMIN';
+  const isPrimary = data.isPrimary;
 
   const parents = el('div', { class: 'card full' },
     el('div', { class: 'card-head' }, el('h2', { text: 'Parents' })),
@@ -1016,7 +1347,7 @@ function renderFamily(data) {
     el('p', { class: 'muted', text: state.parent ? state.parent.email + ' · ' + state.parent.role.replaceAll('_', ' ').toLowerCase() : '' }),
     el('button', { class: 'btn btn-block', type: 'button', text: 'Sign out', onclick: () => signOut('Signed out.') }));
 
-  return [parents, children, you];
+  return [parents, children, apiKeysCard(data), you];
 }
 
 /* ---- sheet -------------------------------------------------------------- */

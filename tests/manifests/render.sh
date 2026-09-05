@@ -93,6 +93,9 @@ check "the backup job and the database run the identical postgres image"
 inspect apk-mount-readonly
 check "the control plane mounts the APK directory read-only"
 
+inspect catalog-dir-writable
+check "the catalog directory is writable and is not the DPC's own"
+
 inspect probes
 check "the control plane declares startup, readiness and liveness probes"
 

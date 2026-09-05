@@ -493,7 +493,37 @@ input[type="checkbox"] { width: auto; min-height: auto; }
 .switch input:checked::after { transform: translateX(22px); background: var(--accent-text); }
 .switch input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* The same switch with no label beside it: the row's own `.label` is the label, and the control is
+   the whole right-hand cell. Without this the flex `justify-content: space-between` pushes the
+   toggle away from a row that has no second child to push it against. */
+.switch-bare { flex: 0 0 auto; }
+
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* A labelled control that stacks — used where the label cannot sit beside the input, as a file
+   picker's does not. */
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > span { color: var(--text-dim); font-size: 0.85rem; }
+
+/* Prose that is a warning rather than an aside. Same size as `.muted`, different colour, because a
+   parent skimming a list has to be able to see which line is the one that needs them. */
+.warn { color: var(--warn); }
+.list .label small.warn { color: var(--warn); }
+
+/* A value meant to be selected and copied — an API key, once. Wraps rather than scrolls: a key that
+   runs off the right of a phone screen is one a parent copies half of. */
+.code-block {
+  display: block;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  word-break: break-all;
+  user-select: all;
+}
 
 /* A group of mutually exclusive choices, sized so three of them still fit a 360 px screen. */
 .seg { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }

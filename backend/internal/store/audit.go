@@ -9,6 +9,10 @@ const (
 	ActorParent = "PARENT"
 	ActorDevice = "DEVICE"
 	ActorSystem = "SYSTEM"
+	// ActorAPIKey is a parent's authority exercised without a parent present (FR-17.4). The actor id
+	// is still the parent's, because that is whose authority it is; this says nobody was at a
+	// keyboard.
+	ActorAPIKey = "API_KEY"
 )
 
 // Audit appends one entry. Every state-changing request writes one (FR-14); a mutation with no

@@ -3239,6 +3239,283 @@ which is precisely why FR-2.3 is the requirement it is.
 
 ---
 
+## Phase 12 — installing other applications (FR-16), and a credential that is not a browser (FR-17)
+
+The owner asked for one thing: *"add the feature to install other apk as well (for example
+muplay)"*, with two decisions taken up front — the APKs come from **files on the node plus an upload
+in the console and a REST endpoint**, everything reachable **with an API key as well, for the MCP**;
+and the install model is a **declared set per child**, not a queue of commands.
+
+The declared set is the decision that shaped everything else. A command queue would have been less
+code: press *install*, enqueue `INSTALL_APP`, the phone acks. It is also the shape that cannot
+answer "what is supposed to be on this phone" — a queue records what somebody asked for once, and
+the phone's actual contents drift away from it the first time a child uninstalls something. A
+declared set is re-evaluated on every sync, so it self-heals, it survives a re-enrollment, and the
+console's switch and the phone's contents are the same fact rather than two facts that agree for a
+while. It also means the whole feature reuses the machinery that was already there: the set rides in
+`desired-state` beside bedtime and the app rules, both engines compute it, and the shared vectors
+police them against each other.
+
+### 12.1 — which restrictions bind the device owner, measured on a phone rather than argued from the source
+
+The feature is unimplementable if the DPC's own hardening stops it, and three restrictions were
+candidates. All three are set by this product on a normal phone: `no_install_unknown_sources` and
+`no_uninstall_apps` are in `BASELINE_RESTRICTIONS`, so they are on before the phone has ever reached
+the server, and `no_install_apps` joins them whenever a parent turns child installs off.
+
+Reading `PackageInstallerService` would have been the cheap answer and the wrong method: the
+device-owner exemptions live there, they have moved between releases, and one of the two refusals
+below is delivered to a broadcast receiver rather than raised. So it was measured, on the emulator,
+with a real second application built from `android-dpc/fixture-app/` and staged into the test APK's
+assets. Measured 2026-09-05, API 37:
+
+| restriction | binds a device owner? | shape of the refusal |
+|---|---|---|
+| `no_install_unknown_sources` | **no** | — install succeeds with it in effect |
+| `no_install_apps` | **yes** | `SecurityException: User restriction prevents installing`, thrown **synchronously from `createSession`**, before a session exists |
+| `no_uninstall_apps` | **yes** | `STATUS_FAILURE_BLOCKED` (2) / `DELETE_FAILED_USER_RESTRICTED`, delivered to the **result receiver**, package still installed |
+
+Three consequences, and each is now a test rather than a paragraph:
+
+1. **`no_install_unknown_sources` is not lifted, and that is the load-bearing half of the table.**
+   It is the restriction in effect during every managed install this product will ever do. Had it
+   bound, FR-16 would have required opening the child's own sideloading path for the length of every
+   install on every sync. `noInstallUnknownSourcesDoesNotBindTheDeviceOwner`.
+2. **The other two must be lifted, so `HardeningManager.withoutRestrictions` exists** — and its
+   window is as narrow as it can be: the download happens outside it, and only the installer session
+   and the uninstall run inside. `ManagedAppApplier` gets that for free from the deferred-commit
+   shape FR-15 already had (`UpdateOutcome.Staged(identity, from, commit)` separates verifying from
+   committing), which is the second time that shape has paid for itself. A 30 MB download inside the
+   window would leave `no_install_apps` off for minutes.
+3. **The two refusals have two shapes, so a caller that guards only against exceptions reads a
+   blocked removal as a successful one.** That is not hypothetical: it is what
+   `noUninstallAppsBindsTheDeviceOwnerAndFailsAsAStatusNotAThrow` asserts, and it is why
+   `AndroidInstaller.uninstallAwaiting` waits for the status instead of returning when the call
+   returns.
+
+**Two of these tests originally asserted the opposite.** They were written from the spike's
+hypothesis — that a device owner is exempt from its own restrictions — and they went red the first
+time the layer ran against a device, with `SecurityException: User restriction prevents installing`
+on a line that expected `STATUS_SUCCESS`. The implementation was already right (the lift was written
+because the design assumed the platform would bind); the *tests* were the artefact carrying the
+guess. They now assert the refusal, by name, and each says what to do on the day it stops failing:
+if the platform stops binding, the lift is unnecessary and should be **removed** rather than left
+open.
+
+The narrowness itself is a separate measurement, because "the lift can be closed before the commit"
+is a different claim from "the lift is needed at all":
+`theInstallRestrictionIsCheckedWhenTheSessionOpensAndNotAtCommit` opens the session with the
+restriction lifted, puts it **back on before `session.commit()`**, and requires the install to
+succeed anyway. If the platform re-checked at commit, the narrow window would produce
+`INSTALL_FAILED_USER_RESTRICTED` on any phone whose parent had turned child installs off, and the
+applier would retry it forever.
+
+**A third test was wrong in a way that only a whole-class run could show, and it is the more
+instructive one.** `aDeclaredAppIsInstalledThenUpgradedThenWithdrawn` withdrew the declaration with a
+raw `PackageInstaller.uninstall`, and came back `STATUS_FAILURE_BLOCKED` (2) — because the baseline
+had `no_uninstall_apps` in effect by then, exactly as the table above says it would. The test was
+asserting the product's behaviour while bypassing the product's own recipe for it. It now withdraws
+through `HardeningManager.withoutRestrictions`, the same call `ManagedAppApplier` makes, and then
+asserts the restriction is **back** afterwards — so the test measures the lift rather than routing
+around it. This is the shape a test is most likely to hide: run first, before anything has applied
+the baseline, it passes. It only fails once something else in the class has hardened the phone,
+which makes it look like flakiness or like a bad neighbour rather than like a wrong test.
+
+The same flaw was in the class's own `@Before`: it removed a leftover fixture with a raw uninstall
+under `runCatching`, so on a device where a previous aborted run had left both the fixture installed
+**and** `no_uninstall_apps` set, the cleanup failed silently and the first assertion then reported
+*"the fixture is not installed yet and is already a removal candidate"* — a message about the
+product, produced entirely by the harness. `removeAnyLeftoverFixture()` now clears the restriction,
+uninstalls, and **fails the run** if the leftover survives, on the ground that a class which cannot
+establish its own preconditions is measuring the state a previous run left rather than the one it
+set up.
+
+Final state, measured 2026-09-05 on API 37: all six tests green in one run of the class
+(`OK (6 tests)`), after one earlier attempt was aborted by the emulator fault described below.
+
+**Getting that run required fixing the harness, and the bug it had is the same defect class this
+document keeps recording: a readiness check that passes having checked the wrong thing.**
+`tests/android/instrumented.sh` waited for `sys.boot_completed`, slept ten seconds, and blindly sent
+`input keyevent 82`. On this emulator user 0 reaches `RUNNING_UNLOCKED` about **twenty seconds after**
+that property flips — and the package service answers earlier still, so every readiness signal the
+script had was satisfied while credential-encrypted storage was shut. Tests then failed in two shapes,
+neither of which says "locked":
+
+* anything opening `SharedPreferences` died with *"SharedPreferences in credential encrypted storage
+  are not available until after user (id 0) is unlocked"*, which reads as a defect in the encrypted
+  store;
+* `ActivityScenario.launch(RecoveryActivity::class.java)` died with *"Unable to resolve activity for:
+  Intent { … cmp=io.github.helios57.familyguard.**test**/…RecoveryActivity }"*, which reads as a
+  manifest or packaging problem and sends you to inspect a manifest that is correct. It is neither.
+  `ActivityInvoker.getIntentForActivity` builds the intent against the **target** context, calls
+  `resolveActivity`, and **on null silently rebuilds it against the TEST context** — which can never
+  resolve, because the activity is not in that APK. A non-`directBootAware` activity does not resolve
+  while the user is locked, so the null *is* the lock, and the message you get is about the fallback.
+  Disassembling `androidx.test:monitor:1.8.0` was the only way to see that; the stack trace names
+  neither the lock nor the fallback.
+
+Calibrated both ways on the same tree, no other change: `StatusScreenTest` failed **4/4 on four
+consecutive runs** without the wait and passed **4/4** with it. `wait_for_unlocked_user` now runs
+before pass 1 and after the reboot, and reports **NOT MEASURED** rather than red if the user never
+unlocks — because "the device was never ready" and "the product is broken" must not arrive as the
+same colour.
+
+**The emulator on this host is separately a false-red generator, and its failures also name the
+product.** `surfaceflinger` aborts in its `RegionSampling` thread with
+`Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma` — a host-emulator/guest-image GL
+feature mismatch, nothing to do with this repository — and takes `system_server` with it, which
+re-locks the user and starts the cycle above again. Measured: every ~45 s by default, and about every
+five minutes with `com.android.systemui` disabled, which is what made a clean run reachable at all
+(SystemUI is what asks for region sampling; none of these tests use it). `-gpu swiftshader_indirect`,
+`-feature -Vulkan`, `-feature -GLDMA,-GLDMA2` and a cold boot each changed nothing. So an
+instrumented result from this host is evidence only if the run completed without
+`INSTRUMENTATION_ABORTED` and executed the expected number of testcases — the harness already counts
+them, and a truncated run reports **NOT MEASURED**. A gradle result of *12 of 24 tests, one failure,
+empty failure message* is that truncation, not a red.
+
+The final green: `pass 1 — provisioned state: gradle rc=0, testcases executed=24`, `pass 2 — as the
+boot left it: … executed=1`, `RESULT PASS provisioned and after a real reboot`, 2026-09-05, API 37.
+
+**So the harness had to learn the difference between a dead platform and a red test — and the first
+version of that net was measured swallowing a real red.** `pass()` already turned an *adb* dropout
+into NOT MEASURED, but adb stays perfectly healthy while `system_server` dies: gradle reports failing
+tests, and the XML holds a truncated run. The new net reads the run's own output for
+`Can't find service:` / `Transport endpoint is not connected` — taken from the output rather than
+from the device afterwards, because the platform is back inside twenty seconds and by then the
+evidence is gone.
+
+Calibrated with a deliberate `Assert.fail` in the first class pass 1 runs:
+
+| # | state | expected | measured |
+|---|---|---|---|
+| CAL H1 | broken test, platform also died in the same run | FAIL | **NOT MEASURED — the net swallowed the red.** The whole point of the layer, lost to its own safety net |
+| CAL H2 | same break, after `messaged_failure_count` was added | FAIL | FAIL, printing *"1 failing testcase(s) carry a message, so this is a red and not a dead platform"* |
+| CAL H3 | break removed | PASS | PASS, 24 + 1 testcases |
+| CAL H4 | the counter, against an XML holding one real failure and one crash-truncated one | 1 | 1 |
+
+CAL H1 is the one to keep. **A net that catches genuine failures is worse than no net**, and it took
+a calibration to see it: the run *looked* correctly classified, because the platform really had died.
+AGP writes the testcase it was interrupted in as `<failure></failure>` — no message, no stack — while
+a real assertion writes the throwable. That is the whole discriminator, and a message-carrying
+failure now wins over the crash signature.
+
+Three consecutive runs of the two device layers, unchanged, show all three verdicts in order:
+`NOT MEASURED (the platform died under pass 1)`, then `NOT MEASURED (pass 1 passed without running
+WipeabilityTest)` — the pre-existing per-class count guard catching a truncation gradle had called
+success — then `PASS` for both layers. A two-valued harness would have reported those first two runs
+as reds against FR-16.
+
+### 12.2 — the JVM calibration, including one break that proved a test binds to nothing
+
+`ManagedAppApplierTest` drives the applier with every dependency a function, so the whole convergence
+decision runs off a device: a `Phone` harness records what restrictions were in effect **at the
+moment** each half ran, which is the only way to assert a narrow window. Asserting on the gateway's
+final state cannot tell a lift that closed immediately from one that stayed open for the whole
+download.
+
+| # | break | expected | measured |
+|---|---|---|---|
+| CAL 1a | removal set `installedByThisApp().plus(keep).filterTo(…) { it !in keep }` | red | **green — the break was a no-op.** Adding `keep` and then filtering `keep` out is the original set. A calibration that changes nothing measures nothing, and it read exactly like a test that does not bind |
+| CAL 1b | removal set `installedByThisApp().toSortedSet()` — remove the `it !in keep` filter | red | 2 red |
+| CAL 1c | removal set always empty | red | 3 red |
+| CAL 2 | `withoutRestrictions` restores `keys` (what it was asked to lift) instead of `lifted` (what it read back as actually in effect) | red | 3 red |
+| CAL 3 | `AppUpdater` check 4 disabled — accept an archive whose package is not the one that was asked for | red | 3 red |
+| CAL M1 | the catalog volume mounted `readOnly: true` | red | 1 red, naming the mount |
+| CAL M2 | the catalog volume not mounted at all | red | 1 red |
+| CAL M3 | `APK_DIR` pointed at the read-only DPC directory | red | 1 red |
+| CAL M4 | `APK_DIR` unset | **green, and say why** | green, printing *"APK\_DIR is unset: this deployment hosts no application catalog, nothing to check"* |
+| CAL C1 | `input[type=file] { min-height: 30px; font-size: 13px }` | red | 4 messages: two from the generic 360 px sweep and two naming the upload control |
+| CAL C2 | the mobile guard's seed withholds the catalog upload | red | red — *"the catalog sheet lists 0 builds … the row layout is NOT MEASURED"* |
+
+**CAL 1 is the one worth reading.** `it never removes a package it did not install` is the
+assertion that keeps a withdrawn declaration from reaching an app the child installed, and it is the
+most important thing in the class. Calibration says **it binds to nothing at the JVM layer**: the
+applier is only ever *handed* the set of packages this app installed, so there is no input that
+makes it reach outside that set, and the two breaks that did go red went red on the *other* two
+tests. The doc comment now says so, and points at the control that does bind —
+`ManagedInstallTest.theRemovalCandidatesAreOnlyWhatThisAppInstalled`, which measures
+`getInstallSourceInfo` on a device with a positive control (the phone reports more than one package)
+and an assertion that the returned set is a strict subset. A guard defined, unit-tested and never
+actually exercised is the defect class this repository keeps finding; a guard whose unit test cannot
+fail is the same defect with a green next to it.
+
+CAL 1a is worth keeping in the table for the opposite reason. It is a calibration that failed to
+calibrate, and for a few minutes it read as "this test does not bind" — which happened to be the
+right conclusion, reached from a break that could not have shown it. **A break that changes no
+behaviour proves nothing about the test, in either direction.**
+
+### 12.3 — two encodings of one number, and the seam that pays for it
+
+The catalog stores each APK's SHA-256 as **hex**, because that is what every other tool prints:
+`sha256sum`, `apksigner`, the console, an operator comparing two lines by eye. The device compares
+against **base64url unpadded**, because that is what `/device/apk-info` already publishes and what
+the DPC already computes for its own self-update.
+
+Two encodings of one number is a smell, and the choice was where to pay for it. `resolve.go`'s
+`checksumB64` converts at the one seam where the policy is built, so the phone has exactly one
+comparison to make and the operator has exactly one readable digest. A row whose stored digest does
+not decode to 32 bytes is **dropped from the policy** rather than sent with an empty checksum —
+because the Kotlin engine's `normalizeManagedApps` drops an entry with an empty checksum anyway, and
+one reason in one place beats the same outcome reached twice.
+
+### 12.4 — the console, and a layout guard that measured a card it never saw
+
+Three new surfaces: the *Apps you install* card with a switch per package, the catalog sheet
+(upload, scan the node's folder, delete a build), and the API-keys card with the one-time token
+reveal. All of it in the same hand-written vanilla JS under `script-src 'self'`.
+
+`TestConsoleRendersOnAPhone` is the guard that measures a rendered 360 px page, and it was **green on
+all of it before any of it was drawn.** The card only renders switches when the deployment has a
+catalog, `newHarness(t)` sets no `APK_DIR`, and `seedAFamilyWorthLookingAt` registered nothing — so
+the Apps screen carried a single line of prose where the switch list belongs, and the suite reported
+a measured layout for a card it had never seen. The fix is two lines: the guard's harness is now
+`catalogHarness(t)`, and the seed uploads the same fixture APK the catalog suite uses, with a label
+long enough to be the string that overflows.
+
+The catalog sheet is measured separately, because it is not in the DOM until it opens and because it
+holds the one control in this console the browser draws for itself: `<input type="file">`. Its
+button's size comes from the platform, not the stylesheet, and it is the single control most likely
+to break the 44 px promise. Both halves are asserted — the generic sweep and a named check that says
+*"the APK file input is 41 px tall … picking a file is the first act of adding an app"* — and the
+sheet's row count is a `Fatal`, so a sheet with nothing in it is NOT MEASURED rather than a pass.
+
+### 12.5 — the writable directory, and the mistake the manifest guard exists to catch
+
+`APK_DIR` is the only path this process writes to, in a container whose root filesystem is read-only
+and which runs as uid 65532. The obvious way to configure it is to copy the stanza above it — and
+that stanza carries `readOnly: true`, because it holds the DPC whose checksum the provisioning QR
+was computed from and nothing may overwrite it.
+
+That copy produces a pod that never becomes ready, with a message about a directory nobody changed.
+So `Load()` checks it at startup (stat, is-a-directory, and a probe file actually created and
+removed) rather than at the first upload, and `tests/manifests/inspect.py catalog-dir-writable`
+checks the *manifest*: a mount exists for `APK_DIR`, it is not `readOnly`, and it is not the same
+volume as `APK_PATH`. It reports and returns rather than failing when `APK_DIR` is unset, because a
+deployment that hosts no applications is correct — CAL M4 above is the calibration that the skip is
+a skip and not a green.
+
+The `hostPath` is `type: Directory`, not `DirectoryOrCreate`, for the same reason: kubelet creates a
+missing one owned by root at 0755, the startup check then refuses, and the cause would be four
+characters in a manifest.
+
+### 12.6 — what FR-17 deliberately does not have
+
+An API key is a second spelling of the same parent: same family, same role, no scopes. The
+alternative — a permission model with two independent sources of truth — fails by granting something
+in one and not the other, and is discovered by whoever could not do their job.
+
+- **No expiry.** The realistic holder is a long-running MCP server, so any expiry offered is either
+  set to "never" (a field that does nothing) or set and forgotten (an outage whose cause is a date).
+  Revocation is the control that matters; it is checked in the same `WHERE` clause that resolves the
+  key, so there is no window between the lookup and the check; and `last_used_at` is what tells you
+  which key to revoke.
+- **No route to a credential.** `requireInteractiveParent` refuses a key on session creation, parent
+  creation, and key creation and revocation. A stolen key cannot grow itself a second foothold that
+  outlives its own revocation.
+- **No deletion by default.** Revoked keys stay listed, because "was this ever used, and when did it
+  stop" is the first question after a laptop goes missing, and the audit log cannot answer it alone
+  — it records the parent a key acted *as*.
+
 ## Traceability
 
 Each requirement maps to the phase that implements it and the test that proves it.
@@ -3278,6 +3555,8 @@ proven.
 | FR-13.4 phone states its own condition | 5.9 | `DeviceStatusTest` — 25 cases over the pure composer, including the three the console cannot see: a policy received but never applied, a device out of contact, and a phone that cannot measure usage at all. The last is the one this row exists for: `NOT_MEASURED` is a third level, carried through `ForegroundReader.spans()` returning `null` rather than an empty list, and asserted to render as prominently as a fault rather than as a zero. `SynchronizerTest` (4 tests) pins the contact stamp to receipt and nowhere else, so the line cannot report a week-old phone as freshly synced. Three independent guards keep the device token off a screen anyone holding the phone can read — the composer's output, a source scan (`ManifestAndPlatformCallsTest` *the status block never reads the device token*), and the rendered view tree (`StatusScreenTest`). Instrumented `UsageAccessTest` revokes the real `GET_USAGE_STATS` appop, **reads the mode back from the system**, and asserts the screen says so — the appop cannot be granted by `setPermissionGrantState` and a revoked one makes `queryEvents` return nothing rather than throw, which is the silent zero this whole requirement is about. **Calibrated 38/38** (32 JVM, 6 on-device) — see the record above |
 | FR-14 audit | 3.7 | e2e `TestEveryAuditedActionIsWritten` — all **21** audited actions driven over real HTTP (17 parent-side, 4 device-side), each asserted as a row naming actor type, actor id, action, target type and target *id*; nine detail keys checked so the row says *which* change was made; every row required to carry a `request_id`; and a source-scanning ratchet over `internal/httpapi/*.go` that fails when a 22nd action appears. **Calibrated 6/6** — see the record below. Also `TestRecoveryAndAudit`, which checks ten action names |
 | FR-15 keeping the DPC current | 9 | three layers, and only the third can see it. JVM: `AppUpdaterTest` drives the five checks with every dependency a function, so the whole decision runs off a device. Server + e2e: `TestAPKInfoDescribesTheFileThisServerWillHandOver`, `TestAPKInfoIsNotFoundWhenTheServerHostsNoDPC`, `TestAParentCanTellThePhoneToUpdateItself`, `TestTheHeartbeatReportsWhichDPCThePhoneIsRunning`, `TestAnAPKReplacedUnderTheRunningServerIsRefused`, and `apk_test.go`'s seven over the bytes themselves. Device: **`tests/android/self-update.sh` + `TestTheServerReplacesTheDPCOnARealDevice`**, which builds the DPC twice from one tree, enrols the lower build against a real server and watches the higher one arrive — passed 2026-09-05 in 176 s, with the phone's own log as the second witness (`wake:connected: commands done=1` → `PackageManager: installation completed` → `FamilyGuardUpdate: self-update installed`) on a device whose adb had been off since the first policy applied. Its negative control is the same command again, declined as "already running". `tests/android/calibrate-update.sh` breaks each of the five checks in turn and records the refusal. **Not proven anywhere:** the update path on a phone that is not an emulator, and the `MY_PACKAGE_REPLACED` restart on an OEM build that kills background starts more aggressively than AOSP |
+| FR-16 managed applications | 12 | four layers, and the one that decided the design is the device. Server: `TestAnUploadedAPKIsReadRatherThanDescribed`, `TestMultipartAndRawBodyAgree`, `TestTwoVersionsOfOneAppBothLive`, `TestTheSameFileTwiceIsNotAConflict`, `TestAPackageSignedByAnotherKeyIsRefused`, `TestWhatIsNotAnAPKIsRefusedAsSuch`, `TestTheDirectoryOnTheNodeIsAlsoASource`, `TestADeploymentWithoutAnAPKDirSaysSo`, `TestDeletingAnAppRemovesItsFileToo`, `TestAManagedAppDownloadNeedsADeviceCredential`, plus `internal/apk`'s parser tests. Policy: `TestDeclaringAnAppReachesThePhoneAsSomethingItCanFetch`, `TestAnUpgradeIsANewVersionInTheSamePolicy`, `TestWithdrawingAnAppRemovesItFromThePolicy`, `TestDeclaringSomethingTheCatalogDoesNotHaveIsRefused`, `TestTheConsoleSeesADeclarationWithNothingBehindIt`; the shared vectors carry three new cases so both engines normalise a declared set identically. JVM: `ManagedAppApplierTest` (12) and `AppUpdaterTest`'s four new cases. **Device: `ManagedInstallTest`** — the restriction matrix in [12.1](#121--which-restrictions-bind-the-device-owner-measured-on-a-phone-rather-than-argued-from-the-source), the install→upgrade→withdraw lifecycle against a real second application, and `getInstallSourceInfo` as a real filter. **Calibrated 11/11** ([12.2](#122--the-jvm-calibration-including-one-break-that-proved-a-test-binds-to-nothing)), and the record includes one assertion that binds to nothing at the JVM layer and says so. **Not proven:** any of it on hardware rather than an emulator, and the API 29 floor |
+| FR-17 API keys | 12 | e2e `TestAnAPIKeyIsTheSameParent`, `TestTheTokenIsShownOnceAndNeverAgain`, `TestRevokingAKeyEndsItImmediately`, `TestAKeyCannotMintACredential`, `TestAKeyThatWasNeverIssuedIsNotDistinguishable`, `TestOnlyThePrimaryAdminMintsKeys`, `TestAKeyNeedsAName`, `TestTheAuditTrailTellsAScriptFromAPerson` — the last two of those are the ones that matter most: a key must not be able to mint a credential that outlives its own revocation, and an audit row must say a script acted rather than a person |
 | NFR-1/2 auth | 2.4, 3.x | e2e `TestBrowserSignInJourney`, `TestBrowserSignInFailureModes`, `TestIDTokenIsVerifiedNotTrusted`, `TestSessionTokensAreForgeryResistant`, `TestOneDeviceCannotActOnAnother`; `TestVerifyRejects`, `TestVerifyAcceptsGenuineToken`, `TestVerifyDoesNotFetchJWKSPerToken`, `TestUnknownKidRefreshIsRateLimited`, `TestRefreshKeepsCacheOnBadDocument`, `TestSessionRejects`, `TestSessionRoundTrip`, `TestSessionIssuerRefusesWeakKey`, `TestBearerToken` |
 | NFR-3 no fabricated success | 3.6, 5.3, 5.5 | `TestEveryReadFailureIsReported`; and the mutation sweeps — 5.3's 39 breaks and 5.5's 39, each one a place the code could have believed a return code instead of reading state back |
 | NFR-4 persistence | 2.2 | e2e `TestStateSurvivesRestart` |

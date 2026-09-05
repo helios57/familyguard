@@ -6,7 +6,12 @@
 # Android
 /android-dpc/.gradle/
 /android-dpc/build/
-/android-dpc/app/build/
+# Every Gradle MODULE's output, not just `app`'s. This was `/android-dpc/app/build/` until a second
+# module (`fixture-app`, whose APK the managed-install tests install) appeared and its build
+# directory turned up as 60-odd untracked files in the first `git status` after it was added. A
+# per-module line is a list that has to be maintained by whoever adds the next module, and the cost
+# of forgetting is build output in the history.
+/android-dpc/*/build/
 # The Kotlin compiler's incremental-build state. Written by every Gradle invocation, machine-local,
 # and large enough that committing it once makes every later diff unreadable.
 /android-dpc/.kotlin/
@@ -14,6 +19,13 @@
 /android-dpc/.idea/
 *.iml
 *.apk
+# ...except the signed fixtures the APK reader's own tests parse. They are checked in because the
+# tests READ them — `apk_test.go` fails with "no such file" without them — and because regenerating
+# them needs `apksigner` and a keystore, neither of which a Go CI job has. The global `*.apk` above
+# had already swallowed them once: `git add` staged the two `.idsig` sidecars and silently left the
+# archives behind, which is a tree that passes locally, where the files exist, and fails in CI with
+# an error naming a regeneration script CI cannot run.
+!/backend/internal/apk/testdata/*.apk
 *.aab
 *.keystore
 *.jks

@@ -12,7 +12,10 @@
   "vectors": [
     {
       "name": "idle: nothing configured, nothing enforced",
-      "requirements": ["FR-6.1", "FR-6.3"],
+      "requirements": [
+        "FR-6.1",
+        "FR-6.3"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -30,8 +33,16 @@
           "blocked_domains": []
         },
         "installed": [
-          {"package": "com.example.game", "system": false, "new_since_baseline": false},
-          {"package": "com.android.dialer", "system": true, "new_since_baseline": false}
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          }
         ],
         "used_minutes_today": 12,
         "parent_lock": false,
@@ -56,10 +67,13 @@
         "policy_version": 7
       }
     },
-
     {
       "name": "bedtime: inside the window suspends non-exempt apps",
-      "requirements": ["FR-4.1", "FR-4.2", "FR-5.5"],
+      "requirements": [
+        "FR-4.1",
+        "FR-4.2",
+        "FR-5.5"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -73,14 +87,32 @@
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
-          "allowed_packages": ["com.example.reader"],
+          "allowed_packages": [
+            "com.example.reader"
+          ],
           "blocked_domains": []
         },
         "installed": [
-          {"package": "com.example.game", "system": false, "new_since_baseline": false},
-          {"package": "com.example.reader", "system": false, "new_since_baseline": false},
-          {"package": "com.android.dialer", "system": true, "new_since_baseline": false},
-          {"package": "com.android.settings", "system": true, "new_since_baseline": false}
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.example.reader",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.settings",
+            "system": true,
+            "new_since_baseline": false
+          }
         ],
         "used_minutes_today": 30,
         "parent_lock": false,
@@ -90,16 +122,19 @@
       "expect": {
         "locked": false,
         "suspend_reason": "BEDTIME",
-        "suspended_packages": ["com.example.game"],
+        "suspended_packages": [
+          "com.example.game"
+        ],
         "hidden_packages": [],
         "pending_approval": [],
         "next_change_at": "2026-08-18T07:00:00+02:00"
       }
     },
-
     {
       "name": "bedtime: leaving the window un-suspends — the state is not one-way",
-      "requirements": ["FR-4.2"],
+      "requirements": [
+        "FR-4.2"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -113,14 +148,32 @@
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
-          "allowed_packages": ["com.example.reader"],
+          "allowed_packages": [
+            "com.example.reader"
+          ],
           "blocked_domains": []
         },
         "installed": [
-          {"package": "com.example.game", "system": false, "new_since_baseline": false},
-          {"package": "com.example.reader", "system": false, "new_since_baseline": false},
-          {"package": "com.android.dialer", "system": true, "new_since_baseline": false},
-          {"package": "com.android.settings", "system": true, "new_since_baseline": false}
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.example.reader",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.settings",
+            "system": true,
+            "new_since_baseline": false
+          }
         ],
         "used_minutes_today": 30,
         "parent_lock": false,
@@ -135,10 +188,11 @@
         "next_change_at": "2026-08-17T21:00:00+02:00"
       }
     },
-
     {
       "name": "bedtime: the boundary minute is inside the window, the end minute is outside",
-      "requirements": ["FR-4.1"],
+      "requirements": [
+        "FR-4.1"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -155,7 +209,13 @@
           "allowed_packages": [],
           "blocked_domains": []
         },
-        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          }
+        ],
         "used_minutes_today": 0,
         "parent_lock": false,
         "critical_packages": [],
@@ -163,14 +223,18 @@
       },
       "expect": {
         "suspend_reason": "BEDTIME",
-        "suspended_packages": ["com.example.game"],
+        "suspended_packages": [
+          "com.example.game"
+        ],
         "next_change_at": "2026-08-18T07:00:00+02:00"
       }
     },
-
     {
       "name": "bedtime: the end minute is already outside the window",
-      "requirements": ["FR-4.1", "FR-4.2"],
+      "requirements": [
+        "FR-4.1",
+        "FR-4.2"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -187,7 +251,13 @@
           "allowed_packages": [],
           "blocked_domains": []
         },
-        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          }
+        ],
         "used_minutes_today": 0,
         "parent_lock": false,
         "critical_packages": [],
@@ -199,10 +269,11 @@
         "next_change_at": "2026-08-17T21:00:00+02:00"
       }
     },
-
     {
       "name": "bedtime: the minute before the end is still inside the window",
-      "requirements": ["FR-4.1"],
+      "requirements": [
+        "FR-4.1"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -219,7 +290,13 @@
           "allowed_packages": [],
           "blocked_domains": []
         },
-        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          }
+        ],
         "used_minutes_today": 0,
         "parent_lock": false,
         "critical_packages": [],
@@ -227,14 +304,18 @@
       },
       "expect": {
         "suspend_reason": "BEDTIME",
-        "suspended_packages": ["com.example.game"],
+        "suspended_packages": [
+          "com.example.game"
+        ],
         "next_change_at": "2026-08-17T07:00:00+02:00"
       }
     },
-
     {
       "name": "bedtime: start equal to end is disabled, not a 24-hour lockdown",
-      "requirements": ["FR-4.1", "NFR-6"],
+      "requirements": [
+        "FR-4.1",
+        "NFR-6"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -251,7 +332,13 @@
           "allowed_packages": [],
           "blocked_domains": []
         },
-        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          }
+        ],
         "used_minutes_today": 0,
         "parent_lock": false,
         "critical_packages": [],
@@ -263,10 +350,12 @@
         "next_change_at": ""
       }
     },
-
     {
       "name": "bedtime: the window survives the end of daylight saving time",
-      "requirements": ["FR-4.1", "FR-4.3"],
+      "requirements": [
+        "FR-4.1",
+        "FR-4.3"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -283,7 +372,13 @@
           "allowed_packages": [],
           "blocked_domains": []
         },
-        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          }
+        ],
         "used_minutes_today": 0,
         "parent_lock": false,
         "critical_packages": [],
@@ -291,14 +386,17 @@
       },
       "expect": {
         "suspend_reason": "BEDTIME",
-        "suspended_packages": ["com.example.game"],
+        "suspended_packages": [
+          "com.example.game"
+        ],
         "next_change_at": "2026-10-25T07:00:00+01:00"
       }
     },
-
     {
       "name": "quota: reaching the daily limit suspends for the rest of the local day",
-      "requirements": ["FR-3.4"],
+      "requirements": [
+        "FR-3.4"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -316,8 +414,16 @@
           "blocked_domains": []
         },
         "installed": [
-          {"package": "com.example.game", "system": false, "new_since_baseline": false},
-          {"package": "com.android.dialer", "system": true, "new_since_baseline": false}
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          }
         ],
         "used_minutes_today": 60,
         "parent_lock": false,
@@ -326,17 +432,20 @@
       },
       "expect": {
         "suspend_reason": "QUOTA",
-        "suspended_packages": ["com.example.game"],
+        "suspended_packages": [
+          "com.example.game"
+        ],
         "quota_minutes": 60,
         "used_minutes": 60,
         "remaining_minutes": 0,
         "next_change_at": "2026-08-18T00:00:00+02:00"
       }
     },
-
     {
       "name": "quota: one minute short of the limit enforces nothing",
-      "requirements": ["FR-3.4"],
+      "requirements": [
+        "FR-3.4"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -353,7 +462,13 @@
           "allowed_packages": [],
           "blocked_domains": []
         },
-        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          }
+        ],
         "used_minutes_today": 59,
         "parent_lock": false,
         "critical_packages": [],
@@ -366,10 +481,12 @@
         "next_change_at": "2026-08-18T00:00:00+02:00"
       }
     },
-
     {
       "name": "quota and bedtime together: the earlier edge is the next change",
-      "requirements": ["FR-3.4", "FR-4.1"],
+      "requirements": [
+        "FR-3.4",
+        "FR-4.1"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -386,7 +503,13 @@
           "allowed_packages": [],
           "blocked_domains": []
         },
-        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          }
+        ],
         "used_minutes_today": 90,
         "parent_lock": false,
         "critical_packages": [],
@@ -394,15 +517,18 @@
       },
       "expect": {
         "suspend_reason": "BEDTIME",
-        "suspended_packages": ["com.example.game"],
+        "suspended_packages": [
+          "com.example.game"
+        ],
         "remaining_minutes": 0,
         "next_change_at": "2026-08-18T00:00:00+02:00"
       }
     },
-
     {
       "name": "app rules: a blocked app is suspended and hidden",
-      "requirements": ["FR-5.2"],
+      "requirements": [
+        "FR-5.2"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -415,13 +541,23 @@
           "dns_host": "family.adguard-dns.com",
           "timezone": "Europe/Zurich",
           "version": 7,
-          "blocked_packages": ["com.example.game"],
+          "blocked_packages": [
+            "com.example.game"
+          ],
           "allowed_packages": [],
           "blocked_domains": []
         },
         "installed": [
-          {"package": "com.example.game", "system": false, "new_since_baseline": false},
-          {"package": "com.android.dialer", "system": true, "new_since_baseline": false}
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          }
         ],
         "used_minutes_today": 0,
         "parent_lock": false,
@@ -430,14 +566,20 @@
       },
       "expect": {
         "suspend_reason": "",
-        "suspended_packages": ["com.example.game"],
-        "hidden_packages": ["com.example.game"]
+        "suspended_packages": [
+          "com.example.game"
+        ],
+        "hidden_packages": [
+          "com.example.game"
+        ]
       }
     },
-
     {
       "name": "critical whitelist survives bedtime, an exhausted quota, an explicit block and a parent lock",
-      "requirements": ["FR-5.5", "NFR-6"],
+      "requirements": [
+        "FR-5.5",
+        "NFR-6"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -450,20 +592,46 @@
           "dns_host": "family.adguard-dns.com",
           "timezone": "Europe/Zurich",
           "version": 7,
-          "blocked_packages": ["com.android.dialer", "com.android.settings", "com.oem.dialer"],
+          "blocked_packages": [
+            "com.android.dialer",
+            "com.android.settings",
+            "com.oem.dialer"
+          ],
           "allowed_packages": [],
           "blocked_domains": []
         },
         "installed": [
-          {"package": "com.android.dialer", "system": true, "new_since_baseline": false},
-          {"package": "com.android.settings", "system": true, "new_since_baseline": false},
-          {"package": "com.oem.dialer", "system": true, "new_since_baseline": false},
-          {"package": "com.example.game", "system": false, "new_since_baseline": true},
-          {"package": "com.google.android.youtube", "system": false, "new_since_baseline": false}
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.settings",
+            "system": true,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.oem.dialer",
+            "system": true,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": true
+          },
+          {
+            "package": "com.google.android.youtube",
+            "system": false,
+            "new_since_baseline": false
+          }
         ],
         "used_minutes_today": 400,
         "parent_lock": true,
-        "critical_packages": ["com.oem.dialer"],
+        "critical_packages": [
+          "com.oem.dialer"
+        ],
         "now": "2026-08-17T23:30:00+02:00"
       },
       "expect": {
@@ -488,10 +656,14 @@
         ]
       }
     },
-
     {
       "name": "youtube killswitch on: apps, dns and browser blocklist together",
-      "requirements": ["FR-7.1", "FR-7.2", "FR-7.3", "FR-6.4"],
+      "requirements": [
+        "FR-7.1",
+        "FR-7.2",
+        "FR-7.3",
+        "FR-6.4"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -506,11 +678,22 @@
           "version": 7,
           "blocked_packages": [],
           "allowed_packages": [],
-          "blocked_domains": ["Bad.Example.COM.", "https://tracker.example/path"]
+          "blocked_domains": [
+            "Bad.Example.COM.",
+            "https://tracker.example/path"
+          ]
         },
         "installed": [
-          {"package": "com.google.android.youtube", "system": false, "new_since_baseline": false},
-          {"package": "com.example.game", "system": false, "new_since_baseline": false}
+          {
+            "package": "com.google.android.youtube",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          }
         ],
         "used_minutes_today": 0,
         "parent_lock": false,
@@ -549,10 +732,12 @@
         ]
       }
     },
-
     {
       "name": "youtube killswitch off: the inverse restores every layer",
-      "requirements": ["FR-7.4", "FR-6.4"],
+      "requirements": [
+        "FR-7.4",
+        "FR-6.4"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -567,11 +752,22 @@
           "version": 7,
           "blocked_packages": [],
           "allowed_packages": [],
-          "blocked_domains": ["Bad.Example.COM.", "https://tracker.example/path"]
+          "blocked_domains": [
+            "Bad.Example.COM.",
+            "https://tracker.example/path"
+          ]
         },
         "installed": [
-          {"package": "com.google.android.youtube", "system": false, "new_since_baseline": false},
-          {"package": "com.example.game", "system": false, "new_since_baseline": false}
+          {
+            "package": "com.google.android.youtube",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          }
         ],
         "used_minutes_today": 0,
         "parent_lock": false,
@@ -582,13 +778,17 @@
         "suspend_reason": "",
         "suspended_packages": [],
         "hidden_packages": [],
-        "blocked_domains": ["bad.example.com", "tracker.example"]
+        "blocked_domains": [
+          "bad.example.com",
+          "tracker.example"
+        ]
       }
     },
-
     {
       "name": "free-installation off: a new app waits for a parent, an allowed one does not",
-      "requirements": ["FR-5.4"],
+      "requirements": [
+        "FR-5.4"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -602,14 +802,32 @@
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
-          "allowed_packages": ["com.example.school"],
+          "allowed_packages": [
+            "com.example.school"
+          ],
           "blocked_domains": []
         },
         "installed": [
-          {"package": "com.example.game", "system": false, "new_since_baseline": true},
-          {"package": "com.example.school", "system": false, "new_since_baseline": true},
-          {"package": "com.example.preloaded", "system": false, "new_since_baseline": false},
-          {"package": "com.android.settings", "system": true, "new_since_baseline": false}
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": true
+          },
+          {
+            "package": "com.example.school",
+            "system": false,
+            "new_since_baseline": true
+          },
+          {
+            "package": "com.example.preloaded",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.settings",
+            "system": true,
+            "new_since_baseline": false
+          }
         ],
         "used_minutes_today": 0,
         "parent_lock": false,
@@ -618,8 +836,12 @@
       },
       "expect": {
         "suspend_reason": "",
-        "suspended_packages": ["com.example.game"],
-        "pending_approval": ["com.example.game"],
+        "suspended_packages": [
+          "com.example.game"
+        ],
+        "pending_approval": [
+          "com.example.game"
+        ],
         "hidden_packages": [],
         "allow_installs": false,
         "user_restrictions": [
@@ -634,10 +856,11 @@
         ]
       }
     },
-
     {
       "name": "free-installation on: new apps are inventoried, not blocked",
-      "requirements": ["FR-5.3"],
+      "requirements": [
+        "FR-5.3"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -655,8 +878,16 @@
           "blocked_domains": []
         },
         "installed": [
-          {"package": "com.example.game", "system": false, "new_since_baseline": true},
-          {"package": "com.example.preloaded", "system": false, "new_since_baseline": false}
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": true
+          },
+          {
+            "package": "com.example.preloaded",
+            "system": false,
+            "new_since_baseline": false
+          }
         ],
         "used_minutes_today": 0,
         "parent_lock": false,
@@ -679,10 +910,11 @@
         ]
       }
     },
-
     {
       "name": "tracking-only: measures everything, restrains nothing, still filters and hardens",
-      "requirements": ["FR-8"],
+      "requirements": [
+        "FR-8"
+      ],
       "input": {
         "settings": {
           "tracking_only": true,
@@ -695,13 +927,25 @@
           "dns_host": "family.adguard-dns.com",
           "timezone": "Europe/Zurich",
           "version": 9,
-          "blocked_packages": ["com.example.game"],
+          "blocked_packages": [
+            "com.example.game"
+          ],
           "allowed_packages": [],
-          "blocked_domains": ["bad.example.com"]
+          "blocked_domains": [
+            "bad.example.com"
+          ]
         },
         "installed": [
-          {"package": "com.example.game", "system": false, "new_since_baseline": true},
-          {"package": "com.google.android.youtube", "system": false, "new_since_baseline": false}
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": true
+          },
+          {
+            "package": "com.google.android.youtube",
+            "system": false,
+            "new_since_baseline": false
+          }
         ],
         "used_minutes_today": 400,
         "parent_lock": false,
@@ -744,10 +988,12 @@
         ]
       }
     },
-
     {
       "name": "tracking-only still honours an explicit parent lock",
-      "requirements": ["FR-8", "FR-9"],
+      "requirements": [
+        "FR-8",
+        "FR-9"
+      ],
       "input": {
         "settings": {
           "tracking_only": true,
@@ -764,7 +1010,13 @@
           "allowed_packages": [],
           "blocked_domains": []
         },
-        "installed": [{"package": "com.example.game", "system": false, "new_since_baseline": false}],
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          }
+        ],
         "used_minutes_today": 0,
         "parent_lock": true,
         "critical_packages": [],
@@ -776,10 +1028,11 @@
         "suspended_packages": []
       }
     },
-
     {
       "name": "a different filtering endpoint per child is honoured verbatim",
-      "requirements": ["FR-6.2"],
+      "requirements": [
+        "FR-6.2"
+      ],
       "input": {
         "settings": {
           "tracking_only": false,
@@ -804,6 +1057,221 @@
       },
       "expect": {
         "private_dns_host": "teen.example-dns.net"
+      }
+    },
+    {
+      "name": "managed apps: a declared set reaches the device, sorted and unchanged",
+      "requirements": [
+        "FR-16.3"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "managed_apps": [
+            {
+              "package_name": "net.muplay.player",
+              "version_code": 7,
+              "version_name": "1.4.0",
+              "checksum": "bXVwbGF5LWNoZWNrc3Vt",
+              "size": 4200000,
+              "url": "https://guard.example.com/api/v1/device/apps/net.muplay.player/7.apk"
+            },
+            {
+              "package_name": "com.example.reader",
+              "version_code": 2,
+              "version_name": "0.9",
+              "checksum": "cmVhZGVyLWNoZWNrc3Vt",
+              "size": 900000,
+              "url": "https://guard.example.com/api/v1/device/apps/com.example.reader/2.apk"
+            }
+          ]
+        },
+        "installed": [],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T14:00:00+02:00"
+      },
+      "expect": {
+        "managed_apps": [
+          {
+            "package_name": "com.example.reader",
+            "version_code": 2,
+            "version_name": "0.9",
+            "checksum": "cmVhZGVyLWNoZWNrc3Vt",
+            "size": 900000,
+            "url": "https://guard.example.com/api/v1/device/apps/com.example.reader/2.apk"
+          },
+          {
+            "package_name": "net.muplay.player",
+            "version_code": 7,
+            "version_name": "1.4.0",
+            "checksum": "bXVwbGF5LWNoZWNrc3Vt",
+            "size": 4200000,
+            "url": "https://guard.example.com/api/v1/device/apps/net.muplay.player/7.apk"
+          }
+        ],
+        "allow_installs": true
+      }
+    },
+    {
+      "name": "managed apps: an entry the phone could not act on is dropped, and one package keeps one version",
+      "requirements": [
+        "FR-16.3"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "managed_apps": [
+            {
+              "package_name": "net.muplay.player",
+              "version_code": 7,
+              "version_name": "1.4.0",
+              "checksum": "bXVwbGF5LWNoZWNrc3Vt",
+              "size": 4200000,
+              "url": "https://guard.example.com/api/v1/device/apps/net.muplay.player/7.apk"
+            },
+            {
+              "package_name": "net.muplay.player",
+              "version_code": 3,
+              "version_name": "1.1.0",
+              "checksum": "b2xkLWNoZWNrc3Vt",
+              "size": 4000000,
+              "url": "https://guard.example.com/api/v1/device/apps/net.muplay.player/3.apk"
+            },
+            {
+              "package_name": "com.example.nochecksum",
+              "version_code": 1,
+              "version_name": "1.0",
+              "checksum": "",
+              "size": 10,
+              "url": "https://guard.example.com/api/v1/device/apps/com.example.nochecksum/1.apk"
+            },
+            {
+              "package_name": "com.example.nourl",
+              "version_code": 1,
+              "version_name": "1.0",
+              "checksum": "Y2hlY2tzdW0",
+              "size": 10,
+              "url": ""
+            },
+            {
+              "package_name": "",
+              "version_code": 1,
+              "version_name": "1.0",
+              "checksum": "Y2hlY2tzdW0",
+              "size": 10,
+              "url": "https://guard.example.com/api/v1/device/apps//1.apk"
+            }
+          ]
+        },
+        "installed": [],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T14:00:00+02:00"
+      },
+      "expect": {
+        "managed_apps": [
+          {
+            "package_name": "net.muplay.player",
+            "version_code": 7,
+            "version_name": "1.4.0",
+            "checksum": "bXVwbGF5LWNoZWNrc3Vt",
+            "size": 4200000,
+            "url": "https://guard.example.com/api/v1/device/apps/net.muplay.player/7.apk"
+          }
+        ]
+      }
+    },
+    {
+      "name": "managed apps: declaring an app is not allowing it — bedtime still suspends it",
+      "requirements": [
+        "FR-16.3",
+        "FR-4.1"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "managed_apps": [
+            {
+              "package_name": "net.muplay.player",
+              "version_code": 7,
+              "version_name": "1.4.0",
+              "checksum": "bXVwbGF5LWNoZWNrc3Vt",
+              "size": 4200000,
+              "url": "https://guard.example.com/api/v1/device/apps/net.muplay.player/7.apk"
+            }
+          ]
+        },
+        "installed": [
+          {
+            "package": "net.muplay.player",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T22:30:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "BEDTIME",
+        "suspended_packages": [
+          "net.muplay.player"
+        ],
+        "managed_apps": [
+          {
+            "package_name": "net.muplay.player",
+            "version_code": 7,
+            "version_name": "1.4.0",
+            "checksum": "bXVwbGF5LWNoZWNrc3Vt",
+            "size": 4200000,
+            "url": "https://guard.example.com/api/v1/device/apps/net.muplay.player/7.apk"
+          }
+        ]
       }
     }
   ]

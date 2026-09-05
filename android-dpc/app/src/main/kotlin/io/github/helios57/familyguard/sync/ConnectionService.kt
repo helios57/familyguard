@@ -86,6 +86,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.net.URL
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -280,7 +281,7 @@ class ConnectionService : Service() {
         val synchronizer = Synchronizer(
             api = api,
             cache = EncryptedPolicyCache(this),
-            applier = deviceApplier(policy, credentials.serverUrl),
+            applier = deviceApplier(policy, credentials.serverUrl, managedAppApplier(api, policy)),
             recovery = RecoveryMode(recoveryStore.mode),
             telemetry = { telemetry() },
             // The quota has to bite on a phone with no signal, and the only number that is current
@@ -765,6 +766,53 @@ class ConnectionService : Service() {
      * every time the event stream drops, and a controller rebuilt with it would lose the handle to a
      * tone that is still playing — a phone that screams until somebody reboots it.
      */
+    /**
+     * The FR-16 pass, wired to this device's platform and this device's credential.
+     *
+     * Null when this app is not the device owner — there is nothing it could install, and an
+     * applier that reported a problem per declared app on a phone it does not manage would bury the
+     * one problem that matters, which [NoDeviceOwnerApplier] already states once.
+     */
+    private fun managedAppApplier(api: ApiClient, policy: DeviceOwnerPolicy?): StateApplier? {
+        if (policy == null) return null
+        val installer = AndroidInstaller(this)
+        return ManagedAppApplier(
+            hardening = policy.hardening,
+            installedVersion = { pkg -> installer.installed(pkg)?.versionCode },
+            installedByThisApp = installer::installedByThisApp,
+            stage = { app ->
+                AppUpdater(
+                    info = {
+                        ApkInfo(
+                            packageName = app.packageName,
+                            url = app.url,
+                            packageChecksum = app.checksum,
+                            size = app.size,
+                        )
+                    },
+                    // Authenticated, unlike the self-update download: the managed-app route is
+                    // device-authenticated, and `openDownload` is what refuses to put this
+                    // device's bearer on a URL that is not this deployment's.
+                    open = { url -> api.openDownload(url) },
+                    staging = { installer.staging(app.packageName) },
+                    identify = installer::identify,
+                    installed = installer::installed,
+                    // Throwing is the return channel here, and deliberately: `commit` is
+                    // `() -> Unit` because the self-update path hands it to the command
+                    // acknowledgement as an `after` hook, and a platform failure on THIS path has
+                    // to reach the applier's problem map. ManagedAppApplier catches it and records
+                    // the text against the package.
+                    install = { file, pkg ->
+                        installer.installAwaiting(file, pkg)?.let { throw IOException(it) }
+                    },
+                    log = { Log.i(TAG, "managed app: $it") },
+                ).update()
+            },
+            uninstall = installer::uninstallAwaiting,
+            log = { Log.i(TAG, it) },
+        )
+    }
+
     private fun commandQueue(
         api: ApiClient,
         policy: DeviceOwnerPolicy,
@@ -793,7 +841,15 @@ class ConnectionService : Service() {
                 AppUpdater(
                     info = {
                         val r = api.apkInfo()
-                        ApkInfo(url = r.url, packageChecksum = r.packageChecksum, size = r.size)
+                        // The package is stated here rather than taken from the response: this
+                        // command replaces THIS app, and an apk-info naming something else must be
+                        // refused rather than installed alongside. The server never sends it.
+                        ApkInfo(
+                            packageName = packageName,
+                            url = r.url,
+                            packageChecksum = r.packageChecksum,
+                            size = r.size,
+                        )
                     },
                     // The download is deliberately NOT an ApiClient call: /dpc.apk is
                     // unauthenticated by design — a factory-reset phone fetches it during
@@ -801,9 +857,11 @@ class ConnectionService : Service() {
                     // an absolute URL the server named is how a token leaves the deployment it
                     // belongs to. The URL is used, the credential is not.
                     open = { url -> URL(url).openStream() },
-                    staging = installer::staging,
+                    staging = { installer.staging(packageName) },
                     identify = installer::identify,
                     installed = installer::installed,
+                    // Fire and forget, and it must stay that way: this commit kills the process, so
+                    // there is no status to wait for and nothing left to report it to.
                     install = installer::install,
                     log = { Log.i(TAG, "update: $it") },
                 ).update()

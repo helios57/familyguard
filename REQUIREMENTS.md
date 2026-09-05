@@ -220,6 +220,55 @@ time on a device that is already enrolled and already hardened.
 - FR-15.5 A DPC that has replaced itself resumes enforcing on its own, without the child or the
   parent touching the phone, and without waiting for the next reboot.
 
+### FR-16 Applications the parent chooses (managed apps)
+A locked-down phone cannot install anything, which is the point — and it is also why a child ends
+up with a phone that has nothing on it a parent actually wanted them to have. Putting an
+application on the phone must therefore be something the parent does from the console, once, for a
+child; and the phone must arrive at that state by itself, on a device the child cannot install on.
+
+- FR-16.1 The control plane holds a catalog of application builds. A build enters it either by
+  being uploaded, or by being copied into the server's application directory on the node and
+  scanned — an operator with shell access must not have to go through a browser to add a 200 MB
+  file. Nothing about a build is taken on the uploader's word: the package name, version, size,
+  minimum SDK and signer are read out of the archive itself.
+- FR-16.2 A build can be uploaded through the console and through the REST API, and the API accepts
+  both a browser's multipart form and a raw request body, so `curl --data-binary @app.apk` is a
+  first-class way in. The control plane refuses what is not a readable Android application, and
+  says which of the two it was: not an APK, or larger than this server accepts.
+- FR-16.3 A parent declares, per child, which applications that child's phone should have. It is a
+  **set**, not a queue of install commands: the device converges on it at every sync, so an install
+  that failed retries by itself and an application the child removed comes back, without a parent
+  having to notice that anything went wrong. Declaring an application is not allowing it — a
+  managed app is suspended at bedtime, hidden by a block rule and counted against the quota like
+  any other (FR-4, FR-5, FR-3).
+- FR-16.4 A package's signer is pinned at its first registration, and a later build of the same
+  package signed by a different key is refused. This is trust on first registration, not signature
+  verification: it does not establish that the first build was genuine, and it is not claimed to.
+  What it does is make the second one unable to differ silently — which is the failure that
+  matters, because a phone will accept an update to an app it already has.
+- FR-16.5 Withdrawing an application from a child's set uninstalls it from that child's phone. A
+  parent who removes an application must not have to also find and press a second control, and must
+  not be told the removal is done while the application is still on the phone.
+- FR-16.6 The FamilyGuard app itself is not a catalog entry. It updates through FR-15, which is a
+  different mechanism with different checks, and two descriptions of what version of itself the
+  phone should run is a loop, not redundancy.
+
+### FR-17 Non-interactive access (API keys)
+Everything a parent can do must also be doable by something that is not sitting at a browser — a
+script, or an MCP server acting for a parent. That is one credential format presenting the **same**
+parent identity, not a second authorization surface: a key is a parent, subject to the same role
+checks, reading and writing the same records, and appearing in the audit trail as itself.
+
+- FR-17.1 A key is issued by a primary admin, is shown exactly once at creation, and is stored only
+  as a hash. A console that can show a key again is a console that is holding one.
+- FR-17.2 A key authenticates every parent endpoint, with one exception: it cannot create or revoke
+  a credential — neither another key nor a parent. Revocation has to be sufficient, so the set of
+  things a leaked key can use to outlive its own revocation must be empty.
+- FR-17.3 Revocation is immediate and is what the design relies on instead of expiry. Each key
+  records when it was last used, because that is what tells a parent which key to revoke.
+- FR-17.4 The audit trail distinguishes a key from a person: every entry names the actor type, so
+  "who changed this" is answerable without inferring it from the hour of the day.
+
 ---
 
 ## 4. Non-functional requirements
