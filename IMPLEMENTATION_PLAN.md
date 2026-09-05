@@ -2824,6 +2824,37 @@ cannot fake. With `-h 127.0.0.1`: **12 passed, 0 failed**.
 Neither of these is a retry around a flaky step. A retry would have made both symptoms go away and
 left a console that mislabels its own menu and a probe that reports on the wrong process.
 
+### 10.3 — the node was still serving the first build, and the swap is two changes
+
+FR-15 shipped in 0.2.1 and did nothing, because `/dpc.apk` is a file on the node's host path and not
+part of any image: it was still the build published on 2026-08-18, `versionCode 1` / `versionName
+0.1.0`, read with `aapt2` out of the bytes the running server actually served rather than from a
+manifest. Replaced 2026-09-05 with `versionCode 4` / `0.2.1`, sha256 `eafeab56…`.
+
+Three things about that are worth keeping, and only the second was expected.
+
+**The certificate did not need to change, and that is checkable rather than assumable.** The digest
+of a DER-encoded certificate *is* that file's own hash, so `sha256sum familyguard.der` on the node
+and the `certificate SHA-256 digest` `apksigner` prints for the new APK are the same number —
+`b62cda94…` both ways. The key an enrolled phone would trust is the key that signed the new build.
+
+**A swap under a running pod ships nothing.** The server hashes the APK once at startup and
+publishes that value in every provisioning QR and every `UPDATE_APP` response, so `/dpc.apk` stops
+serving the file entirely and answers `503 apk_changed` instead. That is not a theory about the
+guard in `internal/httpapi/apk.go`; it is what the deployment returned, 173 bytes of it, between the
+file landing and the pod restarting — and the same request over the same file returned **200** with
+`13330105` bytes hashing to `eafeab56…` once it had. A production guard observed red and then green,
+which is the only version of that claim worth writing down. The restart is driven by a pod-template
+annotation carrying the file's sha256, so the swap is a commit; `kubectl rollout restart` writes
+drift that the next sync removes and leaves nothing recording which build the node serves.
+
+**No phone is enrolled.** The `devices` table is empty (1 parent, 1 child, as a positive control on
+the same query), which corrects a claim carried in this project's notes for two days: that the fleet
+was already on a build newer than the node's, so `UPDATE_APP` would refuse. There was no fleet. The
+consequence is better than the one that was planned for — the first phone provisioned gets 0.2.1
+directly — and the untested path is unchanged: **no real phone has taken an update, only an
+emulator.**
+
 ---
 
 ## Traceability
