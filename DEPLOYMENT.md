@@ -364,12 +364,42 @@ Then copy both onto the host:
 
 ```bash
 scp /tmp/familyguard.apk /tmp/familyguard.der k8s-node:/tmp/
-ssh k8s-node 'sudo install -m 0644 /tmp/familyguard.apk /tmp/familyguard.der \
-             /srv/familyguard/apk/ && rm /tmp/familyguard.apk /tmp/familyguard.der'
+ssh k8s-node 'set -e
+  D=/srv/familyguard/apk
+  # Keep the build being replaced. It is what provisioned every phone enrolled so far, and it is
+  # the only thing to roll back to if the new one turns out not to install. Name it for the version
+  # it holds — `familyguard-0.1.0-versionCode-1.apk` — not "previous", which stops being true on
+  # the next replacement.
+  sudo install -D -m 0644 "$D/familyguard.apk" \
+    /srv/familyguard/apk-archive/familyguard-<versionName>-versionCode-<n>.apk
+  # Rename into place rather than write over the served file: a phone may be downloading it at this
+  # moment, and a rename is atomic — a reader that already opened the file keeps the whole old one.
+  sudo install -m 0644 /tmp/familyguard.apk "$D/.familyguard.apk.incoming"
+  sudo mv -f "$D/.familyguard.apk.incoming" "$D/familyguard.apk"
+  sudo install -m 0644 /tmp/familyguard.der "$D/familyguard.der"
+  rm /tmp/familyguard.apk /tmp/familyguard.der'
 ```
 
-Restart the control plane afterwards so it re-reads the files and recomputes both checksums — the
-values are computed once at startup:
+Then restart the control plane — and the reason it is not optional is worth reading, because
+skipping it does not leave the old build serving quietly. The server hashes the APK **once at
+startup**, and that value is what every provisioning QR and every `UPDATE_APP` response carries. A
+pod still running across the swap therefore publishes a checksum for bytes it no longer has, so
+`/dpc.apk` stops serving the file at all and answers `503 apk_changed` with that reason in the body
+until it is restarted. That refusal is deliberate, and it is the good outcome: the alternative is a
+phone rejecting a download it just made, mid-provisioning, showing a parent nothing but "Can't set
+up device".
+
+**If the deployment is reconciled from git, do not restart it by hand.** A `kubectl rollout restart`
+writes an annotation the next sync removes again, and it leaves nothing behind that says which build
+the node serves. Record the APK's SHA-256 as a pod-template annotation instead, and update it in the
+same commit that replaces the file — changing the pod template is what restarts the pod, and the
+annotation is then a claim about the node that can be checked against it:
+
+```bash
+ssh k8s-node sha256sum /srv/familyguard/apk/familyguard.apk   # must equal the annotation
+```
+
+Only where nothing reconciles the deployment is the direct restart the right tool:
 
 ```bash
 kubectl -n familyguard rollout restart deploy/familyguard-control-plane

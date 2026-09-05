@@ -31,6 +31,14 @@ spec:
         # Rotating SESSION_SIGNING_KEY or the OAuth secret updates the Secret, and a pod that kept
         # the old key in memory would go on accepting cookies you believe you revoked.
         reloader.stakater.com/auto: "true"
+        # Add an annotation here carrying the SHA-256 of the APK on the host path below, and change
+        # it in the same commit that replaces that file. The server hashes the APK once at startup
+        # and publishes that value in every provisioning QR and every UPDATE_APP response, so a pod
+        # that keeps running across a swap serves 503 `apk_changed` until it is restarted. Changing
+        # the pod template is what restarts it — and unlike `kubectl rollout restart`, it leaves a
+        # record of which build the node is serving that a sync will not erase. Deliberately not
+        # filled in here: a placeholder would be a claim about a file this repo does not ship.
+        # See DEPLOYMENT.md, "Publish the APK".
     spec:
       securityContext:
         runAsNonRoot: true
