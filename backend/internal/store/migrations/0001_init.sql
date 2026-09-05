@@ -1,8 +1,9 @@
 -- FamilyGuard MDM — initial schema.
 --
 -- Single tenant by design (REQUIREMENTS.md §5): one family row exists, and every other table
--- hangs off it. The family_id columns are kept so that an accidental second family cannot leak
--- rows across, not because multi-tenancy is a goal.
+-- hangs off it. The family_id columns record which family a row belongs to; they are NOT a
+-- tenant filter, and no query here uses them as one — see 0003, which is what actually holds the
+-- table to a single row.
 
 CREATE TABLE families (
     id         UUID PRIMARY KEY,

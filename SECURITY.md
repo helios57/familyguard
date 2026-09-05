@@ -44,6 +44,13 @@ Sign-in is Google OAuth. The ID token is **verified, never trusted**: RS256 agai
 `kid`, a token addressed to another client, an expired token or an unverified email are each
 rejected, and each is a separate e2e case in `TestIDTokenIsVerifiedNotTrusted`.
 
+A key out of that JWKS must also be at least 2048 bits (`TestJWKSRefusesAnUndersizedRSAKey`). Go
+verifies a signature against whatever modulus it is handed, so a 512-bit key in a key set would be
+honoured — and a 512-bit key is arithmetic away from "sign in as any parent". Nothing today gets
+near this floor: Google publishes 2048-bit keys over TLS with the platform roots. It is here because
+"the JWKS came from a trusted host" is the entire argument for accepting the key, and that argument
+is one misconfigured `OIDC_ISSUER` away from being untrue.
+
 Only addresses in `BOOTSTRAP_PARENT_EMAILS`, or a parent an existing parent has added, can sign in.
 A verified Google account is not by itself an authorization.
 
@@ -71,6 +78,21 @@ dictionary to slow an attacker against, and the lookup is on the hot path of eve
 
 Enrollment credentials are **single-use** (`TestEnrollmentCredentialsAreSingleUse`). One device
 cannot read or act on another's state (`TestOneDeviceCannotActOnAnother`).
+
+There is exactly one input a device supplies to its *own* policy, and it is worth naming because
+everything else here flows the other way. `critical_packages`, sent once at enrollment, widens the
+FR-5.5 whitelist — and an entry in it is exempt from bedtime, from an exhausted quota and from a
+parent's explicit block rule. It has to be able to do that: FR-5.5 exempts a *category*, only the
+phone knows which package on this hardware is its dialer, and a Samsung dialer suspended at bedtime
+is a child who cannot call for help.
+
+Nothing here can tell a real OEM dialer from a game, and this document does not claim otherwise.
+What it does claim is that the damage is bounded and visible: the list is capped at 32 entries,
+every entry must have the shape of a package name, and the enrollment audit entry records the names
+themselves and how many were refused (`TestCriticalPackagesAreBoundedAndShaped`). A phone reporting
+six packages is a phone; two hundred is a claim somebody made up, and before the cap the row simply
+grew. The built-in whitelist is the floor underneath all of it and is unaffected by any of this, so
+the worst case of refusing every reported entry is a device with the default exemptions.
 
 ### Browser → control plane
 
@@ -124,7 +146,11 @@ that admits a gap.
   apply. There is no second signature on a policy bundle. The mitigations are operational: the
   binary runs as an unprivileged user in a distroless image with no shell and a read-only root
   filesystem, and the forbidden-restriction strip is enforced on the **device** as well as on the
-  server, so even a hostile bundle cannot block a factory reset.
+  server, so even a hostile bundle cannot block a factory reset. One narrower consequence *is*
+  bounded on the device: the FR-15 update download stops at the declared size plus slack rather
+  than streaming to EOF, so a server that answers `/dpc.apk` forever cannot fill the phone's
+  storage — a full phone stops recording usage and stops taking policy
+  (`a response that does not end is abandoned instead of filling the phone`).
 - **Traffic analysis.** The system does not hide from the network that a phone is managed.
 
 ## Secrets

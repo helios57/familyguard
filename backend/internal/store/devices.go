@@ -247,17 +247,6 @@ func (s *Store) SetLocked(ctx context.Context, deviceID uuid.UUID, locked bool) 
 	return nil
 }
 
-// SetCriticalPackages stores what the device reported as unsuspendable on its own hardware. An
-// empty report is stored as empty rather than rejected: the engine unions this with its built-in
-// list, so the worst case of a device that reports nothing is the built-in floor, never less.
-func (s *Store) SetCriticalPackages(ctx context.Context, deviceID uuid.UUID, pkgs []string) error {
-	if pkgs == nil {
-		pkgs = []string{}
-	}
-	_, err := s.pool.Exec(ctx, `UPDATE devices SET critical_packages = $2 WHERE id = $1`, deviceID, pkgs)
-	return err
-}
-
 // GetDeviceState reads the last known state with the derived online flag.
 func (s *Store) GetDeviceState(ctx context.Context, deviceID uuid.UUID, offlineAfter time.Duration) (*DeviceState, error) {
 	var st DeviceState

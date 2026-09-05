@@ -2857,6 +2857,127 @@ emulator.**
 
 ---
 
+## Phase 11 — a security review of the whole tree, and what a second pass is actually for
+
+A read of every file that handles a credential, a request body or a downloaded byte, against a
+deployment that was already running. Nothing here was a live exploit: the auth paths, the CSP, the
+device bearer hashing, the container's uid, the workflow permissions and the SHA-pinned actions all
+held up. What a second pass finds is a different class — **bounds that were never stated, and claims
+in prose that nothing enforces.** Six of those, and one comment that had gone false.
+
+### 11.1 — the parent's BLOCK is defeated by a claim from the phone, and that is the requirement
+
+The first thing this review found looked like a privilege inversion: a device sends
+`critical_packages` at enrollment, and that list beats a parent's explicit `BLOCK`, an exhausted
+quota, bedtime and a parent lock. It is reachable by anything holding an enrollment token.
+
+I changed both engines so a parent's BLOCK won, and **that was wrong.** The shared vector
+`critical whitelist survives bedtime, an exhausted quota, an explicit block and a parent lock`
+(`backend/internal/policy/vectors.json`) encodes the opposite deliberately, FR-5.5 says the dialer
+*"can never be suspended or hidden by any rule"*, and NFR-6(a) is emergency calling. Both edits were
+reverted. **A shared vector that goes red is the design telling you the finding is a feature** — the
+one place in this repository where two independently written engines have to agree, and neither may
+edit it to make itself pass.
+
+So the fix is at the boundary, where it costs the requirement nothing: `sanitizeCriticalPackages`
+(`backend/internal/httpapi/deviceapi.go:490`) caps the list at **32** entries, drops anything not
+shaped like a package name (two dot-separated segments, no leading digit, ≤255 bytes — Android's own
+limit), and the enrollment audit entry now records **the names, not the count**, plus how many were
+refused. It never fails the enrollment: a phone mid-provisioning in front of a parent must not be
+turned away over an advisory list.
+
+Calibrated in `deviceapi_test.go` — a real phone's four packages survive byte-identical (the
+positive control, because a sanitiser that dropped everything would pass every other subtest),
+`../../etc/passwd`, `https://…`, `com..double`, `com.9leading` and a 300-byte name are dropped, and
+42 entries store 32 and report 10.
+
+### 11.2 — the JWKS verifier accepted any RSA key Google might publish, including a 512-bit one
+
+`backend/internal/auth/oidc.go:274` parsed the modulus and used it. Nothing checked its size, so an
+attacker who could answer the JWKS fetch — a compromised discovery document, a hostile resolver —
+could publish a key small enough to factor and mint parent sessions. A 2048-bit floor now refuses it
+by name. Calibrated at 512, 1024 and **2040** bits (the interesting one: it is 8 bits short, so an
+off-by-one in the byte-to-bit arithmetic would pass it) with 2048 as the negative control.
+
+### 11.3 — "single tenant" was a sentence, not a constraint
+
+`0001_init.sql`'s header said the schema is single-tenant and every table hangs off `families`. True
+as an intention; **no query filters on `family_id`**, so the isolation the sentence implies does not
+exist anywhere in the code. Two families in that table is a data state no code path can describe.
+
+Filtering forty queries for a family that cannot be created is the expensive way to make the sentence
+true. `0003_single_family.sql` makes the second row impossible instead —
+`CREATE UNIQUE INDEX families_is_a_singleton ON families ((TRUE))` — and 0001's header now says what
+its `family_id` columns are (a record of which family a row belongs to) and what they are not (a
+tenant filter). Applied by the e2e layer against a real PostgreSQL.
+
+### 11.4 — nginx would buffer 64 MB for an unauthenticated client against a server that refuses at 1 MiB
+
+`proxy-body-size: "64m"` on the ingress, and the comment said it was for the DPC download — which is
+a *response*, so the comment was not merely stale, it named the wrong direction. Every route was
+enumerated: nothing takes an upload, and the app's own `MAX_BODY_BYTES` is 1 MiB. With
+`proxy_request_buffering` on by default, the 63 MB in between was work nginx would do before the
+server got a chance to refuse. Now `2m`, which sits just above the app's limit so the client still
+gets the app's JSON error envelope with its request id rather than nginx's HTML.
+
+### 11.5 — a digest written in prose, two releases stale
+
+The comment above the image line in `control-plane.yaml` named `0.1.0`'s digest while the tag beside
+it said `0.2.1`. Nothing renders a comment, nothing applies it, and nothing goes red — which is the
+whole failure mode of recording a digest in prose. Corrected against two independent authorities
+that agree: the registry's `docker-content-digest` header for the `0.2.1` manifest, and the
+`imageID` of the pod this cluster is running.
+
+### 11.6 — the DPC would write whatever the server sent, forever
+
+`AppUpdater` streamed the APK to disk with no ceiling. The server is the trust anchor, so this is
+not an attack so much as a failure mode: a proxy that never closes, or a control plane that has been
+taken over, fills the phone's storage. `ceilingFor()`
+(`android-dpc/…/update/AppUpdater.kt:191`) allows the declared size plus 4 MB of slack, or 256 MB
+when the server declares nothing, and abandons the download past it. Calibrated by a harness that
+serves more bytes than it declared.
+
+### 11.7 — the toolchain, and two tools that reported success having failed
+
+Everything versioned was resolved against a live registry: **Go 1.27.1** (`go.mod`, both modules,
+the Dockerfile and CI), **AGP 9.4.0**, **Gradle 9.7.1** with its published checksum, two action SHAs,
+and five Go modules. `README.md`'s prose went red in `DocumentedVersionsTest` on the first sweep,
+naming two lines — the guard from 6.15 working exactly as built.
+
+Two false greens are worth keeping:
+
+- **`staticcheck` and `govulncheck` printed *"export data version 4 is greater than maximum
+  supported version 2"* and exited 0.** A tool built against an older toolchain cannot read the new
+  one's export data, reports that as an internal error, and still succeeds. Rebuilt under
+  `GOTOOLCHAIN=go1.27.1`; the real answers are staticcheck clean and *"No vulnerabilities found"*.
+  This is the §3.9 shape: a tool's exit status was a claim about a different artifact than the one
+  it was asked about.
+- **`govulncheck -mode=binary` over-reported.** It named `x/crypto/ssh` and `openpgp` symbols in the
+  released binary; `go list -deps ./cmd/server` shows neither is imported, with 11 other x/crypto
+  packages matching as the positive control. `-ldflags="-s -w"` strips the symbol information the
+  binary mode needs, and it falls back to module-level reporting without saying so.
+
+### 11.8 — what was looked at and left alone
+
+Recording this because "reviewed and found nothing" is only worth something if it says what it
+covered: the six CI jobs' permissions and pinning, the Dockerfile's distroless pin and uid, the CSP
+and the rest of `middleware.go`, the device bearer's SHA-256 storage and single-use enrollment, the
+SSE stream, the policy engine and `resolve.go`, the backup CronJob's password handling and its
+restore-and-count verification, the Android manifest's one exported component and its
+`RECEIVER_NOT_EXPORTED` / `FLAG_MUTABLE` neighbours, and the network security config. `gitleaks dir .`
+clean.
+
+**Three residuals are known and not fixed**, each because the fix would cost more than the risk:
+`ApiClient.readAll` and `EventStream.readLine` read server responses without a bound (the server is
+the trust anchor, and 11.6 bounds the one case that writes to disk); `createCommand`'s
+`Params map[string]any` is unvalidated beyond the 1 MiB body cap and parent authentication; and
+child and device names have no length limit. **One is a real gap and is the owner's call:** the
+`familyguard` namespace has **no NetworkPolicy**, while the CNI demonstrably enforces them elsewhere
+on this cluster. A wrong selector there takes down the family's MDM and the nightly backup job, so it
+is reported rather than pushed.
+
+---
+
 ## Traceability
 
 Each requirement maps to the phase that implements it and the test that proves it.

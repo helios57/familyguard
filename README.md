@@ -59,7 +59,7 @@ has not been run, and that is deliberate — see [Test integrity](#test-integrit
 
 ## Building
 
-Prerequisites: Go 1.26.6+, JDK 26, Android SDK (platform 37.1 and build-tools 37.0.0 to compile
+Prerequisites: Go 1.27.1+, JDK 26, Android SDK (platform 37.1 and build-tools 37.0.0 to compile
 against; an API 29 system image for the emulator the instrumented layer uses), Docker, and Chrome or
 Chromium (the e2e suite lays the parent console out on a 360×800 phone and measures it; without a
 browser that layer reports **2, not measured** rather than skipping quietly).
@@ -75,7 +75,7 @@ docker build -t familyguard-control-plane:dev backend/
 cd android-dpc && ./gradlew :app:assembleDebug
 ```
 
-The Gradle wrapper pins 9.7.0, on AGP 9.3.1 and Kotlin 2.4.10. `allWarningsAsErrors` is on, and it
+The Gradle wrapper pins 9.7.1, on AGP 9.4.0 and Kotlin 2.4.10. `allWarningsAsErrors` is on, and it
 is load-bearing rather than tidiness: a deprecation on a `DevicePolicyManager` call means the
 platform changed a contract underneath the app, which is exactly the class of change that surfaces
 as a real phone behaving differently from the emulator.

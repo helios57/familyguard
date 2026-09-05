@@ -41,6 +41,12 @@ private class Harness(private val folder: TemporaryFolder) {
     var current: ApkIdentity = installed()
     var truncateTo: Int? = null
 
+    /**
+     * Serve this many bytes instead of [bytes], regardless of what the server declared. The point
+     * of the field is a response that does not end where it said it would.
+     */
+    var overrunTo: Int? = null
+
     val installedFiles = mutableListOf<File>()
 
     fun updater(): AppUpdater {
@@ -56,7 +62,11 @@ private class Harness(private val folder: TemporaryFolder) {
             },
             open = { _ ->
                 downloadFails?.let { throw it }
-                val body = truncateTo?.let { bytes.copyOfRange(0, it) } ?: bytes
+                val body = when {
+                    overrunTo != null -> ByteArray(overrunTo!!) { bytes[it % bytes.size] }
+                    truncateTo != null -> bytes.copyOfRange(0, truncateTo!!)
+                    else -> bytes
+                }
                 ByteArrayInputStream(body) as InputStream
             },
             staging = { staged },
@@ -202,6 +212,28 @@ class AppUpdaterTest {
         val refused = h.updater().update() as? UpdateOutcome.Refused
             ?: throw AssertionError("a failed download was not refused")
         assertTrue(refused.reason.contains("network is unreachable"))
+    }
+
+    /**
+     * The size comparison in `update` runs after the copy, so on its own it reports an overrun
+     * rather than stopping one — the phone's storage is already gone by the time it speaks. This
+     * asserts the copy itself gives up, and that what it wrote stayed bounded.
+     */
+    @Test
+    fun `a response that does not end is abandoned instead of filling the phone`() {
+        val h = Harness(folder)
+        h.declaredSize = h.bytes.size.toLong()
+        h.overrunTo = 16 * 1024 * 1024
+
+        val refused = h.updater().update() as? UpdateOutcome.Refused
+            ?: throw AssertionError("an endless download was not refused")
+        assertTrue("says the download failed: ${refused.reason}", refused.reason.contains("abandoned"))
+
+        val staged = File(folder.root, "staged.apk")
+        assertTrue(
+            "wrote ${staged.length()} bytes for a ${h.bytes.size}-byte build",
+            staged.length() < 16 * 1024 * 1024,
+        )
     }
 
     /**

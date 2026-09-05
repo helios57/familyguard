@@ -11,7 +11,7 @@
 # a session signing key and a database password in its environment, and the usual next step after an
 # RCE is to run something — so there is nothing to run.
 
-FROM golang:1.26-alpine AS build
+FROM golang:1.27-alpine AS build
 
 WORKDIR /src
 

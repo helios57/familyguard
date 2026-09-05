@@ -72,9 +72,11 @@ func (s *Server) enroll(c *gin.Context) {
 		return
 	}
 
+	critical, droppedCritical := sanitizeCriticalPackages(req.CriticalPackages)
+
 	result, err := s.store.ConsumeEnrollment(c.Request.Context(), auth.HashToken(token), deviceHash,
 		store.RecoverySecret{Code: code, Salt: salt, Iterations: iterations, Hash: hash},
-		strings.TrimSpace(req.Model), strings.TrimSpace(req.OSVersion), req.CriticalPackages)
+		strings.TrimSpace(req.Model), strings.TrimSpace(req.OSVersion), critical)
 	if err != nil {
 		s.log.Warn("enrollment refused", "error", err, "client", c.ClientIP(),
 			"request_id", RequestIDOf(c))
@@ -86,7 +88,13 @@ func (s *Server) enroll(c *gin.Context) {
 	s.audit(c, store.ActorDevice, result.Device.ID.String(), "DEVICE_ENROLLED", "device",
 		result.Device.ID.String(), map[string]any{
 			"model": result.Device.Model, "os_version": result.Device.OSVersion,
-			"critical_packages": len(result.Device.CriticalPackages),
+			// The list itself, not its length. FR-5.5 makes this the one input the managed party
+			// supplies to its own policy, so a parent has to be able to read back what this phone
+			// claimed rather than only how many claims it made.
+			"critical_packages": result.Device.CriticalPackages,
+			// Recorded even when zero: it is the difference between a phone that reported eight
+			// packages and one that tried to report four hundred.
+			"critical_packages_dropped": droppedCritical,
 		})
 	s.hub.PublishParents(Event{Type: "device", DeviceID: result.Device.ID.String(),
 		ChildID: result.ChildID.String()})
@@ -452,4 +460,86 @@ func (s *Server) apkInfo(c *gin.Context) {
 		// truncated it" distinguishable from "the file changed" in the failure the parent sees.
 		"size": info.Size(),
 	})
+}
+
+// maxCriticalPackages bounds what one device may add to the critical whitelist.
+//
+// FR-5.5 exempts a CATEGORY — the dialer, messaging, contacts, emergency information, settings and
+// the package installer — and only the phone knows which package on this hardware is each of those,
+// so the list has to come from the device. That makes it the one input to the enforcement engine
+// supplied by the party the policy is applied to, and an entry in it is exempt from bedtime, from
+// an exhausted quota, and from a parent's explicit block rule (see policy.Compute).
+//
+// Bounding it does not make the claim trustworthy — nothing here can tell a real OEM dialer from a
+// game — and it is not pretending to. It bounds the damage of a wrong or hostile one to something a
+// person can read: a real phone resolves well under ten, `CriticalPackages.kt` produces at most a
+// handful, and the audit entry now carries the names. Six of eight is a phone; two hundred is a
+// claim somebody made up, and before this cap the row simply grew.
+const maxCriticalPackages = 32
+
+// maxPackageNameLength is Android's own limit on a package name (PackageParser).
+const maxPackageNameLength = 255
+
+// sanitizeCriticalPackages keeps the entries that could be package names, up to the cap, and
+// reports how many it dropped.
+//
+// It never fails the enrollment. A phone in the middle of provisioning, in front of a parent
+// holding a wiped device, must not be turned away over a malformed entry in an advisory list — the
+// engine's built-in whitelist is the floor and it is unaffected, so the worst case of dropping
+// everything is a device with the default exemptions.
+func sanitizeCriticalPackages(in []string) (kept []string, dropped int) {
+	kept = []string{}
+	seen := map[string]struct{}{}
+	for _, raw := range in {
+		p := strings.TrimSpace(raw)
+		if p == "" {
+			// Not counted as dropped: an empty string carries no claim, and the engine already
+			// ignores it. Counting it would make a trailing comma look like an attack.
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		if !validPackageName(p) || len(kept) >= maxCriticalPackages {
+			dropped++
+			continue
+		}
+		seen[p] = struct{}{}
+		kept = append(kept, p)
+	}
+	return kept, dropped
+}
+
+// validPackageName reports whether s has the shape Android requires of a package name: two or more
+// dot-separated segments, each starting with a letter or underscore and continuing with letters,
+// digits or underscores.
+//
+// Shape only. A name of the right shape is not a real package and is not a dialer; this rejects
+// the values that could never be either — a URL, a path, a sentence, a 4 KB blob.
+func validPackageName(s string) bool {
+	if len(s) == 0 || len(s) > maxPackageNameLength {
+		return false
+	}
+	segments := strings.Split(s, ".")
+	if len(segments) < 2 {
+		return false
+	}
+	for _, seg := range segments {
+		if seg == "" {
+			return false
+		}
+		for i := 0; i < len(seg); i++ {
+			c := seg[i]
+			switch {
+			case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c == '_':
+			case c >= '0' && c <= '9':
+				if i == 0 {
+					return false
+				}
+			default:
+				return false
+			}
+		}
+	}
+	return true
 }

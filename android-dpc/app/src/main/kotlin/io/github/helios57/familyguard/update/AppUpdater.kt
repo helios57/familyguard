@@ -1,6 +1,7 @@
 package io.github.helios57.familyguard.update
 
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.security.MessageDigest
@@ -105,7 +106,7 @@ class AppUpdater(
         val file = staging()
         try {
             val downloaded = try {
-                download(want.url, file)
+                download(want.url, file, want.size)
             } catch (e: Exception) {
                 return UpdateOutcome.Refused("the download failed (${reason(e)})")
             }
@@ -159,12 +160,13 @@ class AppUpdater(
      * phone is not expensive, but the second read is a read of a *different* moment, and this is
      * the function whose whole job is to say what the bytes were.
      */
-    private fun download(url: String, into: File): Downloaded {
+    private fun download(url: String, into: File, declared: Long): Downloaded {
         val digest = MessageDigest.getInstance("SHA-256")
         var total = 0L
+        val ceiling = ceilingFor(declared)
         open(url).use { source ->
             into.outputStream().use { sink ->
-                copy(source, sink) { chunk, length ->
+                copy(source, sink, ceiling) { chunk, length ->
                     digest.update(chunk, 0, length)
                     total += length
                 }
@@ -173,11 +175,32 @@ class AppUpdater(
         return Downloaded(total, Base64.getUrlEncoder().withoutPadding().encodeToString(digest.digest()))
     }
 
-    private inline fun copy(source: InputStream, sink: OutputStream, seen: (ByteArray, Int) -> Unit) {
+    /**
+     * How many bytes this download is allowed to write before it is abandoned.
+     *
+     * The size check in [update] compares totals AFTER the copy, so on its own it is a report and
+     * not a limit: a response that never ends fills the phone's storage and is then declared the
+     * wrong size, by which point the damage is done. The device the storage belongs to is a child's
+     * phone, and a full one stops recording usage and stops taking policy.
+     *
+     * The server declares the size, so use it — with slack, because a size that is stale by one
+     * release must fail as "not the build we published" rather than as a truncated download. When
+     * the server declares nothing, [ABSOLUTE_CEILING_BYTES] applies: a DPC is ~13 MB and an APK
+     * only grows, so 256 MB is far above anything real and far below a disk.
+     */
+    private fun ceilingFor(declared: Long): Long =
+        if (declared > 0) minOf(declared + SIZE_SLACK_BYTES, ABSOLUTE_CEILING_BYTES) else ABSOLUTE_CEILING_BYTES
+
+    private inline fun copy(source: InputStream, sink: OutputStream, ceiling: Long, seen: (ByteArray, Int) -> Unit) {
         val buffer = ByteArray(64 * 1024)
+        var written = 0L
         while (true) {
             val read = source.read(buffer)
             if (read < 0) break
+            written += read
+            if (written > ceiling) {
+                throw IOException("the download passed $ceiling bytes and was abandoned")
+            }
             sink.write(buffer, 0, read)
             seen(buffer, read)
         }
@@ -186,4 +209,15 @@ class AppUpdater(
 
     /** An exception's message, or its class when it has none — never an empty parenthesis. */
     private fun reason(e: Exception): String = e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName
+
+    private companion object {
+        /**
+         * How far past the declared size a download may run before it is abandoned. Big enough that
+         * a stale `size` never reads as a truncation, small enough that it is not a storage budget.
+         */
+        const val SIZE_SLACK_BYTES = 4L * 1024 * 1024
+
+        /** The cap when the server declares no size at all. A DPC is ~13 MB. */
+        const val ABSOLUTE_CEILING_BYTES = 256L * 1024 * 1024
+    }
 }

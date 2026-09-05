@@ -1,0 +1,22 @@
+-- One family, enforced by the database rather than by a comment.
+--
+-- The schema has always been single-tenant (REQUIREMENTS.md §5) and 0001 says the `family_id`
+-- columns exist "so that an accidental second family cannot leak rows across". That sentence
+-- described an intention, not a control: no query filters on `family_id` — `ListChildren` selects
+-- every row in the table, `GetChild` addresses by id alone — so a second family would not have been
+-- isolated by anything. It is the shape of defect this project keeps finding: a guard that is
+-- defined and never called, reading as though it were enforced.
+--
+-- Two ways to make the sentence true. Filter every query by the caller's family, which is real work
+-- and real risk in aid of a second family that no code path can create — `Bootstrap` and
+-- `GetFamily` both take `ORDER BY created_at LIMIT 1`, so a second row would be invisible to the
+-- application rather than dangerous to it. Or make the second row impossible, which is this.
+--
+-- A unique index on a constant expression admits exactly one row. An INSERT of a second family now
+-- fails loudly at the moment somebody writes it, instead of creating a row that nothing reads and
+-- that quietly falsifies every "the family" in this codebase.
+--
+-- This migration fails if the table already holds more than one row. That is the correct outcome:
+-- it means this deployment is in a state the application has never been able to describe, and it
+-- should be looked at rather than silently reduced to one.
+CREATE UNIQUE INDEX families_is_a_singleton ON families ((TRUE));

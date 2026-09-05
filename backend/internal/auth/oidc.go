@@ -249,6 +249,10 @@ func (v *OIDCVerifier) refresh(ctx context.Context) error {
 	return nil
 }
 
+// minRSAModulusBits is the smallest RSA key this verifier will accept from a JWKS. 2048 is the
+// floor every current guidance sets and the size Google actually publishes.
+const minRSAModulusBits = 2048
+
 func rsaPublicKey(nB64, eB64 string) (*rsa.PublicKey, error) {
 	nBytes, err := base64.RawURLEncoding.DecodeString(nB64)
 	if err != nil {
@@ -260,6 +264,15 @@ func rsaPublicKey(nB64, eB64 string) (*rsa.PublicKey, error) {
 	}
 	if len(nBytes) == 0 || len(eBytes) == 0 {
 		return nil, errors.New("empty modulus or exponent")
+	}
+	// A floor on the modulus, not just a non-empty check. Go verifies a signature against whatever
+	// key it is given, so a 512-bit RSA key in a JWKS would be honoured — and a 512-bit key is
+	// factorable. Google publishes 2048-bit keys and this endpoint is reached over TLS with the
+	// platform roots, so nothing today gets near this; it is here because "the JWKS came from a
+	// trusted host" is the entire argument for accepting the key, and that argument is one
+	// misconfigured OIDC_ISSUER away from being untrue.
+	if len(nBytes)*8 < minRSAModulusBits {
+		return nil, fmt.Errorf("rsa modulus is %d bits, below the %d-bit floor", len(nBytes)*8, minRSAModulusBits)
 	}
 	e := new(big.Int).SetBytes(eBytes)
 	if !e.IsInt64() || e.Int64() < 3 || e.Int64() > 1<<31-1 {

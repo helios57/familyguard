@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -287,5 +288,31 @@ func TestRefreshKeepsCacheOnBadDocument(t *testing.T) {
 
 	if _, err := v.Verify(context.Background(), f.sign(f.claims())); err != nil {
 		t.Fatalf("a failed refresh must not invalidate a key already trusted: %v", err)
+	}
+}
+
+// A JWKS is trusted because of where it came from, and this is the one check that does not depend
+// on that being true. Go verifies a signature against whatever modulus it is handed, so a small key
+// in a key set would be honoured — and a 512-bit RSA key can be factored, which turns "sign in as
+// any parent" into arithmetic.
+func TestJWKSRefusesAnUndersizedRSAKey(t *testing.T) {
+	e := base64.RawURLEncoding.EncodeToString([]byte{0x01, 0x00, 0x01}) // 65537
+
+	for _, bits := range []int{512, 1024, minRSAModulusBits - 8} {
+		n := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0xff}, bits/8))
+		if _, err := rsaPublicKey(n, e); err == nil {
+			t.Errorf("a %d-bit modulus was accepted", bits)
+		}
+	}
+
+	// The negative control. Without it a rsaPublicKey that refused EVERY key would pass the loop
+	// above and look like a working floor.
+	ok := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0xff}, minRSAModulusBits/8))
+	key, err := rsaPublicKey(ok, e)
+	if err != nil {
+		t.Fatalf("a %d-bit modulus was refused: %v", minRSAModulusBits, err)
+	}
+	if key.N.BitLen() != minRSAModulusBits || key.E != 65537 {
+		t.Fatalf("parsed %d bits, exponent %d", key.N.BitLen(), key.E)
 	}
 }

@@ -9,4 +9,4 @@
 // agrees with that library's bugs by construction.
 module familyguard.local/e2e
 
-go 1.26
+go 1.27
