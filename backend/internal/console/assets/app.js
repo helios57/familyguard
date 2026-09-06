@@ -831,6 +831,10 @@ async function showRecovery(dev) {
     el('div', { class: 'code', text: out.recovery_code }),
     el('h3', { text: 'Phone unlinked, or on an old build?' }),
     el('p', { class: 'muted', text: 'The same code brings it back. No factory reset, no cable. Do not restart the phone between steps 1 and 2.' }),
+    // Revoke-first is not a nicety. The release ends the moment a policy arrives from the server,
+    // so on a phone whose credential still works it lasts until the next sync — which can be less
+    // time than the download in step 2, and nothing on the phone says why it re-locked.
+    el('p', { class: 'muted', text: 'Still linked and reporting? Press Replace phone first. A phone that can still reach this site puts every restriction back the moment it syncs, which can be before the download finishes.' }),
     stuck(1, 'On the phone: FamilyGuard \u203a Recovery \u203a enter this code. Every restriction lifts.'),
     stuck(2, 'In the phone\u2019s own browser, open /dpc.apk on this site and install over the top. Your settings survive.'),
     stuck(3, 'Here: Replace phone, to get a fresh setup code.'),

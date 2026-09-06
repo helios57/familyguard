@@ -4457,22 +4457,64 @@ Suite totals after the change: Android JVM **515 tests, 0 failures** (`--rerun-t
 replays a stale green for the source-scanning tests — they read files it does not track). Go
 `build`/`vet`/`gofmt`/`test` clean. e2e **PASS** in 105 s against a real Postgres 18.6 and Chrome 152.
 
-### 17.7 — the phone has to be re-provisioned once, and there is no way around it
+### 17.7 — the phone can take this build without a factory reset, but only in one order
 
-**The fix is in the APK, and 0.4.0 cannot install an APK.** That is not a missing feature, it is
-0.4.0's `BASELINE_RESTRICTIONS`: `no_install_unknown_sources` unconditionally, and
-`no_debugging_features` unconditionally. So on the phone as it stands today there is
+**The first version of this section said a factory reset was the only way onto 0.6.0. That was
+wrong, and the half of it that was right is worth keeping**, because it is what made the wrong half
+look proven.
 
-- no self-update — that is the defect being fixed;
-- no sideload — unknown sources is locked by the device owner, and no console switch in 0.4.0 lifts
-  it (the `allow_debugging` switch that would is *in* 0.5.0, which is the build that cannot be
-  installed);
-- no adb — same.
+Right: no change the control plane can send lifts the two restrictions in the way. `compute` adds
+`BASELINE_RESTRICTIONS` — which contains `no_install_unknown_sources` — and then
+`no_debugging_features`, to **every** desired state, unconditionally
+(`enforce/EnforcementEngine.kt` at v0.4.0). There is no policy field behind either. So no sideload
+and no adb, for as long as the phone is being managed, and the `allow_debugging` switch that would
+help is *in* 0.5.0, the build that cannot be installed.
 
-A server-side change cannot reach any of those, because all three are enforced by the DPC that is
-running. **One factory reset and one QR re-provision, and it is the last one:** from 0.6.0 forward
-the phone takes new builds by itself within ~15 minutes of a deploy, and says so on the console when
-it cannot.
+Wrong: "for as long as the phone is being managed" is not "ever". The offline recovery code
+(FR-12) releases the device, and the release is exactly this set. `RecoveryController.submit`
+applies `releasedState()` — a `DesiredState()` with an empty `user_restrictions` — through the full
+applier stack, `StateApplier` hands it to `HardeningManager.apply`, and
+`RestrictionPlanner.plan(current, [])` returns a `clear` list of every managed restriction in
+effect. `MANAGED` contains `RESTRICTION_UNKNOWN_SOURCES` and `RESTRICTION_DEBUGGING`. A reboot does
+not undo it either: `AdminReceiver` picks `applyReleasedFloor()` over `applyBaseline()` when the
+device is released (FR-12.6, which shipped in 0.4.0).
+
+**The order is the finding.** `Synchronizer.applyFrom` opens with
+
+```kotlin
+if (source == PolicySource.SERVER) recovery.clear()
+```
+
+so a phone that successfully fetches a policy ends its own release and re-hardens. This phone is
+linked and heartbeating every few minutes, so redeeming the code first buys a window that closes on
+its own — quite possibly before a 13 MB download finishes, and with nothing to say what happened.
+The note in the operator memory that recorded this route recorded it for an **unlinked** phone,
+where the release is permanent for a reason that is invisible until you look: `sync()` catches the
+`401`, returns `SyncResult.Refused`, and never reaches `applyFrom` at all. Same code, opposite
+outcome, decided entirely by whether the credential still works.
+
+So revoke first, and the release becomes permanent for the same reason. `Replace phone` is
+`POST /devices/:id/provisioning`, which calls `ResetEnrollment` and clears `device_token_hash`; from
+that moment every policy fetch is a `401`.
+
+1. **Console → the device card → Recovery code.** `GET /devices/:id/recovery-code` returns the code
+   stored at enrollment, so a code nobody wrote down is not lost. Do not enter it yet.
+2. **Console → Replace phone → confirm.** This revokes the phone — deliberately, and it is what
+   makes step 3 hold.
+3. **On the phone: FamilyGuard → Recovery → the recovery code.** Every managed restriction clears,
+   and no sync can put them back.
+4. **In the phone's own browser, open `/dpc.apk` and install it over the top.** Same signing key, so
+   it is an update: Device Owner, the credential and the app data all survive. The phone is on
+   0.6.0.
+5. **Console → Replace phone again** for a fresh setup code — `enrollmentWindow` is 30 minutes and
+   the one from step 2 has probably expired — then **FamilyGuard → Recovery → Re-link this phone**
+   and type it. The next sync is server-sourced, so it clears recovery mode and re-applies the full
+   policy in the same pass.
+
+**Not measured.** Every line above is read out of the v0.4.0 sources; none of it has been run on the
+phone. The step most likely to disappoint is 4, if some OEM confirmation sits between "unknown
+sources is permitted" and an install completing. The cost of being wrong is a factory reset, which
+is where this section started — so the recovery route is strictly the cheaper thing to try first.
 
 ### 17.8 — what is not proven
 

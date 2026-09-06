@@ -509,12 +509,26 @@ is behind, and the command button reads **Update to 0.6.0**. Both numbers are me
 phone's from its heartbeat, the server's parsed out of the APK on disk at startup — so when either is
 missing the console shows no comparison at all rather than an "up to date" nobody checked.
 
-> **One-time, for phones enrolled on 0.5.0 or earlier: they cannot take this update.** The fix ships
-> *in* the APK, and those builds cannot install one. Their baseline locks `no_install_unknown_sources`
-> and `no_debugging_features` unconditionally, so there is no self-update (that is the bug), no
-> sideload and no adb, and no server-side change reaches any of the three — they are enforced by the
-> DPC that is running. Factory-reset the phone and re-provision it from its QR code (see *Enrolling
-> the first phone*). It is the last time: 0.6.0 onward updates itself.
+> **One-time, for phones enrolled on 0.5.0 or earlier.** The fix ships *in* the APK, and those
+> builds cannot install one by themselves — that is the bug. Nor can the console help: their baseline
+> sets `no_install_unknown_sources` and `no_debugging_features` on every desired state, with no
+> policy field behind either, so there is no sideload and no adb for as long as the phone is being
+> managed. **The recovery code is the way through, and no factory reset is needed** — it releases
+> exactly those restrictions. The order matters, because a phone that reaches the server ends its own
+> release: **revoke first, then recover.**
+>
+> 1. Device card → **Recovery code**, and write it down.
+> 2. Device card → **Replace phone** → confirm. The phone is now revoked, which is what makes the
+>    next step stick.
+> 3. On the phone: FamilyGuard → **Recovery** → the recovery code. Everything lifts.
+> 4. In the phone's own browser open **`https://<your host>/dpc.apk`** and install it over the top.
+>    Same key, so it is an update: Device Owner, the credential and the app data all survive.
+> 5. Device card → **Replace phone** again for a fresh code (the first has a 30-minute life), then
+>    FamilyGuard → **Recovery** → **Re-link this phone**. The next sync re-applies the full policy.
+>
+> It is the last time either way: 0.6.0 onward updates itself. This route is read out of the 0.4.0
+> sources and has not been run on a handset; if step 4 is blocked by something the sources do not
+> show, the factory reset in *Enrolling the first phone* still works.
 
 Signing a new APK with a **different** key breaks provisioning for new devices and cannot upgrade
 existing ones at all. There is no recovery from a lost signing key other than factory-resetting every
@@ -755,6 +769,14 @@ why this looked like a dead end.
 
 Redeeming the recovery code clears every managed restriction, `no_install_unknown_sources` among
 them. So, on the phone itself and with no cable and no computer:
+
+**A revoked phone first, and that is why this order works.** The release ends the moment a policy
+arrives *from the server* — `Synchronizer.applyFrom` clears recovery mode on a server-sourced policy
+and re-applies everything — so on a phone whose credential still works, the release lasts until the
+next sync and no longer, which can be less time than a download. A phone that has been unlinked never
+gets that far: the `401` returns before any policy is applied, so its release stands until somebody
+ends it. If the phone you are recovering is **still linked**, do a **Replace phone** *before* step 1
+to revoke it, and the same four steps then hold.
 
 1. FamilyGuard → **Recovery** → type the recovery code. Everything lifts.
 2. In the phone's own browser open **`https://<your host>/dpc.apk`** and tap the download to
