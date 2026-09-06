@@ -105,20 +105,31 @@ class AndroidInstaller(private val context: Context) {
     }
 
     /**
-     * Commits the staged APK over this app.
+     * Writes the staged APK into an installer session and stops one call short of installing it.
      *
-     * **This kills the calling process**, at a moment the platform chooses, without returning. Every
-     * caller therefore has to have finished what it owes anyone else first — the command
-     * acknowledgement above all, which is why [AppUpdater] hands the commit back rather than calling
-     * it. A device owner does not get the "install unknown apps" prompt, so nothing is on screen and
+     * **Everything that can fail synchronously happens here, and nothing else does.** `createSession`
+     * is what a user restriction refuses, `openWrite` is what a full disk refuses, and both throw —
+     * so doing them before the command is acknowledged is what turns "the update did nothing" into
+     * a refusal a parent reads under the command they pressed. What is left, [StagedSession.commit],
+     * cannot be reported on at all: it kills this process at a moment the platform chooses, which is
+     * why [AppUpdater] hands it back rather than calling it.
+     *
+     * A device owner installs without the "install unknown apps" prompt, so nothing is on screen and
      * nobody taps anything: the child sees the app they cannot remove blink out and come back.
-     *
-     * `commit` needs a status receiver, and this one is real rather than a placeholder: the statuses
-     * that arrive *before* the process dies are the only report of a session that failed to install
-     * at all, and without a receiver they would be dropped.
      */
-    fun install(file: File, packageName: String) {
-        openAndCommit(file, packageName, statusSender(packageName.hashCode()))
+    fun stage(file: File, packageName: String): StagedSession {
+        val installer = context.packageManager.packageInstaller
+        val sessionId = installer.createSession(sessionParams(packageName))
+        try {
+            write(installer, sessionId, file)
+        } catch (e: Throwable) {
+            // An abandoned session frees its staged copy of the APK. Without this a refused update
+            // leaves 13 MB per attempt in the installer's spool on a child's phone, and the phone
+            // that cannot install is exactly the one that will retry.
+            runCatching { installer.abandonSession(sessionId) }
+            throw e
+        }
+        return StagedSession(installer, sessionId, statusSender(packageName.hashCode()))
     }
 
     /**
@@ -132,12 +143,20 @@ class AndroidInstaller(private val context: Context) {
      * report is a phone that tries forever and a console that shows the app as pending forever,
      * which is the shape of every unfalsifiable green in this repository.
      *
-     * [install] does NOT wait, and the difference is deliberate: it replaces *this* app, so the
-     * commit kills the process and there is no "afterwards" to report into.
+     * [stage] does NOT wait, and the difference is deliberate: what it stages replaces *this* app,
+     * so the commit kills the process and there is no "afterwards" to report into.
      */
     fun installAwaiting(file: File, packageName: String): String? =
         awaitStatus(ACTION_MANAGED_INSTALL, packageName) { sender ->
-            openAndCommit(file, packageName, sender)
+            val installer = context.packageManager.packageInstaller
+            val sessionId = installer.createSession(sessionParams(packageName))
+            try {
+                write(installer, sessionId, file)
+                installer.openSession(sessionId).use { it.commit(sender) }
+            } catch (e: Throwable) {
+                runCatching { installer.abandonSession(sessionId) }
+                throw e
+            }
         }
 
     /**
@@ -187,11 +206,28 @@ class AndroidInstaller(private val context: Context) {
     }
 
     /**
-     * One installer session, from create to commit. The single place a session is opened, so the
-     * self-update path and the managed-app path cannot drift into two sets of session parameters.
+     * The parameters every session this app opens is created with. One place, so the self-update
+     * path and the managed-app path cannot drift into two sets of them.
+     *
+     * **[PackageInstaller.SessionParams.setRequireUserAction] is the line this whole class exists
+     * around, and leaving it out is what made FR-15 fail silently on a real phone.** Its documented
+     * default is `USER_ACTION_UNSPECIFIED`, and unspecified means *`USER_ACTION_REQUIRED` for an
+     * installer that declares `REQUEST_INSTALL_PACKAGES`* — which this app does, because the
+     * declaration is what makes the session permitted at all. So every commit answered
+     * `STATUS_PENDING_USER_ACTION`: a request for a tap, handed to an app that is not on screen, on
+     * a phone whose owner is a child. Nothing was installed, nothing was shown, this process was
+     * not killed, and the only trace was one line in a log nobody can read. Measured 2026-09-06 on
+     * the pilot phone: `UPDATE_APP` acknowledged "downloaded and verified; installing now" and the
+     * phone was still on the previous build twenty-four hours later.
+     *
+     * `USER_ACTION_NOT_REQUIRED` is honoured for an installer holding `REQUEST_INSTALL_PACKAGES`
+     * when it is updating itself (the self-update) or is the installer of record (every managed app
+     * after its first), and when the app declares `UPDATE_PACKAGES_WITHOUT_USER_ACTION` — which the
+     * manifest now does, next to the reason. A device owner is separately privileged to install
+     * silently, so there are two independent reasons this holds; the receiver reports it either way
+     * rather than trusting them.
      */
-    private fun openAndCommit(file: File, packageName: String, sender: android.content.IntentSender) {
-        val installer = context.packageManager.packageInstaller
+    private fun sessionParams(packageName: String): PackageInstaller.SessionParams {
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(packageName)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -199,8 +235,13 @@ class AndroidInstaller(private val context: Context) {
             // policy install is not a user-initiated one, and the distinction is what keeps this out
             // of the "recently installed by the user" surfaces a child would look at.
             params.setInstallReason(PackageManager.INSTALL_REASON_POLICY)
+            params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
         }
-        val sessionId = installer.createSession(params)
+        return params
+    }
+
+    /** Copies the archive into an open session and makes sure the bytes are actually on disk. */
+    private fun write(installer: PackageInstaller, sessionId: Int, file: File) {
         installer.openSession(sessionId).use { session ->
             session.openWrite(ENTRY, 0, file.length()).use { sink ->
                 file.inputStream().use { it.copyTo(sink) }
@@ -208,7 +249,6 @@ class AndroidInstaller(private val context: Context) {
                 // and the install fails on a truncated APK that was written correctly.
                 session.fsync(sink)
             }
-            session.commit(sender)
         }
     }
 
@@ -308,29 +348,76 @@ class AndroidInstaller(private val context: Context) {
 }
 
 /**
- * What the installer said about a session this app committed.
+ * An installer session with the APK already in it, waiting for the one call that installs it.
+ *
+ * It exists so that the two halves of an install can happen at two different moments. Creating the
+ * session and writing 13 MB into it can fail, and fails synchronously — a user restriction, a full
+ * disk — so it happens while there is still an acknowledgement to put the reason in. Committing
+ * cannot fail synchronously and cannot be waited for either: it replaces the app this process is,
+ * so the platform kills the process, at a moment it chooses, without returning.
+ *
+ * The session survives being closed. `openSession` is re-openable until the session is committed or
+ * abandoned, which is what makes the split possible at all rather than merely desirable.
+ */
+class StagedSession internal constructor(
+    private val installer: PackageInstaller,
+    private val sessionId: Int,
+    private val sender: android.content.IntentSender,
+) {
+    /** **Kills this process.** Everything owed to anyone else must already have happened. */
+    fun commit() {
+        installer.openSession(sessionId).use { it.commit(sender) }
+    }
+
+    /** Frees the staged copy. Called when the install is abandoned before it is committed. */
+    fun abandon() {
+        runCatching { installer.abandonSession(sessionId) }
+    }
+}
+
+/**
+ * What the installer said about a session this app committed, **recorded where a parent can see it**.
  *
  * Reached in two situations, and they are opposite. A session that *failed* reports here while this
  * process is still alive, and that report is the only record of it — the command was acknowledged
- * as "installing" before the commit, so a silent failure would leave the console showing an update
- * that never happened. A session that *succeeded* usually kills this process before the broadcast
- * is delivered; when it does arrive, it arrives in the new version.
+ * as "installing" before the commit, so a silent failure leaves the console showing an update that
+ * never happened. A session that *succeeded* usually kills this process before the broadcast is
+ * delivered; when it does arrive, it arrives in the new version.
+ *
+ * **Logging it was not enough, and that is not a theory.** Until 2026-09-06 this receiver wrote one
+ * `Log.e` line and stopped there. On the pilot phone every session was answered
+ * `STATUS_PENDING_USER_ACTION` — [AndroidInstaller.sessionParams] explains why — and the whole
+ * failure consisted of that line, in a log on a phone in a school bag, while the console showed an
+ * acknowledged command and a version that never moved. So the reason now goes into [UpdateReport],
+ * which puts it on the next heartbeat.
  */
 class UpdateStatusReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != AndroidInstaller.ACTION_INSTALL_STATUS) return
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, Int.MIN_VALUE)
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty()
+        val report = androidUpdateReport(context)
         when (status) {
-            PackageInstaller.STATUS_SUCCESS ->
+            PackageInstaller.STATUS_SUCCESS -> {
                 Log.i(TAG, "self-update installed")
-            PackageInstaller.STATUS_PENDING_USER_ACTION ->
-                // Not expected on a fully managed device: a device owner installs without a prompt.
-                // If it happens the update is stuck, and saying so is worth more than launching a
-                // dialog onto a child's screen for an app they did not ask to update.
-                Log.e(TAG, "the platform wants a person to confirm this install; a device owner should not be asked")
-            else ->
-                Log.e(TAG, "self-update failed: status=$status $message")
+                report.clear()
+            }
+            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                // Not expected on a fully managed device: a device owner installs without a prompt,
+                // and the session is created asking for none. If it happens anyway the update is
+                // stuck, and saying so to the parent is worth more than launching a dialog onto a
+                // child's screen for an app they did not ask to update.
+                val reason = "Android asked for someone to confirm this install; a device owner " +
+                    "should never be asked, so nothing was installed"
+                Log.e(TAG, reason)
+                report.record(reason, runningVersionCode(context))
+            }
+            else -> {
+                val reason = "Android refused the update: status=$status " +
+                    message.ifEmpty { "(no message)" }
+                Log.e(TAG, reason)
+                report.record(reason, runningVersionCode(context))
+            }
         }
     }
 

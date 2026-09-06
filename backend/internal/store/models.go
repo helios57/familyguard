@@ -131,6 +131,24 @@ type DeviceState struct {
 	// version zero and is rendered as "not reported".
 	AppVersionName string `json:"app_version_name"`
 	AppVersionCode int64  `json:"app_version_code"`
+
+	// UpdateError is why the phone's last self-update did not end with a new build running, in the
+	// platform's own words, and "" when there is nothing to report (FR-15.7). It exists because the
+	// UPDATE_APP acknowledgement is sent before the install and therefore proves nothing about it:
+	// the failure it now carries was, before this field, visible only as a version that never
+	// changed on a phone whose every other signal was green.
+	UpdateError   string     `json:"update_error"`
+	UpdateErrorAt *time.Time `json:"update_error_at,omitempty"`
+
+	// ReportedUpdateError is the WRITE side of the field above, and it is separate because the two
+	// have different shapes for a reason. Reading, the column is NOT NULL and "" means "nothing to
+	// report". Writing, there is a third state: a DPC old enough not to know about the field sends
+	// no key at all, and that must leave the stored value alone rather than clear it. A single
+	// string could not tell those apart, and the one it would get wrong is the one that matters —
+	// an old build's heartbeat silently erasing a real failure a newer build reported.
+	//
+	// Never serialised: it is an input to TouchDevice and nothing reads it back.
+	ReportedUpdateError *string `json:"-"`
 }
 
 // Policy is a child's governance settings. DailyLimitMinutes of 0 means "no quota".

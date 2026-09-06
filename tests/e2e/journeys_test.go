@@ -65,6 +65,11 @@ type deviceStateDTO struct {
 	// Three-valued (FR-3.6): nil is a phone that has not said, false is one that measured that it
 	// cannot see usage at all. A bool here would make those the same answer.
 	UsageAccess *bool `json:"usage_access"`
+
+	// Why the last self-update did not install anything, in the platform's own words (FR-15.7).
+	// Empty is "nothing to report", which is also what an older DPC that cannot report sends.
+	UpdateError   string     `json:"update_error"`
+	UpdateErrorAt *time.Time `json:"update_error_at"`
 }
 
 type deviceViewDTO struct {

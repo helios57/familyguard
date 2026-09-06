@@ -19,12 +19,20 @@ import java.util.Base64
  * other application is refused before it is parsed for a version; the managed-app path passes the
  * package the parent declared, so a catalog row whose file was swapped for a different application
  * cannot install that application instead.
+ *
+ * [versionCode] is what makes an update check affordable enough to run on a timer (FR-15.6). It is
+ * a *claim*, not a verification: the archive's own version code is read after the download and is
+ * what every decision below the download is made on. Zero means the server did not say, which is
+ * what an older control plane sends, and the answer to that is to download and find out — the
+ * behaviour every caller had before this field existed.
  */
 data class ApkInfo(
     val packageName: String,
     val url: String,
     val packageChecksum: String,
     val size: Long,
+    val versionCode: Long = 0,
+    val versionName: String = "",
 )
 
 /**
@@ -76,7 +84,13 @@ sealed interface UpdateOutcome {
  * half of the product needs a factory reset and a re-scan of a QR code, on a phone that belongs to
  * a child.
  *
- * **Six checks, in this order, before anything is committed.** Each one is here because the
+ * **One check before the download, and six after it.** The first is the cheap one that makes an
+ * automatic update loop affordable: when the server has declared which version it hosts and that
+ * version is not newer than what is installed, the attempt ends there, having spent one small
+ * request instead of 13 MB. It can only ever end an attempt early — see the comment on the
+ * comparison — so nothing below it is weakened by trusting a claim.
+ *
+ * **The other six, in this order, before anything is committed.** Each one is here because the
  * platform's own version of the same check fails later, more quietly, or on the phone:
  *
  *  1. **The size the server declared.** A download that ends early is the ordinary failure on a
@@ -119,7 +133,21 @@ class AppUpdater(
     private val staging: () -> File,
     private val identify: (File) -> ApkIdentity?,
     private val installed: (packageName: String) -> ApkIdentity?,
-    private val install: (file: File, packageName: String) -> Unit,
+    /**
+     * Puts the verified archive where the platform can install it, and hands back the one call that
+     * does. **When the platform work happens is the caller's decision, and the two callers differ.**
+     *
+     * The self-update opens the installer session here, eagerly, so that everything able to throw —
+     * a user restriction, a full disk — throws while there is still a command acknowledgement to
+     * put the reason in; what it hands back is the commit, which kills the process. The managed-app
+     * path does the opposite and hands back a thunk that does all of it, because its whole
+     * platform half has to run inside the window where `no_install_apps` is lifted, and the download
+     * that precedes it must not.
+     *
+     * A throw from here is a refusal with the platform's own words in it. A throw from the thunk is
+     * the managed-app applier's to catch.
+     */
+    private val stage: (file: File, packageName: String) -> () -> Unit,
     private val log: (String) -> Unit = {},
 ) {
 
@@ -134,6 +162,21 @@ class AppUpdater(
         }
         if (want.packageChecksum.isBlank()) {
             return UpdateOutcome.Refused("the server hosts no build of ${want.packageName} to install")
+        }
+
+        // Read before the download rather than after it, so that the comparison below can be made
+        // without spending 13 MB of a child's mobile data to establish it.
+        val current = installed(want.packageName)
+
+        // **The check that makes an automatic update loop possible** (FR-15.6). Every other check in
+        // this function is made on the archive, after the download, and has to be: a claim by the
+        // server about what it hosts is not evidence about the bytes it served. This one is
+        // different because it can only end the attempt *early* — a server claiming a version that
+        // is not newer cannot cause an install, it can only cause this phone not to download. A
+        // server that lies the other way gains nothing: the archive's real version code is checked
+        // below and a downgrade is still refused there.
+        if (want.versionCode > 0 && current != null && want.versionCode <= current.versionCode) {
+            return UpdateOutcome.AlreadyCurrent(current)
         }
 
         val file = staging()
@@ -170,7 +213,6 @@ class AppUpdater(
             // replace they have no question to answer and are skipped rather than given a
             // stand-in — an ApkIdentity of zeroes would compare its empty signer against a real one
             // and refuse every first install.
-            val current = installed(want.packageName)
             if (current != null) {
                 if (!archive.signerSha256.equals(current.signerSha256, ignoreCase = true)) {
                     return UpdateOutcome.Refused(
@@ -193,15 +235,25 @@ class AppUpdater(
                 "staged ${archive.packageName} ${archive.versionName} (build ${archive.versionCode}) over " +
                     (current?.versionName?.ifEmpty { "build ${current.versionCode}" } ?: "nothing")
             )
-            // The staged file outlives this function on purpose: the installer reads it during the
-            // commit, which happens after the acknowledgement. It is deleted by the next update.
+            // The staged file outlives this function on purpose: the installer may read it during
+            // the commit, which happens after the acknowledgement. It is deleted by the next update.
             //
+            // **This is the last thing that can be reported on.** Whatever the caller does here —
+            // open a session now, or defer the whole of it — a throw from it is a refusal with a
+            // reason, and past this line there is nothing left that can produce one: the commit
+            // ends the process. Before this call was made here, a platform refusal happened after
+            // the acknowledgement had already said "installing now", and was logged to a log on the
+            // phone and to nothing else.
+            val commit = try {
+                stage(file, want.packageName)
+            } catch (e: Exception) {
+                return UpdateOutcome.Refused("the platform refused to stage this install (${reason(e)})")
+            }
+
             // fromVersionCode is 0 for a first install, which is the same number the server already
             // uses for "never reported" — there is no build to have come from, and inventing one
             // would put a version in the audit trail that was never on the phone.
-            return UpdateOutcome.Staged(archive, current?.versionCode ?: 0L) {
-                install(file, want.packageName)
-            }
+            return UpdateOutcome.Staged(archive, current?.versionCode ?: 0L, commit)
         } catch (e: Exception) {
             return UpdateOutcome.Refused(reason(e))
         }

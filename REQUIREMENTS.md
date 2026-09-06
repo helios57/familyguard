@@ -271,6 +271,19 @@ time on a device that is already enrolled and already hardened.
   per device.
 - FR-15.5 A DPC that has replaced itself resumes enforcing on its own, without the child or the
   parent touching the phone, and without waiting for the next reboot.
+- FR-15.6 A device installs a newer hosted build **by itself**, without a parent pressing anything.
+  FR-15.2 stays — a parent can still ask — but it is the shortcut, not the mechanism. Nobody watches
+  a version number on a child's phone, so an update that needs to be asked for is an update that
+  does not happen; and the phones that most need a fix are the ones whose parent is least likely to
+  be looking. The device decides, on evidence it can obtain cheaply: the control plane states the
+  version it hosts (FR-15.1), so a device that is already current spends one small request and no
+  download. Every refusal in FR-15.3 still applies, unchanged, to the archive that is downloaded.
+- FR-15.7 A self-update that did not result in a new build running is **reported to the parent**,
+  in the platform's own words, and the report clears itself once a newer build is seen running. The
+  acknowledgement in FR-15.4 is a statement about the future: it is sent before the install and says
+  nothing about whether the install happened. Without this requirement every failure downstream of
+  it is invisible — the command shows acknowledged, the phone keeps reporting, and the version
+  simply never changes, which looks identical to a phone that is already current.
 
 ### FR-16 Applications the parent chooses (managed apps)
 A locked-down phone cannot install anything, which is the point — and it is also why a child ends

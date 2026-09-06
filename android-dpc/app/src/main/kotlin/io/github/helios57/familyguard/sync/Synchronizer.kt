@@ -261,6 +261,7 @@ class Synchronizer(
                 appVersionName = t.appVersionName,
                 appVersionCode = t.appVersionCode,
                 usageAccess = t.usageAccess,
+                updateError = t.updateError,
             )
         ).pendingCommands
     }
@@ -305,4 +306,10 @@ data class DeviceTelemetry(
      * minutes and zero measurable minutes look identical until the phone says which one it is.
      */
     val usageAccess: Boolean? = null,
+    /**
+     * Why the last self-update did not happen, "" when there is nothing to report, null when this
+     * build does not report it at all (FR-15.7). See `UpdateReport` for why it is a status rather
+     * than an event: the process that would have sent the "it worked" is the one the install kills.
+     */
+    val updateError: String? = null,
 )

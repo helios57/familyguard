@@ -75,8 +75,9 @@ class ManagedAppApplier(
         var removed = 0
         hardening.withoutRestrictions(LIFTED) {
             for ((app, ready) in staged) {
-                // The updater hands the commit back rather than calling it, so that this — and
-                // only this — happens inside the window.
+                // The updater hands the whole platform half back rather than doing any of it, so
+                // that all of it — the session, the write and the commit — happens inside the
+                // window. The download that preceded it did not, which is the point.
                 val failure = runCatching { ready.commit() }.exceptionOrNull()
                     ?.let { it.message ?: it.javaClass.simpleName }
                 if (failure == null) installed++ else problems[app.packageName] = failure
@@ -94,14 +95,23 @@ class ManagedAppApplier(
         )
     }
 
-    private companion object {
+    companion object {
         /**
          * The two restrictions that stop a device owner adding or removing a package.
+         *
+         * `no_install_apps` is documented by the platform as preventing "device owners and profile
+         * owners installing apps" — it binds the app that set it, which is what makes this window
+         * necessary rather than defensive.
          *
          * `no_install_unknown_sources` is deliberately NOT here. It governs installs from a source
          * the platform does not trust, and a `PackageInstaller` session opened by the device owner
          * is not one — lifting it would weaken the phone for the benefit of an operation it does
          * not bind.
+         *
+         * Public because the **self-update** needs the identical window (FR-15). It was missing
+         * there: a family with "let this child install apps" switched off had `no_install_apps` in
+         * effect, and every self-update would have been refused by `createSession` with no session
+         * ever opened. See `ConnectionService.selfUpdater`.
          */
         val LIFTED = listOf(
             EnforcementEngine.RESTRICTION_INSTALL_APPS,

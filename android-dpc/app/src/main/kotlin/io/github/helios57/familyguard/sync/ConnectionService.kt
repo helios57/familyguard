@@ -72,6 +72,9 @@ import io.github.helios57.familyguard.store.encryptedPreferences
 import io.github.helios57.familyguard.update.AndroidInstaller
 import io.github.helios57.familyguard.update.ApkInfo
 import io.github.helios57.familyguard.update.AppUpdater
+import io.github.helios57.familyguard.update.UpdateOutcome
+import io.github.helios57.familyguard.update.androidUpdateReport
+import io.github.helios57.familyguard.update.runningVersionCode
 import io.github.helios57.familyguard.usage.DayAttribution
 import io.github.helios57.familyguard.usage.EncryptedUsageStore
 import io.github.helios57.familyguard.usage.ScreenOnClock
@@ -406,6 +409,10 @@ class ConnectionService : Service() {
         val installs = registerInstallWatcher(synchronizer, reports, commands)
         val screen = registerScreenWatcher(reports)
         val polling = scope.launch { pollWhileAwake(synchronizer, reports) }
+        // Started only once the first sync has succeeded, so a phone whose credential the server
+        // refuses never downloads an APK it has no business installing. Not gated on the screen
+        // being on, unlike the poll: an update is best taken from a phone nobody is holding.
+        val updates = scope.launch { updateLoop(api, policy) }
         try {
             stream.run()
         } catch (_: StopConnection) {
@@ -414,6 +421,7 @@ class ConnectionService : Service() {
             live = null
             journal = null
             polling.cancel()
+            updates.cancel()
             runCatching { unregisterReceiver(installs) }
             runCatching { unregisterReceiver(screen) }
         }
@@ -898,13 +906,16 @@ class ConnectionService : Service() {
                     staging = { installer.staging(app.packageName) },
                     identify = installer::identify,
                     installed = installer::installed,
-                    // Throwing is the return channel here, and deliberately: `commit` is
-                    // `() -> Unit` because the self-update path hands it to the command
-                    // acknowledgement as an `after` hook, and a platform failure on THIS path has
-                    // to reach the applier's problem map. ManagedAppApplier catches it and records
-                    // the text against the package.
-                    install = { file, pkg ->
-                        installer.installAwaiting(file, pkg)?.let { throw IOException(it) }
+                    // Nothing platform-side happens here: the thunk is built and handed straight
+                    // back, so every part of it runs inside `ManagedAppApplier`'s window where
+                    // `no_install_apps` is lifted. Throwing from inside it is the return channel,
+                    // and deliberately — the applier catches it and records the text against the
+                    // package, which is how a parent learns that one declared app could not be
+                    // installed while the rest were.
+                    stage = { file, pkg ->
+                        {
+                            installer.installAwaiting(file, pkg)?.let { throw IOException(it) }
+                        }
                     },
                     log = { Log.i(TAG, "managed app: $it") },
                 ).update()
@@ -912,6 +923,150 @@ class ConnectionService : Service() {
             uninstall = installer::uninstallAwaiting,
             log = { Log.i(TAG, it) },
         )
+    }
+
+    /**
+     * The FR-15 self-update, wired to this device's platform, its credential and its restrictions.
+     *
+     * One function, two callers: the `UPDATE_APP` command a parent presses, and the automatic check
+     * that runs on a timer (FR-15.6). They must not be two wirings — a fix applied to one of them
+     * and not the other is a phone that updates when watched and not otherwise.
+     *
+     * **The restriction window is new and it was a latent break.** `no_install_apps` is documented
+     * as preventing "device owners and profile owners installing apps", and this device sets it on
+     * itself whenever a parent switches off "let this child install apps". `ManagedAppApplier` has
+     * always opened a window around its installs for exactly that reason; the self-update never
+     * did, so on any family with that switch off, `createSession` would have thrown and the update
+     * would have failed — silently, before this release, because the throw happened after the
+     * acknowledgement. The window is opened twice and each time around one platform call, because
+     * the download between them must not run with installs enabled.
+     */
+    private fun selfUpdater(api: ApiClient, policy: DeviceOwnerPolicy?): AppUpdater {
+        val installer = AndroidInstaller(this)
+        val report = androidUpdateReport(this)
+        return AppUpdater(
+            info = {
+                val r = api.apkInfo()
+                // The package is stated here rather than taken from the response: this replaces
+                // THIS app, and an apk-info naming something else must be refused rather than
+                // installed alongside. The server never sends it.
+                ApkInfo(
+                    packageName = packageName,
+                    url = r.url,
+                    packageChecksum = r.packageChecksum,
+                    size = r.size,
+                    versionCode = r.versionCode,
+                    versionName = r.versionName,
+                )
+            },
+            // The download is deliberately NOT an ApiClient call: /dpc.apk is unauthenticated by
+            // design — a factory-reset phone fetches it during provisioning with no credential —
+            // and sending this device's bearer token to an absolute URL the server named is how a
+            // token leaves the deployment it belongs to. The URL is used, the credential is not.
+            open = { url -> URL(url).openStream() },
+            staging = { installer.staging(packageName) },
+            identify = installer::identify,
+            installed = installer::installed,
+            stage = { file, pkg ->
+                // Eagerly, inside the window: this is the call that a user restriction refuses, and
+                // it has to refuse while there is still an acknowledgement to carry the reason.
+                val session = withInstalls(policy) { installer.stage(file, pkg) }
+                ({
+                    // **Written before the commit, and this is the load-bearing half of FR-15.7.**
+                    // Past this point nothing on this phone can report anything: the commit ends
+                    // this process, and if the install does not happen there is no "afterwards" in
+                    // which to notice. So the pessimistic answer is recorded first, and a build
+                    // higher than this one running is what deletes it — meaning a successful update
+                    // clears the record by being successful, and a failed one leaves the parent a
+                    // line saying so even if the installer never reports at all. That is exactly
+                    // the case that went unnoticed for a day on the pilot phone.
+                    report.record(
+                        "an update was downloaded, verified and handed to Android, and this phone " +
+                            "is still running the build it had before",
+                        runningVersionCode(this),
+                    )
+                    withInstalls(policy) { session.commit() }
+                })
+            },
+            log = { Log.i(TAG, "update: $it") },
+        )
+    }
+
+    /**
+     * Runs [body] with the two restrictions that stop a device owner installing anything lifted.
+     *
+     * A no-op when this app is not the device owner, which is the only state in which there is
+     * nothing to lift and nothing that could be refused for this reason.
+     *
+     * The window can be left open by a commit that kills the process before the `finally` runs.
+     * That is survivable and is not worth defending against: the very next sync re-applies the whole
+     * restriction set, and the alternative — not lifting — is an update that cannot happen at all.
+     */
+    private fun <T> withInstalls(policy: DeviceOwnerPolicy?, body: () -> T): T =
+        policy?.hardening?.withoutRestrictions(ManagedAppApplier.LIFTED, body) ?: body()
+
+    /**
+     * Takes the build the server hosts, on a timer, without anyone pressing anything (FR-15.6).
+     *
+     * **The owner's requirement is "as soon as there is a new version available", and this is the
+     * honest reading of it.** Nothing pushes a new APK: the file is installed on the node out of
+     * band and the control plane hashes it at startup, so the moment a new build becomes visible is
+     * a deploy, and a check every [UPDATE_CHECK_INTERVAL_MILLIS] turns that into at most that much
+     * delay. The check itself is one small authenticated GET — the version comparison happens
+     * against the number the server declares, so a converged phone downloads nothing at all.
+     *
+     * **A refusal backs off and is reported.** Retrying a failing update every quarter of an hour
+     * would re-download 13 MB each time on a child's connection and would fill the console with the
+     * same line; and a failure nobody sees is the defect this whole release is about. So the reason
+     * goes to [UpdateReport], which puts it on the next heartbeat, and the next attempt waits
+     * [UPDATE_RETRY_BACKOFF_MILLIS].
+     *
+     * It holds [syncLock] for the attempt, so an update cannot commit in the middle of a policy
+     * being applied. It never calls back into a sync, so it cannot deadlock on it.
+     */
+    private suspend fun updateLoop(api: ApiClient, policy: DeviceOwnerPolicy?) {
+        val report = androidUpdateReport(this)
+        var wait = UPDATE_FIRST_CHECK_MILLIS
+        while (true) {
+            delay(wait)
+            wait = UPDATE_CHECK_INTERVAL_MILLIS
+            val outcome = syncLock.withLock {
+                withContext(Dispatchers.IO) { runCatching { selfUpdater(api, policy).update() } }
+            }
+            val failure = outcome.exceptionOrNull()
+            if (failure != null) {
+                // The check itself did not complete — no server, no answer. Not recorded as an
+                // update failure: nothing was attempted, and a phone that is merely offline must
+                // not show a parent a red line about an update.
+                Log.w(TAG, "update check: ${failure.message ?: failure.javaClass.simpleName}")
+                continue
+            }
+            when (val result = outcome.getOrThrow()) {
+                is UpdateOutcome.AlreadyCurrent ->
+                    Log.i(TAG, "update check: already on build ${result.identity.versionCode}")
+                is UpdateOutcome.Refused -> {
+                    Log.e(TAG, "update check refused: ${result.reason}")
+                    report.record(result.reason, runningVersionCode(this@ConnectionService))
+                    wait = UPDATE_RETRY_BACKOFF_MILLIS
+                }
+                is UpdateOutcome.Staged -> {
+                    Log.i(
+                        TAG,
+                        "update check: installing ${result.identity.versionName} " +
+                            "(build ${result.fromVersionCode} \u2192 ${result.identity.versionCode})"
+                    )
+                    // The commit writes its own pessimistic record first — see selfUpdater — so
+                    // there is nothing to arm here. It normally does not return: it ends this
+                    // process. A throw means it did not even get that far.
+                    runCatching { result.commit() }.exceptionOrNull()?.let {
+                        val reason = "the install could not be committed (${it.message ?: it.javaClass.simpleName})"
+                        Log.e(TAG, reason)
+                        report.record(reason, runningVersionCode(this@ConnectionService))
+                        wait = UPDATE_RETRY_BACKOFF_MILLIS
+                    }
+                }
+            }
+        }
     }
 
     private fun commandQueue(
@@ -937,36 +1092,7 @@ class ConnectionService : Service() {
                     }
                 }
             },
-            update = {
-                val installer = AndroidInstaller(this)
-                AppUpdater(
-                    info = {
-                        val r = api.apkInfo()
-                        // The package is stated here rather than taken from the response: this
-                        // command replaces THIS app, and an apk-info naming something else must be
-                        // refused rather than installed alongside. The server never sends it.
-                        ApkInfo(
-                            packageName = packageName,
-                            url = r.url,
-                            packageChecksum = r.packageChecksum,
-                            size = r.size,
-                        )
-                    },
-                    // The download is deliberately NOT an ApiClient call: /dpc.apk is
-                    // unauthenticated by design — a factory-reset phone fetches it during
-                    // provisioning with no credential — and sending this device's bearer token to
-                    // an absolute URL the server named is how a token leaves the deployment it
-                    // belongs to. The URL is used, the credential is not.
-                    open = { url -> URL(url).openStream() },
-                    staging = { installer.staging(packageName) },
-                    identify = installer::identify,
-                    installed = installer::installed,
-                    // Fire and forget, and it must stay that way: this commit kills the process, so
-                    // there is no status to wait for and nothing left to report it to.
-                    install = installer::install,
-                    log = { Log.i(TAG, "update: $it") },
-                ).update()
-            },
+            update = { selfUpdater(api, policy).update() },
         ).asMap()
         return CommandQueue(
             fetch = { api.commands() },
@@ -996,6 +1122,7 @@ class ConnectionService : Service() {
 
     private fun telemetry(): DeviceTelemetry {
         val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val update = androidUpdateReport(this).pending(runningVersionCode(this))
         val level = battery?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = battery?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
         val status = battery?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
@@ -1020,6 +1147,11 @@ class ConnectionService : Service() {
             // Read on every heartbeat, not once at start: the appop is granted by hand in Settings
             // and can be revoked the same way, and the console must follow it in both directions.
             usageAccess = UsageAccess.granted(this),
+            // "" is a phone with nothing to report and clears whatever the server was showing;
+            // text is the last self-update that did not end with a new build running (FR-15.7).
+            // Read here rather than pushed from the updater because the heartbeat is the only
+            // channel that survives the process being replaced mid-install.
+            updateError = update,
             connectivity = when {
                 capabilities == null -> "none"
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
@@ -1371,6 +1503,38 @@ class ConnectionService : Service() {
          * minutes left" into a number that was true a while ago.
          */
         private const val POLL_INTERVAL_MILLIS = 5 * 60 * 1000L
+
+        /**
+         * How long after the connection settles the first automatic update check runs.
+         *
+         * Not immediately. A phone coming back from a reboot has an enrollment, a policy, a
+         * notification channel and an inventory to get through first, and an update that replaced
+         * this app in the middle of that would restart every one of them. Two minutes is long
+         * enough for that to be finished and short enough that a parent who has just deployed a
+         * build does not conclude nothing happened.
+         */
+        private const val UPDATE_FIRST_CHECK_MILLIS = 2 * 60 * 1000L
+
+        /**
+         * How often the phone asks whether the server hosts a newer build (FR-15.6).
+         *
+         * A new build becomes visible when the control plane restarts — it hashes the APK on the
+         * node at startup — so this is the delay between a deploy and a phone taking it. The check
+         * costs one small authenticated GET, and a phone already on the current build downloads
+         * nothing: the comparison is made against the version the server declares.
+         */
+        private const val UPDATE_CHECK_INTERVAL_MILLIS = 15 * 60 * 1000L
+
+        /**
+         * How long the phone waits after a refused update before trying again.
+         *
+         * Long, deliberately. A refusal that is going to repeat — a signature that will never match,
+         * an installer the platform will not run — repeats every time, and retrying it every quarter
+         * of an hour costs a 13 MB download on a child's connection for each one. The reason is on
+         * the console the whole time (FR-15.7), so the parent is not waiting on the retry to find
+         * out something is wrong.
+         */
+        private const val UPDATE_RETRY_BACKOFF_MILLIS = 6 * 60 * 60 * 1000L
 
         /** The provisioning admin extras, as the platform delivered them. */
         const val EXTRA_ADMIN_EXTRAS = "io.github.helios57.familyguard.ADMIN_EXTRAS"

@@ -526,6 +526,12 @@ class ManifestAndPlatformCallsTest {
             // APK this app installs is one whose checksum its own server published and whose signing
             // certificate equals this app's own.
             "android.permission.REQUEST_INSTALL_PACKAGES" to "installing the DPC over itself",
+            // The other half of that, and the half whose absence is silent. Holding
+            // REQUEST_INSTALL_PACKAGES is what makes an unspecified session default to
+            // USER_ACTION_REQUIRED, so without this declaration the platform answers every commit
+            // with STATUS_PENDING_USER_ACTION and installs nothing. Normal-level, API 31+, and
+            // exercised in `an installer that could be asked for a tap declares the exemption`.
+            "android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" to "installing without a tap",
             // Not authored here: androidx.core injects it, and a matching signature-level
             // <permission> declaration, because ConnectionService registers the install watcher with
             // ContextCompat.RECEIVER_NOT_EXPORTED. It is scoped to this app's own package name and
@@ -557,6 +563,105 @@ class ManifestAndPlatformCallsTest {
             "the source manifest no longer authors the permissions this app depends on directly",
             needed.keys.filter { it.startsWith("android.permission.") }.toSet(),
             authored,
+        )
+    }
+
+    /**
+     * The pairing that made FR-15 fail silently on the pilot phone, held together in one test
+     * because either half alone is a working-looking app that never installs anything.
+     *
+     * Measured 2026-09-06: the DPC declared `REQUEST_INSTALL_PACKAGES` and never called
+     * `setRequireUserAction`. That declaration is exactly what makes the documented default
+     * `USER_ACTION_UNSPECIFIED` behave as `USER_ACTION_REQUIRED`, so every commit was answered
+     * `STATUS_PENDING_USER_ACTION` — a request for a tap, delivered to an app with no UI, on a
+     * child's phone. The command was acknowledged as "installing now", the phone kept heartbeating,
+     * and the version never moved.
+     *
+     * There is no runtime test for this: an unprovisioned device, which is every device in CI,
+     * refuses the session for a different reason and reports the same nothing.
+     */
+    @Test
+    fun `an installer that could be asked for a tap declares the exemption and asks for none`() {
+        val installer = sources.single { it.name == "AndroidInstaller.kt" }
+        val text = code(installer)
+        val sessionParams = "PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)"
+
+        // The positive controls. Each assertion below is an *absence* check, and an absence found
+        // in a file that was not read has the same shape as a clean result.
+        assertTrue(
+            "AndroidInstaller.kt does not construct an installer session, so this test is " +
+                "scanning the wrong file",
+            text.contains(sessionParams),
+        )
+        assertTrue(
+            "the source manifest no longer asks to install packages, so the pairing below is moot " +
+                "and this test would pass by checking nothing",
+            usesPermissionsIn(manifest).contains("android.permission.REQUEST_INSTALL_PACKAGES"),
+        )
+
+        assertTrue(
+            "REQUEST_INSTALL_PACKAGES is declared without UPDATE_PACKAGES_WITHOUT_USER_ACTION; " +
+                "the platform treats every session as USER_ACTION_REQUIRED and installs nothing",
+            usesPermissionsIn(manifest).contains("android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"),
+        )
+        assertTrue(
+            "no session sets USER_ACTION_NOT_REQUIRED; an unspecified session from an installer " +
+                "holding REQUEST_INSTALL_PACKAGES asks for a tap nobody is there to give",
+            text.contains("setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)"),
+        )
+        assertEquals(
+            "the self-update path and the managed-app path must build their session parameters in " +
+                "one place; two constructions are two sets of parameters that drift, and the one " +
+                "that drifts is the one nobody watches",
+            1,
+            text.split(sessionParams).size - 1,
+        )
+    }
+
+    /**
+     * The parent's button and the timer reach the same updater (FR-15.6).
+     *
+     * They are two entry points into one feature, and the failure mode is not that one of them
+     * breaks — it is that one of them is *fixed*. The command path is the one a person exercises
+     * when they are watching, so it is the one that gets the next correction; the timer path is the
+     * one that runs on 4 500 phones at 03:00 and nobody looks at. Two constructions of [AppUpdater]
+     * in this file is that split, and it has no symptom until a fleet stops updating.
+     *
+     * Counted rather than inspected: this reads as "how many places decide what an update is", and
+     * the answer has to be one.
+     */
+    @Test
+    fun `the update button and the update timer are one wiring, not two`() {
+        val service = sources.single { it.name == "ConnectionService.kt" }
+        val text = code(service)
+
+        // The positive control: both entry points are still in this file at all. Without it, a
+        // rename would make every count below zero and the test would report agreement.
+        assertTrue(
+            "ConnectionService.kt no longer runs an automatic update check, so this test is " +
+                "scanning a file that has stopped carrying the thing it is about",
+            text.contains("private suspend fun updateLoop("),
+        )
+        assertEquals(
+            "the self-update is built in ${text.split("selfUpdater(api, policy)").size - 1} places; " +
+                "it must be exactly the two callers — the parent's command and the timer — both " +
+                "going through one builder",
+            2,
+            text.split("selfUpdater(api, policy)").size - 1,
+        )
+        assertEquals(
+            "there is more than one builder, so a fix applied to one of them leaves the other on " +
+                "the old behaviour",
+            1,
+            text.split("private fun selfUpdater(").size - 1,
+        )
+
+        // The loop is launched into the connection's scope and cancelled with it. A coroutine that
+        // outlives the connection is a second updater running against a stale ApiClient, and the
+        // symptom is an update that reports failures from a session that no longer exists.
+        assertTrue(
+            "the update loop is not cancelled when the connection ends",
+            text.contains("updates.cancel()"),
         )
     }
 

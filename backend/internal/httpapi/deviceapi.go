@@ -128,6 +128,37 @@ type heartbeatRequest struct {
 	// carried through as absence: an older DPC omits it, and recording that as "no access" would
 	// put a false warning on every phone that has not been updated.
 	UsageAccess *bool `json:"usage_access"`
+
+	// UpdateError is why the last self-update did not end with a new build running, in the
+	// platform's own words, or "" when the phone has nothing to report (FR-15.7). A pointer for
+	// the same reason as the field above and with a sharper edge: this is the field that says an
+	// update FAILED, and letting an older DPC's heartbeat clear it would hide exactly the failure
+	// it exists to surface.
+	UpdateError *string `json:"update_error"`
+}
+
+// maxUpdateErrorRunes bounds what one phone may write into the field a parent reads.
+//
+// The text is the platform's own message and is displayed verbatim, which is the point of it — a
+// paraphrase would be this server guessing at an Android error it has never seen. Bounding it is
+// not distrust of the DPC so much as of the platform: `EXTRA_STATUS_MESSAGE` has no documented
+// limit, and a console line is a console line.
+const maxUpdateErrorRunes = 400
+
+// clampUpdateError normalises what the phone sent, preserving the three states the column needs.
+//
+// nil stays nil — a DPC that does not report the field must not clear what a newer one wrote.
+// Everything else is trimmed and truncated; a value that is only whitespace becomes "", which is
+// the phone saying it has nothing to report and is what clears the line.
+func clampUpdateError(reported *string) *string {
+	if reported == nil {
+		return nil
+	}
+	text := strings.TrimSpace(*reported)
+	if r := []rune(text); len(r) > maxUpdateErrorRunes {
+		text = string(r[:maxUpdateErrorRunes])
+	}
+	return &text
 }
 
 // heartbeat records liveness and tells the device whether it is behind.
@@ -156,6 +187,8 @@ func (s *Server) heartbeat(c *gin.Context) {
 		AppVersionName: strings.TrimSpace(req.AppVersionName),
 		AppVersionCode: req.AppVersionCode,
 		UsageAccess:    req.UsageAccess,
+
+		ReportedUpdateError: clampUpdateError(req.UpdateError),
 	}); err != nil {
 		s.fail(c, err)
 		return
@@ -462,7 +495,7 @@ func (s *Server) apkInfo(c *gin.Context) {
 		failWith(c, http.StatusServiceUnavailable, "apk_unavailable", "the DPC is temporarily unavailable")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	out := gin.H{
 		// Absolute, from the same PublicURL the provisioning QR is built from, so the device never
 		// has to join a base to a path and never has to guess a scheme.
 		"url":              strings.TrimSuffix(s.cfg.PublicURL.String(), "/") + APKDownloadPath,
@@ -471,7 +504,21 @@ func (s *Server) apkInfo(c *gin.Context) {
 		// that ended early before spending the CPU to hash 13 MB, and what makes "the proxy
 		// truncated it" distinguishable from "the file changed" in the failure the parent sees.
 		"size": info.Size(),
-	})
+	}
+	// **What makes an automatic update possible at all** (FR-15.6). Without a version here the only
+	// way for a phone to learn whether it is behind is to download 13 MB and read the archive, which
+	// is affordable once when a parent presses a button and not on a timer. It is read from the APK
+	// on disk at startup, by the same parser the app catalog uses — never configured, never typed.
+	//
+	// Absent when the file could not be parsed, and absent is not zero: the device treats a missing
+	// version as "the server did not say" and falls back to downloading, which is the behaviour it
+	// had before this field existed.
+	if s.hostedAPK != nil {
+		out["package_name"] = s.hostedAPK.PackageName
+		out["version_code"] = s.hostedAPK.VersionCode
+		out["version_name"] = s.hostedAPK.VersionName
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // maxCriticalPackages bounds what one device may add to the critical whitelist.

@@ -111,3 +111,36 @@ func (s *Server) serveAPK(c *gin.Context) {
 	// happened to be correct a moment earlier.
 	http.ServeContent(c.Writer, c.Request, "familyguard.apk", info.ModTime(), f)
 }
+
+// hostedDPC answers what build of the DPC this deployment is serving.
+//
+// **The console cannot work this out for itself, and before this endpoint it did not try.** The
+// "Update app" button was offered unconditionally, with a comment saying the server does not parse
+// the APK it hosts and therefore does not know its version — which was true, and which meant a
+// parent could not tell a phone that is up to date from one that is three builds behind. The phone
+// could tell, but only after downloading 13 MB, and only when asked.
+//
+// Parent-authenticated rather than public: it names the package and version of the artifact the
+// unauthenticated /dpc.apk serves, which is not a secret, but a deployment's version inventory is
+// not something to volunteer to the internet either.
+func (s *Server) hostedDPC(c *gin.Context) {
+	if s.cfg.APKPath == "" || s.hostedAPK == nil {
+		// 200 and "hosted": false, not 404. "This deployment hosts no DPC" is a configuration a
+		// server may legitimately have, and the console draws it as a plain absence — a 404 would
+		// make an ordinary state arrive as an error the page has to distinguish from a real one.
+		c.JSON(http.StatusOK, gin.H{"hosted": false})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"hosted":       true,
+		"package_name": s.hostedAPK.PackageName,
+		"version_name": s.hostedAPK.VersionName,
+		"version_code": s.hostedAPK.VersionCode,
+		"min_sdk":      s.hostedAPK.MinSDK,
+		"size":         s.hostedAPK.Size,
+		// The same value every provisioning QR carries, and the same one the phone re-computes
+		// after downloading. Published here so a parent comparing a release page with a running
+		// deployment has one number to compare rather than a version string that can be reused.
+		"package_checksum": s.packageChecksum,
+	})
+}

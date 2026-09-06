@@ -478,9 +478,14 @@ kubectl -n familyguard rollout restart deploy/familyguard-control-plane
 The signature checksum does not change as long as the signing key does not, so an updated APK signed
 with the same key can be dropped in and the pod restarted.
 
-Enrolled devices are **not** re-enrolled. They are updated from the console: open the device and send
-**Update app**, and the phone downloads what this server now hosts and installs it over itself
-(FR-15). It is an ordinary instant command, so it queues while the phone is off and runs when it
+Enrolled devices are **not** re-enrolled. **From DPC 0.6.0 onward they update themselves** (FR-15.6):
+every phone checks `/device/apk-info` two minutes after it connects and every fifteen minutes after
+that, compares the version the server publishes with the one it is running, and downloads nothing at
+all when it is already current. So replacing the APK and restarting the pod is the whole deploy — the
+fleet follows within about a quarter of an hour, and nobody has to press anything.
+
+**Update app** is still there and still works: it is the shortcut for "now" rather than the
+mechanism. It is an ordinary instant command, so it queues while the phone is off and runs when it
 comes back.
 
 Two things about that are worth knowing before you use it. The phone refuses anything that is not
@@ -489,7 +494,27 @@ checksum this server published — so dropping in an APK signed with a different
 a broken fleet, it produces a refusal with a reason under the command. And the acknowledgement
 arrives *before* the install, because the install kills the process that would otherwise send it:
 what tells you the update landed is the build number the device reports on its next heartbeat, shown
-on the device page. A phone that acknowledged and never reported a new build is a phone to look at.
+on the device page.
+
+A phone that acknowledged and never reported a new build **says why, from 0.6.0 onward** (FR-15.7).
+The reason is Android's own words and it appears on the device card, above the screen-time notice, as
+*"This phone did not take the last update. …"*. It clears itself once the phone reports a newer
+build, so it is never stale. Before 0.6.0 there was no channel for it at all: the command showed
+acknowledged, the phone kept heartbeating, and the version simply never moved — which looks exactly
+like a phone that was already current. That is the defect Phase 17 exists for, and it happened on
+this fleet.
+
+The card also shows what the phone could be running: an amber `app 0.5.0` next to a `→ 0.6.0` when it
+is behind, and the command button reads **Update to 0.6.0**. Both numbers are measurements — the
+phone's from its heartbeat, the server's parsed out of the APK on disk at startup — so when either is
+missing the console shows no comparison at all rather than an "up to date" nobody checked.
+
+> **One-time, for phones enrolled on 0.5.0 or earlier: they cannot take this update.** The fix ships
+> *in* the APK, and those builds cannot install one. Their baseline locks `no_install_unknown_sources`
+> and `no_debugging_features` unconditionally, so there is no self-update (that is the bug), no
+> sideload and no adb, and no server-side change reaches any of the three — they are enforced by the
+> DPC that is running. Factory-reset the phone and re-provision it from its QR code (see *Enrolling
+> the first phone*). It is the last time: 0.6.0 onward updates itself.
 
 Signing a new APK with a **different** key breaks provisioning for new devices and cannot upgrade
 existing ones at all. There is no recovery from a lost signing key other than factory-resetting every

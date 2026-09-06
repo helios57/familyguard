@@ -82,3 +82,58 @@ func TestCriticalPackagesAreBoundedAndShaped(t *testing.T) {
 		}
 	})
 }
+
+// The three states the update-failure field has to keep apart (FR-15.7).
+//
+// This is the same shape as UsageAccess and it fails in the opposite direction, which is why it is
+// worth its own test: collapsing nil into "" would let a DPC too old to know about the field clear
+// a failure a newer one reported, on every heartbeat, forever — and the fleet this feature exists
+// to fix is exactly the fleet running the older DPC.
+func TestClampUpdateErrorKeepsAbsentApartFromEmpty(t *testing.T) {
+	if got := clampUpdateError(nil); got != nil {
+		t.Fatalf("an absent field became %q; an older DPC would erase the failure it cannot report", *got)
+	}
+
+	empty := ""
+	if got := clampUpdateError(&empty); got == nil || *got != "" {
+		t.Fatalf("the phone's own \"nothing to report\" must survive as \"\", got %v", got)
+	}
+
+	spaces := "   \n\t "
+	if got := clampUpdateError(&spaces); got == nil || *got != "" {
+		t.Fatalf("whitespace is nothing to report, got %q", *got)
+	}
+
+	real := "  Android refused the update: status=4 INSTALL_FAILED_INSUFFICIENT_STORAGE  "
+	got := clampUpdateError(&real)
+	if got == nil || *got != strings.TrimSpace(real) {
+		t.Fatalf("a real reason was not passed through verbatim: %v", got)
+	}
+}
+
+// A phone does not get to write an essay into the console, and it does not get its heartbeat
+// refused for trying either — the heartbeat carries battery, connectivity and the policy version,
+// and dropping all of that over a long string would turn a cosmetic problem into a device that
+// falls out of sync.
+func TestClampUpdateErrorTruncatesByRunesNotBytes(t *testing.T) {
+	// Multi-byte on purpose: a byte-slice truncation would both cut at the wrong place and split a
+	// rune, and a split rune reaches the parent's browser as U+FFFD.
+	long := strings.Repeat("é", 5000)
+	got := clampUpdateError(&long)
+	if got == nil {
+		t.Fatal("an overlong reason was dropped entirely")
+	}
+	if n := len([]rune(*got)); n != maxUpdateErrorRunes {
+		t.Fatalf("kept %d runes, want %d", n, maxUpdateErrorRunes)
+	}
+	if strings.ContainsRune(*got, '�') {
+		t.Fatal("the truncation split a rune")
+	}
+
+	// The negative control: something shorter than the bound is not touched at all, so the test
+	// above is measuring a clamp rather than a constant.
+	short := strings.Repeat("é", maxUpdateErrorRunes-1)
+	if got := clampUpdateError(&short); got == nil || *got != short {
+		t.Fatal("a reason inside the bound was altered")
+	}
+}

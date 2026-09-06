@@ -95,6 +95,19 @@ data class HeartbeatRequest(
     @SerialName("app_version_code") val appVersionCode: Long = 0,
     /** Null when unknown; false is a measured "this phone cannot see screen time" (FR-3.6). */
     @SerialName("usage_access") val usageAccess: Boolean? = null,
+    /**
+     * Why the last self-update did not end with a new build running, or "" when there is nothing to
+     * report (FR-15.7).
+     *
+     * Sent on every heartbeat, including as "", because the field is a *status* and not an event:
+     * an update that later succeeds has to clear the line the console is showing, and the only
+     * process that could send a one-off "it is fixed now" is the one the install killed.
+     *
+     * Null is a third value and means this DPC does not report the field at all. The server leaves
+     * what it has rather than clearing it, so an older build's heartbeat cannot erase a newer one's
+     * report.
+     */
+    @SerialName("update_error") val updateError: String? = null,
 )
 
 @Serializable
@@ -115,6 +128,13 @@ data class ApkInfoResponse(
     @SerialName("url") val url: String = "",
     @SerialName("package_checksum") val packageChecksum: String = "",
     @SerialName("size") val size: Long = 0,
+    /**
+     * What the server read out of the APK it hosts, so this phone can decide whether to download it
+     * (FR-15.6). Zero and "" mean the server did not say — an older control plane, or one whose APK
+     * would not parse — and the phone answers that by downloading and reading the archive itself.
+     */
+    @SerialName("version_code") val versionCode: Long = 0,
+    @SerialName("version_name") val versionName: String = "",
 )
 
 @Serializable

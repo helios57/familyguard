@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/helios57/familyguard/backend/internal/apk"
 	"github.com/helios57/familyguard/backend/internal/auth"
 	"github.com/helios57/familyguard/backend/internal/catalog"
 	"github.com/helios57/familyguard/backend/internal/config"
@@ -44,6 +45,16 @@ type Deps struct {
 	// device will reject halfway through setup.
 	SignatureChecksum string
 	PackageChecksum   string
+
+	// HostedAPK is the DPC on the node, as its own manifest describes it, read at startup by the
+	// same parser the app catalog uses. Nil when this deployment hosts no DPC or when the file
+	// would not parse, and nil is carried through as "the server did not say" rather than as a
+	// version of zero — a phone told zero would download 13 MB to discover what it already knew.
+	//
+	// It exists because until it did, nothing anywhere could name the build being served: the APK
+	// is installed on the node out of band, so the server knew only its size and its hash. That is
+	// enough to serve it and not enough for a phone to decide, on a timer, whether to take it.
+	HostedAPK *apk.Info
 }
 
 // Server holds the wired HTTP surface.
@@ -62,6 +73,7 @@ type Server struct {
 
 	signatureChecksum string
 	packageChecksum   string
+	hostedAPK         *apk.Info
 }
 
 // New wires a server. It does not listen; the caller owns the lifecycle.
@@ -96,6 +108,7 @@ func New(d Deps) (*Server, error) {
 		httpClient:        d.HTTPClient,
 		signatureChecksum: d.SignatureChecksum,
 		packageChecksum:   d.PackageChecksum,
+		hostedAPK:         d.HostedAPK,
 	}, nil
 }
 
@@ -159,6 +172,10 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p := v1.Group("", s.requireParent())
 	p.GET("/me", s.me)
 	p.GET("/family", s.getFamily)
+	// Which DPC this deployment hosts (FR-15.6). Deployment state, not family state, which is why
+	// it is not folded into /family: it answers "what would a phone get if it updated now", and the
+	// console needs it to tell a phone that is behind from one that is current.
+	p.GET("/dpc", s.hostedDPC)
 	// FR-18. Readable by any parent; changed only by an admin, because one entry moves every phone
 	// in the family at once.
 	p.GET("/family/blocked-packages", s.listFamilyBlocklist)

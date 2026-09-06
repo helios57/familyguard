@@ -133,7 +133,8 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
     <!--
-      Installing the DPC the control plane hosts, over this app (FR-15).
+      Installing the DPC the control plane hosts, over this app (FR-15), and the declared
+      applications a parent chose for a child (FR-16.3).
 
       A device owner installs without the "install unknown apps" prompt — that is the platform
       privilege this whole product already rests on — but the *declaration* is still required:
@@ -142,8 +143,27 @@
       at install time, and it is scoped by what it can reach: the only APK this app ever installs is
       one it downloaded from its own control plane, whose checksum the server published and whose
       signing certificate has to equal the one this app is already signed with.
+
+      **Declaring it also flips a default, and that default is what broke FR-15 on a real phone.**
+      `SessionParams.setRequireUserAction` documents its unspecified state as behaving like
+      USER_ACTION_REQUIRED *for an installer using REQUEST_INSTALL_PACKAGES*, and like
+      USER_ACTION_NOT_REQUIRED for everyone else. So the line above, on its own, turned every
+      session this app committed into a request for a tap — delivered as STATUS_PENDING_USER_ACTION
+      to an app with nothing on screen, on a phone belonging to a child. Nothing installed, nothing
+      shown, no process killed, and the only trace one line in a log nobody can read. Measured on
+      the pilot phone 2026-09-06: an UPDATE_APP acknowledged as "installing now", and the same build
+      still running a day later.
+
+      The two lines are therefore a pair, and neither works alone. AndroidInstaller now asks for
+      USER_ACTION_NOT_REQUIRED explicitly, and the permission below is what makes that request
+      honoured for an installer that holds REQUEST_INSTALL_PACKAGES: the platform grants it when the
+      installer is updating itself (the self-update) or is the installer of record (every managed
+      app after its first) AND declares this. It is a normal permission, Android 12 and up; on the
+      API 29 floor an undeclared permission name is simply ignored, and on that floor the
+      unspecified default was not conditioned on REQUEST_INSTALL_PACKAGES either.
     -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
     <application
         android:name=".FamilyGuardApp"

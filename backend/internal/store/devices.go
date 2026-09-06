@@ -148,7 +148,8 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 		        d.enrolled_at, d.created_at,
 		        COALESCE(s.battery_level, NULL), COALESCE(s.charging, NULL), COALESCE(s.screen_on, NULL),
 		        COALESCE(s.connectivity, ''), COALESCE(s.policy_version, 0), s.last_seen_at,
-		        COALESCE(s.app_version_name, ''), COALESCE(s.app_version_code, 0), s.usage_access
+		        COALESCE(s.app_version_name, ''), COALESCE(s.app_version_code, 0), s.usage_access,
+		        COALESCE(s.update_error, ''), s.update_error_at
 		   FROM devices d
 		   LEFT JOIN device_state s ON s.device_id = d.id
 		  WHERE ($1::uuid IS NULL OR d.child_id = $1)
@@ -166,7 +167,8 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 			&d.CriticalPackages, &d.EnrolledAt, &d.CreatedAt,
 			&d.State.BatteryLevel, &d.State.Charging, &d.State.ScreenOn,
 			&d.State.Connectivity, &d.State.PolicyVersion, &d.State.LastSeenAt,
-			&d.State.AppVersionName, &d.State.AppVersionCode, &d.State.UsageAccess); err != nil {
+			&d.State.AppVersionName, &d.State.AppVersionCode, &d.State.UsageAccess,
+			&d.State.UpdateError, &d.State.UpdateErrorAt); err != nil {
 			return nil, err
 		}
 		d.State.DeviceID = d.ID
@@ -220,8 +222,10 @@ func (s *Store) RecoveryCode(ctx context.Context, deviceID uuid.UUID) (string, e
 func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceState) error {
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO device_state (device_id, battery_level, charging, screen_on, connectivity, policy_version,
-		                           app_version_name, app_version_code, usage_access, last_seen_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+		                           app_version_name, app_version_code, usage_access, update_error,
+		                           update_error_at, last_seen_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, ''),
+		         CASE WHEN COALESCE($10, '') = '' THEN NULL ELSE NOW() END, NOW(), NOW())
 		 ON CONFLICT (device_id) DO UPDATE SET
 		     battery_level  = COALESCE(EXCLUDED.battery_level, device_state.battery_level),
 		     charging       = COALESCE(EXCLUDED.charging, device_state.charging),
@@ -239,10 +243,23 @@ func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceSt
 		     -- a measured true with "did not say" would clear the one signal that tells a parent
 		     -- their screen-time numbers mean nothing.
 		     usage_access   = COALESCE(EXCLUDED.usage_access, device_state.usage_access),
+		     -- Three values, and each one means something different. NULL is a DPC that does not
+		     -- report the field, and leaves what is stored alone: an older build's heartbeat must
+		     -- not erase a newer build's report. '' is a phone saying it has nothing to report, and
+		     -- clears the line — this is the only way a fixed update stops being shown, because the
+		     -- process that installed the fix is the one the install killed. Text replaces whatever
+		     -- was there, and only then is the timestamp moved: re-sending the same reason on every
+		     -- heartbeat must not make a day-old problem look like it started a minute ago.
+		     update_error   = CASE WHEN $10::text IS NULL THEN device_state.update_error ELSE $10 END,
+		     update_error_at = CASE
+		         WHEN $10::text IS NULL THEN device_state.update_error_at
+		         WHEN $10 = '' THEN NULL
+		         WHEN $10 = device_state.update_error THEN COALESCE(device_state.update_error_at, NOW())
+		         ELSE NOW() END,
 		     last_seen_at   = NOW(),
 		     updated_at     = NOW()`,
 		deviceID, st.BatteryLevel, st.Charging, st.ScreenOn, st.Connectivity, st.PolicyVersion,
-		st.AppVersionName, st.AppVersionCode, st.UsageAccess)
+		st.AppVersionName, st.AppVersionCode, st.UsageAccess, st.ReportedUpdateError)
 	return err
 }
 
@@ -264,11 +281,11 @@ func (s *Store) GetDeviceState(ctx context.Context, deviceID uuid.UUID, offlineA
 	var st DeviceState
 	err := s.pool.QueryRow(ctx,
 		`SELECT device_id, battery_level, charging, screen_on, connectivity, policy_version, last_seen_at,
-		        app_version_name, app_version_code, usage_access
+		        app_version_name, app_version_code, usage_access, update_error, update_error_at
 		   FROM device_state WHERE device_id = $1`, deviceID).
 		Scan(&st.DeviceID, &st.BatteryLevel, &st.Charging, &st.ScreenOn, &st.Connectivity,
 			&st.PolicyVersion, &st.LastSeenAt, &st.AppVersionName, &st.AppVersionCode,
-			&st.UsageAccess)
+			&st.UsageAccess, &st.UpdateError, &st.UpdateErrorAt)
 	if err != nil {
 		return nil, mapErr(err)
 	}

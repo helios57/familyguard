@@ -3582,8 +3582,8 @@ consistent with having widened the limit everywhere.
 
 **The writable directory is proven by the pod being ready, not by the manifest saying so.**
 `config.go` creates a temp file in `APK_DIR` at startup and refuses to serve if it cannot — so a
-`Running`/`ready=true` pod with `restarts=0` is a positive statement that
-`/media/raid5/apps/familyguard/apps` is mounted and writable by uid 65532. The hostPath is
+`Running`/`ready=true` pod with `restarts=0` is a positive statement that the node directory behind
+`APK_DIR` is mounted and writable by uid 65532. The hostPath is
 `type: Directory` rather than `DirectoryOrCreate` precisely so the *other* failure is loud: kubelet
 would create a missing one as root:0755, the server would refuse correctly, and the log would send
 whoever read it to the application instead of to the volume.
@@ -4285,3 +4285,207 @@ evidence, and the laptop-width test exists because of that.
   hardware for the same reason it was after Phase 15.
 - Spotify (16.7) is on the list but no phone has reported it back as hidden, because it is not
   installed on the only enrolled phone and that phone is unlinked.
+
+## Phase 17 — the update that installed nothing, and the loop that means nobody has to press it (FR-15.6, FR-15.7)
+
+Phase 16 shipped 0.5.0. The owner pressed **Update app** on the console, the command was delivered,
+the phone acknowledged it —
+
+```json
+{"build": "7 → 8", "state": "downloaded and verified; installing now", "version": "0.5.0"}
+```
+
+— and the phone stayed on 0.4.0, build 7, heartbeating normally. *"it did not start the intall at
+all ...."* Nothing appeared on the screen, no dialog, no progress, no error. Then: *"and it should
+update automatically"*, *"as soon as there is a new version available"*.
+
+So Phase 17 is one defect and one feature, and they are the same story told twice: **a self-update
+had no way to fail out loud, and no way to happen without a person.**
+
+### 17.1 — why nothing installed
+
+The acknowledgement was true and useless. It is sent *before* the commit, because the commit
+replaces this app and the platform kills the process that would have sent it (FR-15.4). Everything
+after it — the whole install — reported into a `Log.e` on a phone in a school bag.
+
+What it would have said is in the platform's own documentation for
+`PackageInstaller.SessionParams.setRequireUserAction`. The DPC never called it, so every session ran
+with the documented default `USER_ACTION_UNSPECIFIED`, and unspecified is defined as:
+
+> `USER_ACTION_REQUIRED` for an installer that declares `REQUEST_INSTALL_PACKAGES`,
+> `USER_ACTION_NOT_REQUIRED` otherwise.
+
+The DPC declares `REQUEST_INSTALL_PACKAGES` — it has since commit `3ee01a2`, before 0.2.0, and it has
+to, because without it a device owner's commit is refused before any prompt would appear. So the
+declaration that makes the install *possible* is the same declaration that turned every session into
+a request for a tap, delivered to an app that has no UI, on a phone belonging to a child.
+
+Android answered `STATUS_PENDING_USER_ACTION`. `UpdateStatusReceiver` logged it and returned. Nothing
+installed, nothing was shown, the process was not killed, and the console showed an acknowledged
+command against a version that never moved — **which is pixel-for-pixel what an already-current phone
+looks like.**
+
+The fix is two lines and one manifest entry:
+
+```kotlin
+params.setInstallReason(PackageManager.INSTALL_REASON_POLICY)
+params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+```
+
+plus `<uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />`,
+which is what makes `USER_ACTION_NOT_REQUIRED` honoured for an installer holding
+`REQUEST_INSTALL_PACKAGES` when it updates itself or is the installer of record (API 31+, normal
+level, no grant needed). A device owner is separately privileged to install silently, so there are
+two independent reasons this now holds — and the receiver reports the outcome either way rather than
+trusting them.
+
+**Ruled out before the code was read, because each would have produced the same report.** The policy
+row was read out of the live database: `allow_child_installs = t`, so `no_install_apps` is not
+applied on this phone and the platform javadoc's *"also prevents device owners and profile owners
+installing apps"* is not what happened here. The download half was known good — the ack carries
+`downloaded and verified`, which is written after the checksum comparison. And the hosted APK was
+build 8 against the phone's 7, so it was not a refused downgrade.
+
+### 17.2 — the second bug, which had no symptom yet
+
+`DISALLOW_INSTALL_APPS` **does** bind the device owner. `ManagedAppApplier` already lifts it around
+a managed-app install and puts it back; the self-update never did. Nobody had seen it because the
+one enrolled phone has `allow_child_installs = t` — but every family that turns child installs
+*off*, which is the setting the product recommends, would have had every self-update refused, with
+the same silence as 17.1.
+
+`withInstalls()` now opens that window twice — once around opening the session, once around the
+commit — and never around the download, which is the part that takes minutes.
+
+### 17.3 — three places a failure can now speak
+
+The acknowledgement cannot report an install, so the install reports itself:
+
+1. **The staging call moved inside `AppUpdater.update()`.** `createSession` is what a user
+   restriction refuses and `openWrite` is what a full disk refuses; both throw, synchronously. Doing
+   them before the outcome is decided turns "the update did nothing" into
+   `Refused("the platform refused to stage this install (…)")`, which the console prints under the
+   command the parent pressed. `AppUpdater` now hands back a *commit*, not an install.
+2. **A pessimistic record, written before the commit.** The commit does not return — it ends the
+   process — so there is no "afterwards" in which to record a failure. The thunk therefore writes
+   *"an update was downloaded, verified and handed to Android, and this phone is still running the
+   build it had before"* **first**, and commits second. If the install works, the new build clears
+   it; if it silently does not, that sentence is on the next heartbeat.
+3. **`UpdateStatusReceiver` records what the platform said**, including
+   `STATUS_PENDING_USER_ACTION` by name, instead of logging it.
+
+All three land in `UpdateReport`, a one-record store on plain `SharedPreferences` (not the encrypted
+one: it must survive being read by a *different build* of the app, and it holds no secret). It
+**clears itself** — the record carries the version code it was made from, and any build above that
+is proof a later attempt succeeded. Nothing on the success path has to remember to clear it, which
+matters because the success path is a process that no longer exists.
+
+The reason rides the heartbeat as `update_error`, three-valued in exactly the way `usage_access`
+already is: absent is an older DPC that cannot report and must not erase a newer one's message,
+`""` is the phone saying it has nothing to report, and text replaces. The column's timestamp moves
+only when the *text* changes, so a parent can tell a problem that started an hour ago from one that
+has been repeating for a week.
+
+### 17.4 — updating without anyone pressing anything (FR-15.6)
+
+*"as soon as there is a new version available"* — the honest reading. Nothing pushes an APK here:
+the file is installed on the node out of band and the control plane hashes it at startup, so the
+moment a new build becomes visible **is a deploy**, and a check every 15 minutes turns that into at
+most 15 minutes of delay.
+
+The check has to be cheap enough to run on a timer on a child's mobile data, so `/device/apk-info`
+now publishes `version_code`, `version_name` and `package_name`, parsed at startup by the Go APK
+reader the app catalog already uses. `AppUpdater` compares before downloading:
+
+```kotlin
+if (want.versionCode > 0 && current != null && want.versionCode <= current.versionCode) {
+    return UpdateOutcome.AlreadyCurrent(current)
+}
+```
+
+This is the only check in that function made on a *claim* rather than on the archive, and it is safe
+for one structural reason: **it can only ever end an attempt early.** A server that understates the
+version causes this phone not to download; a server that overstates it gains nothing, because the
+archive's real version code is read after the download and every check in FR-15.3 still applies to
+it, unchanged. A server that cannot parse its own APK publishes **no version at all** rather than a
+zero — `0 <= anything` is a phone that decides it is current forever.
+
+`updateLoop` runs in the connection's scope: first check 2 minutes after connecting, then every 15,
+holding `syncLock` so an update cannot commit in the middle of a policy being applied. A refusal
+backs off to 6 hours and is recorded; a *check* that could not complete (no server, no answer) is
+logged and not recorded, because a phone that is merely offline must not show a parent a red line
+about an update. Both the timer and the parent's button go through one `selfUpdater()` builder, and
+a test counts that.
+
+### 17.5 — what the parent sees
+
+The console reads `/dpc` (the build the deployment hosts, parsed, not configured) and compares it
+with what each phone reported. Both numbers are measurements, so the comparison is skipped entirely
+when either is missing — *"up to date"* and *"nobody could tell"* look identical on a card and only
+one of them is a fact.
+
+- `app 0.4.0` turns amber and gains a `→ 0.6.0` badge when the phone is behind.
+- The command button reads **Update to 0.6.0** instead of **Update app**.
+- A failed update prints verbatim, above the screen-time notice, because a phone whose update failed
+  is running code that may be the reason anything else on the card is wrong.
+
+### 17.6 — calibration
+
+Sixteen breaks, sixteen reds. Every control below was written before this table and each was checked
+by breaking the thing it watches and restoring it.
+
+| Break | Expected red | Observed |
+|---|---|---|
+| the pre-download version check deleted | `AppUpdaterTest` | RED — the phone downloads 13 MB to answer a question the server had already answered |
+| the same check made to fire on an *unanswerable* claim (no server version, or nothing installed) | `AppUpdaterTest` | RED — the negative control; a short-circuit that fires here is a phone that never updates again |
+| staging deferred back out of `update()` into the returned thunk | `AppUpdaterTest` | RED — a platform refusal becomes a `Staged` nobody can commit, which is exactly the 0.5.0 behaviour |
+| `UpdateReport` treating an unreadable version code as newer | `UpdateReportTest` | RED — a report that vanishes on precisely the devices whose state cannot be read |
+| `UPDATE_PACKAGES_WITHOUT_USER_ACTION` removed from the manifest | `ManifestAndPlatformCallsTest` | RED |
+| `setRequireUserAction` removed from `sessionParams` | `ManifestAndPlatformCallsTest` | RED — the two halves of 17.1, each of which alone is an app that installs nothing |
+| the timer given its own `AppUpdater` instead of the shared builder | `ManifestAndPlatformCallsTest` | RED — *"the self-update is built in 2 places"* |
+| `updates.cancel()` dropped from the connection's `finally` | `ManifestAndPlatformCallsTest` | RED |
+| `apk-info` stops publishing `version_code` | e2e `TestAPKInfoPublishesTheVersionOfTheBuildItHosts` | RED — *"publishes \"0.0.1\" build 0"* |
+| an unparseable APK described with a zero-valued `Info` | e2e `TestAPKInfoPublishesNoVersionForAFileItCannotParse` | RED — *"the phone would compare against a version nobody read"* |
+| `update_error` written with `COALESCE($10,'')` so absence clears | e2e `TestASilentUpdateFailureReachesTheConsole` | RED — *"a heartbeat that said nothing about updates erased the failure"* |
+| the timestamp moved on every heartbeat that repeats the same reason | e2e `TestASilentUpdateFailureReachesTheConsole` | RED — a week-old problem that always reads "just now" |
+| the rune clamp removed | e2e `TestAnOverlongUpdateFailureIsClampedRatherThanRefused` | RED — 5 000 runes stored |
+| the failure paragraph not rendered | e2e `TestTheConsoleShowsAPhoneThatIsBehindAndWhyItsUpdateFailed` | RED — the API carried it and the page did not draw it, which is the whole defect class |
+| `updateBehind` made to always answer null | same | RED — *"the card does not say which build the server offers"* |
+| `updateBehind` made to answer for an up-to-date phone | same | RED — the negative control; *"an up-to-date phone is still offered → 0.0.2"* |
+
+Suite totals after the change: Android JVM **515 tests, 0 failures** (`--rerun-tasks`, because Gradle
+replays a stale green for the source-scanning tests — they read files it does not track). Go
+`build`/`vet`/`gofmt`/`test` clean. e2e **PASS** in 105 s against a real Postgres 18.6 and Chrome 152.
+
+### 17.7 — the phone has to be re-provisioned once, and there is no way around it
+
+**The fix is in the APK, and 0.4.0 cannot install an APK.** That is not a missing feature, it is
+0.4.0's `BASELINE_RESTRICTIONS`: `no_install_unknown_sources` unconditionally, and
+`no_debugging_features` unconditionally. So on the phone as it stands today there is
+
+- no self-update — that is the defect being fixed;
+- no sideload — unknown sources is locked by the device owner, and no console switch in 0.4.0 lifts
+  it (the `allow_debugging` switch that would is *in* 0.5.0, which is the build that cannot be
+  installed);
+- no adb — same.
+
+A server-side change cannot reach any of those, because all three are enforced by the DPC that is
+running. **One factory reset and one QR re-provision, and it is the last one:** from 0.6.0 forward
+the phone takes new builds by itself within ~15 minutes of a deploy, and says so on the console when
+it cannot.
+
+### 17.8 — what is not proven
+
+- **FR-15.6 and FR-15.7 have not run on hardware.** Every claim above is measured on the JVM, in Go
+  or in a browser. `PackageInstaller` is not reachable from any of those, so the one thing that was
+  actually broken — what Android does with a session created by a device owner on a real phone — is
+  verified by reading the platform contract and by two source guards that assert the contract is
+  followed. The proof will be a heartbeat from a re-provisioned phone showing a build it was not
+  given by hand.
+- The 15-minute interval has never been observed running. It is a constant and a `delay`; nothing
+  measures that the loop wakes up.
+- `UpdateReport`'s Android store (`SharedPreferences`, file `family-guard-update`) is not covered:
+  the `UpdateReport` logic is tested against an in-memory store, and whether the record actually
+  survives the app being replaced is exactly the thing that needs a phone.
+- The back-off is asserted by nothing. A refusal setting `wait` to six hours is one assignment in a
+  loop that no test enters.

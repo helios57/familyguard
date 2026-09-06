@@ -42,6 +42,16 @@ private class Harness(private val folder: TemporaryFolder) {
     var downloadFails: Exception? = null
     var archive: ApkIdentity? = ApkIdentity(PACKAGE, 3, "0.1.2", SIGNER)
 
+    /**
+     * What the server *claims* it hosts, before anything is downloaded. 0 is an older control
+     * plane that does not say — the default here, so that every test written before the claim
+     * existed keeps exercising the download path it was written for.
+     */
+    var wantVersionCode: Long = 0
+
+    /** What the platform does when the session cannot be opened: a user restriction, a full disk. */
+    var stageFails: Exception? = null
+
     /** Null is "nothing of this package is on the phone" — every first install of a managed app. */
     var current: ApkIdentity? = installed()
     var wantPackage = PACKAGE
@@ -56,6 +66,10 @@ private class Harness(private val folder: TemporaryFolder) {
     val installedFiles = mutableListOf<File>()
     val installedPackages = mutableListOf<String>()
     val askedAbout = mutableListOf<String>()
+    val stagedFiles = mutableListOf<File>()
+
+    /** How many times the body was opened. The unit of a wasted 13 MB on a child's mobile data. */
+    var downloads = 0
 
     fun updater(): AppUpdater {
         val staged = File(folder.root, "staged.apk")
@@ -67,9 +81,11 @@ private class Harness(private val folder: TemporaryFolder) {
                     url = url,
                     packageChecksum = declaredChecksum ?: checksumOf(bytes),
                     size = declaredSize ?: bytes.size.toLong(),
+                    versionCode = wantVersionCode,
                 )
             },
             open = { _ ->
+                downloads += 1
                 downloadFails?.let { throw it }
                 val body = when {
                     overrunTo != null -> ByteArray(overrunTo!!) { bytes[it % bytes.size] }
@@ -81,7 +97,12 @@ private class Harness(private val folder: TemporaryFolder) {
             staging = { staged },
             identify = { archive },
             installed = { pkg -> askedAbout += pkg; current },
-            install = { file, pkg -> installedFiles += file; installedPackages += pkg },
+            stage = { file, pkg ->
+                stageFails?.let { throw it }
+                stagedFiles += file
+                val commit = { installedFiles += file; installedPackages += pkg }
+                commit
+            },
         )
     }
 }
@@ -345,5 +366,91 @@ class AppUpdaterTest {
         val refused = h.updater().update() as? UpdateOutcome.Refused
             ?: throw AssertionError("size 0 switched off the checksum check")
         assertTrue(refused.reason.contains("checksum"))
+    }
+
+    // ---- the pre-download check that makes an automatic loop affordable (FR-15.6) -------------
+
+    /**
+     * The only reason a fifteen-minute loop is acceptable on a child's phone: when the server has
+     * said which build it hosts and it is not newer, the attempt costs one small request.
+     */
+    @Test
+    fun `does not download at all when the server says it hosts the build this phone runs`() {
+        val h = Harness(folder)
+        h.wantVersionCode = 2
+        h.current = installed(code = 2)
+
+        val outcome = h.updater().update()
+        assertTrue("an equal declared version is not a failure: $outcome", outcome is UpdateOutcome.AlreadyCurrent)
+        assertEquals(
+            "the whole point of the claim is that the 13 MB is never fetched",
+            0, h.downloads,
+        )
+    }
+
+    /**
+     * The negative control. Every check above this one runs on the archive, so the claim must only
+     * ever be able to END an attempt early — never to start one, and never to switch a check off.
+     * Three ways the short-circuit must NOT fire, each of which would otherwise make it a silent
+     * "no update, ever": an older control plane that sends no version code at all, a genuinely
+     * newer build, and a phone that has nothing of this package installed.
+     */
+    @Test
+    fun `downloads when the claim cannot answer the question`() {
+        val undeclared = Harness(folder).also { it.wantVersionCode = 0 }
+        assertTrue(undeclared.updater().update() is UpdateOutcome.Staged)
+        assertEquals("an older server declares nothing, and the answer to that is to find out",
+            1, undeclared.downloads)
+
+        val newer = Harness(folder).also { it.wantVersionCode = 3; it.current = installed(code = 2) }
+        assertTrue(newer.updater().update() is UpdateOutcome.Staged)
+        assertEquals("a newer declared build must be fetched", 1, newer.downloads)
+
+        // A first install has nothing to compare against, so the claim decides nothing. If this
+        // ever short-circuits, a managed app could never be placed on a phone at all.
+        val first = Harness(folder).also { it.wantVersionCode = 1; it.current = null }
+        assertTrue(first.updater().update() is UpdateOutcome.Staged)
+        assertEquals("nothing installed means nothing to be already-current with", 1, first.downloads)
+    }
+
+    // ---- a platform refusal has to be reportable (FR-15.7) -----------------------------------
+
+    /**
+     * Measured on the owner's phone, 2026-09-06: an update was downloaded, verified and handed to
+     * Android, the command was acknowledged as "installing now", and nothing installed — the
+     * platform had answered `STATUS_PENDING_USER_ACTION` and the answer went to a log on the phone.
+     * Opening the session inside [AppUpdater.update] is what gives that refusal somewhere to go:
+     * the outcome the parent reads, instead of a `Staged` that nobody can commit.
+     */
+    @Test
+    fun `reports a platform refusal instead of a staged update nobody can commit`() {
+        val h = Harness(folder)
+        h.stageFails = SecurityException("Permission Denial: install not allowed for this user")
+
+        val refused = h.updater().update() as? UpdateOutcome.Refused
+            ?: throw AssertionError("a session the platform refused to open was reported as staged")
+        assertTrue(
+            "the parent needs the platform's own words: ${refused.reason}",
+            refused.reason.contains("Permission Denial"),
+        )
+        assertTrue("nothing may be committed after a refusal", h.installedFiles.isEmpty())
+    }
+
+    /**
+     * The negative control for the one above: with the platform willing, the same path stages
+     * exactly once and still defers the commit. Without this, `stageFails` could be doing nothing
+     * and the refusal test would pass on an updater that never staged anything at all.
+     */
+    @Test
+    fun `stages exactly once when the platform accepts, and still defers the commit`() {
+        val h = Harness(folder)
+
+        val staged = h.updater().update() as? UpdateOutcome.Staged
+            ?: throw AssertionError("a healthy update was not staged")
+        assertEquals(1, h.stagedFiles.size)
+        assertTrue("staging must not install", h.installedFiles.isEmpty())
+
+        staged.commit()
+        assertEquals(listOf(PACKAGE), h.installedPackages)
     }
 }

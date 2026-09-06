@@ -20,6 +20,10 @@ const state = {
   session: null,
   parent: null,
   family: null,
+  // What DPC this deployment hosts, so a phone's reported build can be compared with something.
+  // Null until /dpc answers, and `{hosted:false}` on a control plane that serves no APK — both are
+  // drawn as "nothing to say about updates" rather than as a phone that is up to date.
+  dpc: null,
   children: [],
   childId: null,
   data: {},          // per-view payload
@@ -283,12 +287,17 @@ async function boot() {
   document.getElementById('app').hidden = false;
 
   try {
-    const [me, family, children] = await Promise.all([
+    const [me, family, children, dpc] = await Promise.all([
       api('/me'), api('/family'), api('/children'),
+      // Caught rather than awaited alongside the rest: a deployment that cannot say which build it
+      // hosts must still show a parent their family. The console then simply says nothing about
+      // updates, which is the honest rendering of not knowing.
+      api('/dpc').catch(() => null),
     ]);
     state.parent = me;
     state.family = family;
     state.children = children.children || [];
+    state.dpc = dpc;
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) return;
     toast('Could not load your family: ' + err.message, true);
@@ -564,9 +573,27 @@ function statusStrip(data) {
   return el('div', { class: 'card full strip' }, ...rows);
 }
 
+/**
+ * Whether this phone is running an older build than the one the server hosts, and which.
+ *
+ * Null whenever the question cannot be answered from measurements: no build reported by the phone,
+ * no build parsed by the server, or a version code of zero on either side. That is the whole point
+ * of the function — "up to date" and "nobody could tell" look identical on a card, and only one of
+ * them is a fact. The comparison is on version CODES, which are integers and monotone; the names
+ * are what a person reads and are never compared.
+ */
+function updateBehind(st) {
+  const hosted = state.dpc;
+  if (!hosted || !hosted.hosted || !hosted.version_code) return null;
+  if (!st.app_version_code) return null;
+  if (hosted.version_code <= st.app_version_code) return null;
+  return { hosted: hosted.version_name || ('build ' + hosted.version_code) };
+}
+
 function deviceCard(dev, desired) {
   const st = dev.state || {};
   const online = st.online;
+  const behind = dev.enrolled ? updateBehind(st) : null;
   const head = el('div', { class: 'card-head' },
     el('h2', {}, el('span', { class: 'dot ' + (online ? 'online' : 'offline') }), ' ' + dev.name),
     el('span', { class: 'badge' + (online ? ' ok' : ''), text: online ? 'online' : fmtTime(st.last_seen_at) }));
@@ -582,7 +609,11 @@ function deviceCard(dev, desired) {
     // device that has never reported one is running a DPC from before this field existed; showing
     // "app 0" there would be a version no build ever had.
     dev.enrolled && st.app_version_name
-      && el('span', { class: 'badge', text: 'app ' + st.app_version_name }),
+      && el('span', { class: 'badge' + (behind ? ' warn' : ''), text: 'app ' + st.app_version_name }),
+    // Only when the comparison could actually be made — see `updateBehind`. A phone that has not
+    // reported a build, or a server that cannot say which one it hosts, gets no badge at all
+    // rather than an "up to date" nobody checked.
+    behind && el('span', { class: 'badge warn', text: '\u2192 ' + behind.hosted }),
     // Only on a measured false. `undefined` is a phone that has not said — an older DPC does not
     // report the field — and a warning there would be an alarm about a device nothing is wrong
     // with, which is the kind that teaches you to ignore the badge.
@@ -590,6 +621,20 @@ function deviceCard(dev, desired) {
       && el('span', { class: 'badge warn', text: 'screen time not measured' }));
 
   const body = [head, facts];
+
+  // Above the screen-time notice, because it is about the app that measures it: a phone whose
+  // update failed is a phone running code that may be the reason anything else on this card is
+  // wrong. Shown verbatim — the text is Android's own words, and paraphrasing an error this console
+  // has never seen would be inventing a diagnosis.
+  if (st.update_error) {
+    body.push(el('p', { class: 'warn' },
+      el('strong', { text: 'This phone did not take the last update. ' }),
+      st.update_error + '.',
+      behind
+        ? ' The server is offering ' + behind.hosted + '. FamilyGuard retries by itself; if it keeps'
+          + ' failing, the phone has to be set up again from its QR code.'
+        : ''));
+  }
 
   if (st.usage_access === false) {
     // Spelled out, because the number it invalidates is shown two lines below it. Without the
@@ -650,13 +695,15 @@ function deviceCard(dev, desired) {
       onclick: () => showProvisioning(dev),
     }),
     el('button', { class: 'btn btn-quiet', type: 'button', text: 'Recovery code', onclick: () => showRecovery(dev) }),
-    // Always offered, never conditioned on a comparison this page could make: the server does not
-    // parse the APK it hosts, so it does not know its version name, and a button that appeared only
-    // when the console thought an update was due would hide the one case worth having it for — a
-    // phone whose reported version is wrong or missing. The phone compares version codes against
-    // the file it downloaded and answers "already running the current build" when there is nothing
-    // to do, which is a fact it can establish and this page cannot.
-    cmd('UPDATE_APP', 'Update app')));
+    // Still always offered, and still never *conditioned* on the comparison above. The button is
+    // what a parent reaches for when a phone's reported version is wrong or missing, which is
+    // exactly the case the comparison cannot see; the phone answers "already running the current
+    // build" when there is nothing to do, which is a fact it establishes and this page cannot.
+    //
+    // The label carries the comparison when there is one, because since FR-15.6 phones update by
+    // themselves within a quarter of an hour and the button is now the impatient path rather than
+    // the only one.
+    cmd('UPDATE_APP', behind ? 'Update to ' + behind.hosted : 'Update app')));
 
   return el('div', { class: 'card' }, ...body.filter(Boolean));
 }

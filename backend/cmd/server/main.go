@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/helios57/familyguard/backend/internal/apk"
 	"github.com/helios57/familyguard/backend/internal/auth"
 	"github.com/helios57/familyguard/backend/internal/config"
 	"github.com/helios57/familyguard/backend/internal/httpapi"
@@ -101,6 +102,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	hosted := hostedAPK(cfg, log)
 	// Which DPC is this process vending? Until this line existed, nothing answered that. The APK is
 	// deliberately not in the image — it is a file on the node, installed out of band — so the only
 	// record of which build a running server publishes checksums for was the checksums themselves,
@@ -110,7 +112,12 @@ func run() error {
 	// honest report that provisioning cannot be offered, not a formatting accident.
 	log.Info("provisioning checksums computed from disk",
 		"apk_path", cfg.APKPath, "cert_path", cfg.APKCertPath,
-		"package_checksum", packageSum, "signature_checksum", signatureSum)
+		"package_checksum", packageSum, "signature_checksum", signatureSum,
+		// Which BUILD, not just which bytes. The checksums above identify the artifact and cannot
+		// be read by a person; this is the line that lets an operator confirm from the log that the
+		// APK on the node is the one they just installed, and it is the same value the phones now
+		// compare themselves against on a timer.
+		"dpc_version", versionOrNone(hosted), "dpc_package", packageOrNone(hosted))
 
 	srv, err := httpapi.New(httpapi.Deps{
 		Config:            cfg,
@@ -120,6 +127,7 @@ func run() error {
 		Logger:            log,
 		SignatureChecksum: signatureSum,
 		PackageChecksum:   packageSum,
+		HostedAPK:         hosted,
 	})
 	if err != nil {
 		return fmt.Errorf("server: %w", err)
@@ -202,6 +210,45 @@ func apkChecksums(cfg *config.Config) (signature, pkg string, err error) {
 		}
 	}
 	return signature, pkg, nil
+}
+
+// hostedAPK reads the DPC on the node so the deployment can say which build it serves.
+//
+// **Never fatal, and that is a decision rather than leniency.** A control plane whose APK will not
+// parse can still do everything else it does — policy, commands, screen time, the console — and a
+// startup that refused would take a whole family's enforcement offline over a file that only the
+// update path reads. So a failure is logged loudly and the version is simply absent, which the
+// endpoints already carry through as "the server did not say" and the phones answer by downloading
+// and reading the archive themselves. The one thing that must not happen is a *guess*: a version
+// this server made up would be compared against a real one on a real phone.
+func hostedAPK(cfg *config.Config, log *slog.Logger) *apk.Info {
+	if cfg.APKPath == "" {
+		return nil
+	}
+	info, err := apk.ParseFile(cfg.APKPath)
+	if err != nil {
+		log.Error("the DPC on this node could not be parsed, so this server cannot say which build "+
+			"it hosts; phones will fall back to downloading it to find out",
+			"apk_path", cfg.APKPath, "error", err)
+		return nil
+	}
+	return info
+}
+
+// versionOrNone and packageOrNone keep an absent parse out of the log as a word rather than as an
+// empty string, which reads as a field that was forgotten rather than one that has no value.
+func versionOrNone(info *apk.Info) string {
+	if info == nil {
+		return "not parsed"
+	}
+	return fmt.Sprintf("%s (build %d)", info.VersionName, info.VersionCode)
+}
+
+func packageOrNone(info *apk.Info) string {
+	if info == nil {
+		return "not parsed"
+	}
+	return info.PackageName
 }
 
 // maintain expires commands and drops telemetry past its retention window.
