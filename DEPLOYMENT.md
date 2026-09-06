@@ -478,11 +478,18 @@ kubectl -n familyguard rollout restart deploy/familyguard-control-plane
 The signature checksum does not change as long as the signing key does not, so an updated APK signed
 with the same key can be dropped in and the pod restarted.
 
-Enrolled devices are **not** re-enrolled. **From DPC 0.6.0 onward they update themselves** (FR-15.6):
+Enrolled devices are **not** re-enrolled. **From DPC 0.6.2 onward they update themselves** (FR-15.6):
 every phone checks `/device/apk-info` two minutes after it connects and every fifteen minutes after
 that, compares the version the server publishes with the one it is running, and downloads nothing at
 all when it is already current. So replacing the APK and restarting the pod is the whole deploy — the
 fleet follows within about a quarter of an hour, and nobody has to press anything.
+
+> **0.6.0 and 0.6.1 shipped that loop and it did not run.** Its cadence was a coroutine `delay`,
+> which is measured on a clock that stops while the phone is asleep, so on a real handset the first
+> two-minute check had not elapsed after 48 minutes — no error, no failed download, just a phone that
+> looked online and current. 0.6.2 books the check with `AlarmManager` and decides on the wall clock;
+> `IMPLEMENTATION_PLAN.md` §17.11 has the measurement. **A phone on 0.6.0 or 0.6.1 cannot take 0.6.2
+> by itself** — press **Update app** once, and the fleet is automatic from the build that lands.
 
 **Update app** is still there and still works: it is the shortcut for "now" rather than the
 mechanism. It is an ordinary instant command, so it queues while the phone is off and runs when it

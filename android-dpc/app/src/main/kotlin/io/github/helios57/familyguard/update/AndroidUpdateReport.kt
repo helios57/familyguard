@@ -30,6 +30,39 @@ fun runningVersionCode(context: Context): Long = try {
     0L
 }
 
+/**
+ * The on-device [UpdateSchedule].
+ *
+ * The same file as the report, and deliberately: both are the state of one feature, and a phone
+ * that kept the reason an update failed but forgot when to try again would retry on the schedule of
+ * a phone that had never tried at all.
+ */
+fun androidUpdateSchedule(context: Context): UpdateSchedule =
+    UpdateSchedule(AndroidUpdateScheduleStore(context.applicationContext))
+
+/** The one preferences file this feature owns. See [androidUpdateReport] for why it is its own. */
+private const val FILE = "family-guard-update"
+
+private class AndroidUpdateScheduleStore(context: Context) : UpdateScheduleStore {
+
+    private val preferences = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+
+    override fun dueAt(): Long = preferences.getLong(KEY_DUE, 0L)
+
+    /**
+     * `commit`, for the same reason [AndroidUpdateReportStore.save] uses it: this is written just
+     * before the commit that ends this process, and a due instant that never reached disk is a
+     * phone that asks again in two minutes forever.
+     */
+    override fun setDueAt(atEpochMillis: Long) {
+        preferences.edit().putLong(KEY_DUE, atEpochMillis).commit()
+    }
+
+    private companion object {
+        const val KEY_DUE = "next_check_at"
+    }
+}
+
 private class AndroidUpdateReportStore(context: Context) : UpdateReportStore {
 
     private val preferences = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -61,7 +94,6 @@ private class AndroidUpdateReportStore(context: Context) : UpdateReportStore {
     }
 
     private companion object {
-        const val FILE = "family-guard-update"
         const val KEY_REASON = "reason"
         const val KEY_FROM = "from_version_code"
         const val KEY_AT = "at"

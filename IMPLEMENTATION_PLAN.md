@@ -4410,12 +4410,15 @@ archive's real version code is read after the download and every check in FR-15.
 it, unchanged. A server that cannot parse its own APK publishes **no version at all** rather than a
 zero — `0 <= anything` is a phone that decides it is current forever.
 
-`updateLoop` runs in the connection's scope: first check 2 minutes after connecting, then every 15,
-holding `syncLock` so an update cannot commit in the middle of a policy being applied. A refusal
-backs off to 6 hours and is recorded; a *check* that could not complete (no server, no answer) is
-logged and not recorded, because a phone that is merely offline must not show a parent a red line
-about an update. Both the timer and the parent's button go through one `selfUpdater()` builder, and
-a test counts that.
+`updateCheck` runs first 2 minutes after connecting and then every 15, holding `syncLock` so an
+update cannot commit in the middle of a policy being applied. A refusal backs off to 6 hours and is
+recorded; a *check* that could not complete (no server, no answer) is logged and not recorded,
+because a phone that is merely offline must not show a parent a red line about an update. Both the
+timer and the parent's button go through one `selfUpdater()` builder, and a test counts that.
+
+> **Those two intervals were `delay(…)` in a coroutine until 0.6.2, and on a real phone they never
+> elapsed.** That is §17.11, and it is the reason this section is worth re-reading rather than
+> trusting: everything above it was true, and the feature still did nothing.
 
 ### 17.5 — what the parent sees
 
@@ -4604,3 +4607,76 @@ A silent stay on build 9 with no reason would be a third outcome and the only ba
 the loop never ran, and the next place to look is the fifteen-minute `delay` that nothing measures
 (§17.8).
 
+
+### 17.11 — the third outcome happened, and the timer was measuring the wrong clock (0.6.2)
+
+§17.10 named three outcomes for the 0.6.1 experiment and called one of them the only bad one: *"a
+silent stay on build 9 with no reason … it would mean the loop never ran, and the next place to look
+is the fifteen-minute `delay` that nothing measures"*. That is what happened, and that is where it
+was.
+
+**What was measured.** 0.6.1 was deployed at 21:56 UTC on 2026-09-06; the pod came up on
+`sha256:28df1a55…`, the server logged `"dpc_version":"0.6.1 (build 10)"`, and `/dpc.apk` served
+13 412 025 bytes of sha256 `5166766236d2…`. Forty-eight minutes later the phone was still
+`0.6.0 | build 9`, with `update_error` empty. The control plane's request log over that window,
+counted by path:
+
+| path | count |
+|---|---|
+| `/api/v1/device/heartbeat` | 40 |
+| `/api/v1/device/policy` | 40 |
+| `/api/v1/device/stream` | 2 |
+| **`/api/v1/device/apk-info`** | **0** |
+
+Zero. Not a refusal, not a failed download — the check never happened. And the service was not
+restarting under it: both stream rows carry `duration_ms: 900007` and `900002`, which is the server
+closing a stream at its fifteen-minute cap, so the connection loop had been alive continuously and
+`updateLoop` had been launched into it and never cancelled.
+
+**The control that turned that from a puzzle into a diagnosis** was in the same log. `EventStream`
+waits `Backoff.nextDelayMillis()` before reconnecting, and after a clean close the backoff has been
+reset, so that delay is *at most one second*. The stream that closed at 22:11:39 did not reopen
+until 22:18:45 — **426 seconds** — and it reopened ten seconds after a heartbeat at 22:18:35 had
+woken the CPU for an unrelated reason. Two different `delay` calls, in two different files, both
+stalled, both released by something else waking the phone. That is not a dead coroutine; that is a
+clock.
+
+**The clock.** `kotlinx.coroutines.delay` schedules on a clock that stops while the device is
+suspended: Android's `Handler` counts `SystemClock.uptimeMillis()`, the JVM's default executor parks
+on `CLOCK_MONOTONIC`, and neither advances in deep sleep. A phone in a pocket accrues a few minutes
+of uptime an hour, so `delay(2 * 60 * 1000)` is not "two minutes", it is "two minutes of being
+awake" — and `delay(15 * 60 * 1000)` on a child's phone is most of a day. The feature was not
+mis-wired and nothing was red. It was measuring a quantity nobody meant.
+
+**The fix, in two halves, because either alone is still broken.**
+
+- *Decide on the wall clock.* `UpdateSchedule` holds the instant the next check falls due in
+  `System.currentTimeMillis()`, which does advance while the phone sleeps, and **writes it down** —
+  a countdown held in a coroutine also restarts every time the thing holding it restarts, which is
+  the second way the old loop could never finish. `arm()` keeps an instant that has already passed
+  rather than starting the two minutes again, and replaces one further out than the longest booking
+  this class makes, because that can only mean the clock moved.
+- *Get woken.* The cadence is booked with `AlarmManager.setExactAndAllowWhileIdle(RTC_WAKEUP, …)`,
+  through the same `AlarmManagerPlatform` the bedtime edge already uses — the one combination that
+  both counts wall-clock time and is delivered to a dozing device. It falls back to
+  `setAndAllowWhileIdle` when the appop is missing, and says so. And every sync that happens for
+  another reason also asks `schedule.isDue()`, which costs one comparison and means a phone that is
+  awake and busy never waits on the alarm. On this pilot that path alone would have fired 40 times
+  in the window above.
+
+**What is guarded.** `UpdateScheduleTest` moves nothing but the clock — which is exactly what a
+sleeping phone does — and asserts the answer changes; calibrated by restoring the old `arm()`
+(always re-book the first wait), which takes 3 of its 9 tests red. The service-side invariant is
+that *every* advance of the schedule books the wake-up for it: the count of `schedule.arm()` +
+`schedule.checked()` + `schedule.refused()` must equal the count of `bookUpdateCheck(schedule.`,
+asserted equal rather than each asserted non-zero, with a positive control that the count is not
+zero. Calibrated by dropping one `bookUpdateCheck` wrapper: red, naming both counts. Full suite
+**58 classes, 534 tests, 0 failures**; `lintDebug` reports the same two pre-existing errors
+(`PackageInstaller.uninstall` without `DELETE_PACKAGES`, `QUERY_ALL_PACKAGES`) and no new one.
+
+**What is still not measured.** Everything about hardware. Whether a device-owner install session is
+gated by Play Protect the way the browser sideload was (§17.9) is still unanswered — 0.6.1 was
+supposed to answer it and could not, because the question was never asked. So is the six-hour
+back-off, and so is whether `UpdateReport`'s record survives the app being replaced. **And 0.6.2
+cannot install itself**: the phone is on 0.6.0, whose timer is the broken one. Somebody has to press
+**Update app** in the console exactly once. From the build that lands, the cadence is its own.

@@ -43,6 +43,7 @@ import io.github.helios57.familyguard.commands.LocationProbe
 import io.github.helios57.familyguard.commands.SirenController
 import io.github.helios57.familyguard.device.CriticalPackages
 import io.github.helios57.familyguard.device.PlatformInstalledAppReader
+import io.github.helios57.familyguard.enforce.AlarmBooking
 import io.github.helios57.familyguard.enforce.AlarmDecision
 import io.github.helios57.familyguard.enforce.DesiredState
 import io.github.helios57.familyguard.enforce.EnforcementAlarm
@@ -73,7 +74,9 @@ import io.github.helios57.familyguard.update.AndroidInstaller
 import io.github.helios57.familyguard.update.ApkInfo
 import io.github.helios57.familyguard.update.AppUpdater
 import io.github.helios57.familyguard.update.UpdateOutcome
+import io.github.helios57.familyguard.update.UpdateSchedule
 import io.github.helios57.familyguard.update.androidUpdateReport
+import io.github.helios57.familyguard.update.androidUpdateSchedule
 import io.github.helios57.familyguard.update.runningVersionCode
 import io.github.helios57.familyguard.usage.DayAttribution
 import io.github.helios57.familyguard.usage.EncryptedUsageStore
@@ -102,6 +105,7 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The one long-lived component: it enrolls if it must, holds the event stream open, and syncs.
@@ -170,8 +174,41 @@ class ConnectionService : Service() {
      * where its dependencies get built, and nothing must touch `AlarmManager` before `onCreate`.
      */
     private val alarm by lazy {
-        EnforcementAlarm(AlarmManagerPlatform(this)) { System.currentTimeMillis() }
+        EnforcementAlarm(AlarmManagerPlatform.enforcement(this)) { System.currentTimeMillis() }
     }
+
+    /**
+     * The wake-up that makes FR-15.6 a cadence instead of a hope.
+     *
+     * The automatic update check used to be `delay(2 min)` and then `delay(15 min)` inside the
+     * connection loop, and that measures a clock which stops while the phone is asleep — the whole
+     * argument, with the numbers it was measured with, is on [UpdateSchedule]. What is left in this
+     * service is a wake-up and a comparison.
+     */
+    private val updateAlarm by lazy { AlarmManagerPlatform.updateCheck(this) }
+
+    /** When the next check falls due, on the wall clock, written down so it survives a restart. */
+    private val schedule by lazy { androidUpdateSchedule(this) }
+
+    /**
+     * One update check at a time.
+     *
+     * Two triggers reach it — the alarm, and any sync that notices the check has fallen due — and
+     * they can overlap: the check holds [syncLock] only for the attempt, and the alarm arrives as a
+     * fresh `onStartCommand` that does not wait for anything. Two concurrent attempts would
+     * download the same 13 MB twice and race each other into the installer.
+     */
+    private val updateInFlight = AtomicBoolean(false)
+
+    /**
+     * One update check, through the connection's own client, or null before the loop is up.
+     *
+     * A lambda for the same reason as [resync]: the check needs the [ApiClient] and the
+     * [DeviceOwnerPolicy] that [connect] built together, and publishing them separately is a chance
+     * for a caller to hold one from a connection that has since been replaced.
+     */
+    @Volatile
+    private var checkUpdate: (suspend (String) -> Unit)? = null
 
     /**
      * The find-my-phone siren (FR-9), held by the service and not by the connection loop.
@@ -228,6 +265,7 @@ class ConnectionService : Service() {
         }
 
         if (intent?.action == ACTION_ENFORCE) onEnforcementAlarm()
+        if (intent?.action == ACTION_UPDATE_CHECK) onUpdateAlarm()
 
         if (job?.isActive != true) {
             job = scope.launch { connect() }
@@ -266,10 +304,34 @@ class ConnectionService : Service() {
         }
     }
 
+    /**
+     * The automatic update check has fallen due (FR-15.6).
+     *
+     * This is the wake-up, and on a sleeping phone it is the only thing that will happen: the
+     * countdown it replaced was a coroutine `delay`, which does not advance while the device is
+     * suspended — [UpdateSchedule] carries the measurement. Arriving before the connection is up is
+     * the ordinary case after a reboot and is not an error: [connect] arms the schedule and books
+     * the alarm again from the instant that is written down, so a check that fell due while the
+     * phone was off is taken immediately rather than two minutes later.
+     */
+    private fun onUpdateAlarm() {
+        val check = checkUpdate
+        if (check == null) {
+            Log.i(TAG, "update alarm: fired before the connection was up; the start that follows arms it")
+            return
+        }
+        scope.launch { check("alarm") }
+    }
+
     override fun onDestroy() {
         // Otherwise the wake-up outlives the service that answers it: it restarts this one, which
         // stops again for whatever reason it stopped for, at every edge for the life of the device.
         runCatching { alarm.schedule(DesiredState()) }
+        // Same reason, and the update alarm has no DesiredState to express "nothing": a wake-up
+        // that restarts a service which stops again is a battery cost with no feature behind it.
+        // The instant stays written down, so the next start books it again rather than restarting
+        // the two-minute wait.
+        runCatching { updateAlarm.cancel() }
         usageAccessWatcher?.let { watcher ->
             runCatching { getSystemService(AppOpsManager::class.java)?.stopWatchingMode(watcher) }
             usageAccessWatcher = null
@@ -409,10 +471,11 @@ class ConnectionService : Service() {
         val installs = registerInstallWatcher(synchronizer, reports, commands)
         val screen = registerScreenWatcher(reports)
         val polling = scope.launch { pollWhileAwake(synchronizer, reports) }
-        // Started only once the first sync has succeeded, so a phone whose credential the server
+        // Armed only once the first sync has succeeded, so a phone whose credential the server
         // refuses never downloads an APK it has no business installing. Not gated on the screen
         // being on, unlike the poll: an update is best taken from a phone nobody is holding.
-        val updates = scope.launch { updateLoop(api, policy) }
+        checkUpdate = { why -> updateCheck(api, policy, why) }
+        bookUpdateCheck(schedule.arm())
         try {
             stream.run()
         } catch (_: StopConnection) {
@@ -421,7 +484,7 @@ class ConnectionService : Service() {
             live = null
             journal = null
             polling.cancel()
-            updates.cancel()
+            checkUpdate = null
             runCatching { unregisterReceiver(installs) }
             runCatching { unregisterReceiver(screen) }
         }
@@ -591,6 +654,11 @@ class ConnectionService : Service() {
     ): Boolean {
         val tick = runSync(synchronizer, reports, why) ?: return false
         if (tick.pending > 0) drain(commands, tick.pending, why)
+        // Outside the lock, like the drain and for the same reason: the check takes [syncLock] for
+        // itself. It costs one comparison on a phone that is not due, and it is what makes the
+        // cadence hold on a phone that syncs for other reasons more often than the alarm fires —
+        // which, on this pilot, is every phone.
+        checkUpdate?.let { check -> if (schedule.isDue()) check(why) }
         return true
     }
 
@@ -1006,30 +1074,42 @@ class ConnectionService : Service() {
         policy?.hardening?.withoutRestrictions(ManagedAppApplier.LIFTED, body) ?: body()
 
     /**
-     * Takes the build the server hosts, on a timer, without anyone pressing anything (FR-15.6).
+     * Takes the build the server hosts, without anyone pressing anything (FR-15.6).
      *
      * **The owner's requirement is "as soon as there is a new version available", and this is the
      * honest reading of it.** Nothing pushes a new APK: the file is installed on the node out of
      * band and the control plane hashes it at startup, so the moment a new build becomes visible is
-     * a deploy, and a check every [UPDATE_CHECK_INTERVAL_MILLIS] turns that into at most that much
+     * a deploy, and a check every [UpdateSchedule.INTERVAL_MILLIS] turns that into at most that much
      * delay. The check itself is one small authenticated GET — the version comparison happens
      * against the number the server declares, so a converged phone downloads nothing at all.
      *
+     * **When it runs is [UpdateSchedule]'s decision and not a countdown held here**, because a
+     * countdown held here is what the first version of this was and it never fired on a real phone:
+     * `delay` is measured on a clock that stops while the device sleeps. Two callers reach this and
+     * they are the two ways the phone can find out that the wall clock has moved — the doze-piercing
+     * alarm, and any sync that happens for another reason. Both ask [UpdateSchedule.isDue] first, so
+     * a phone that is awake and busy checks exactly as often as one that is asleep.
+     *
      * **A refusal backs off and is reported.** Retrying a failing update every quarter of an hour
      * would re-download 13 MB each time on a child's connection and would fill the console with the
-     * same line; and a failure nobody sees is the defect this whole release is about. So the reason
-     * goes to [UpdateReport], which puts it on the next heartbeat, and the next attempt waits
-     * [UPDATE_RETRY_BACKOFF_MILLIS].
+     * same line; and a failure nobody sees is the defect that release was about. So the reason goes
+     * to [UpdateReport], which puts it on the next heartbeat, and the next attempt waits
+     * [UpdateSchedule.RETRY_MILLIS].
      *
      * It holds [syncLock] for the attempt, so an update cannot commit in the middle of a policy
-     * being applied. It never calls back into a sync, so it cannot deadlock on it.
+     * being applied — and it takes it *after* [updateInFlight], never the other way round, so the
+     * two locks are always acquired in one order. It never calls back into a sync, so it cannot
+     * deadlock on it.
      */
-    private suspend fun updateLoop(api: ApiClient, policy: DeviceOwnerPolicy?) {
-        val report = androidUpdateReport(this)
-        var wait = UPDATE_FIRST_CHECK_MILLIS
-        while (true) {
-            delay(wait)
-            wait = UPDATE_CHECK_INTERVAL_MILLIS
+    private suspend fun updateCheck(api: ApiClient, policy: DeviceOwnerPolicy?, why: String) {
+        if (!schedule.isDue()) return
+        // Re-read under the guard rather than trusted from above: the alarm and a sync can both
+        // find it due at the same instant, and the loser must do nothing rather than download the
+        // same archive a second time.
+        if (!updateInFlight.compareAndSet(false, true)) return
+        try {
+            if (!schedule.isDue()) return
+            val report = androidUpdateReport(this)
             val outcome = syncLock.withLock {
                 withContext(Dispatchers.IO) { runCatching { selfUpdater(api, policy).update() } }
             }
@@ -1037,35 +1117,67 @@ class ConnectionService : Service() {
             if (failure != null) {
                 // The check itself did not complete — no server, no answer. Not recorded as an
                 // update failure: nothing was attempted, and a phone that is merely offline must
-                // not show a parent a red line about an update.
-                Log.w(TAG, "update check: ${failure.message ?: failure.javaClass.simpleName}")
-                continue
+                // not show a parent a red line about an update. Booked at the ordinary interval and
+                // not the long one, for the same reason: nothing was refused.
+                Log.w(TAG, "update check ($why): ${failure.message ?: failure.javaClass.simpleName}")
+                bookUpdateCheck(schedule.checked())
+                return
             }
             when (val result = outcome.getOrThrow()) {
-                is UpdateOutcome.AlreadyCurrent ->
-                    Log.i(TAG, "update check: already on build ${result.identity.versionCode}")
+                is UpdateOutcome.AlreadyCurrent -> {
+                    Log.i(TAG, "update check ($why): already on build ${result.identity.versionCode}")
+                    bookUpdateCheck(schedule.checked())
+                }
                 is UpdateOutcome.Refused -> {
-                    Log.e(TAG, "update check refused: ${result.reason}")
+                    Log.e(TAG, "update check ($why) refused: ${result.reason}")
                     report.record(result.reason, runningVersionCode(this@ConnectionService))
-                    wait = UPDATE_RETRY_BACKOFF_MILLIS
+                    bookUpdateCheck(schedule.refused())
                 }
                 is UpdateOutcome.Staged -> {
                     Log.i(
                         TAG,
-                        "update check: installing ${result.identity.versionName} " +
+                        "update check ($why): installing ${result.identity.versionName} " +
                             "(build ${result.fromVersionCode} \u2192 ${result.identity.versionCode})"
                     )
+                    // Booked before the commit, not after it: the commit normally does not return —
+                    // it ends this process — so anything written afterwards is written by nobody. A
+                    // build that installs re-books from its own first connection anyway; what this
+                    // covers is the build that does not, which must not then be a phone with no
+                    // wake-up left at all.
+                    bookUpdateCheck(schedule.checked())
                     // The commit writes its own pessimistic record first — see selfUpdater — so
-                    // there is nothing to arm here. It normally does not return: it ends this
-                    // process. A throw means it did not even get that far.
+                    // there is nothing to arm here. A throw means it did not even get that far.
                     runCatching { result.commit() }.exceptionOrNull()?.let {
                         val reason = "the install could not be committed (${it.message ?: it.javaClass.simpleName})"
                         Log.e(TAG, reason)
                         report.record(reason, runningVersionCode(this@ConnectionService))
-                        wait = UPDATE_RETRY_BACKOFF_MILLIS
+                        bookUpdateCheck(schedule.refused())
                     }
                 }
             }
+        } finally {
+            updateInFlight.set(false)
+        }
+    }
+
+    /**
+     * Asks `AlarmManager` to wake this phone when the next check falls due, and says so either way.
+     *
+     * A refusal is not fatal and is not silent: every sync also asks [UpdateSchedule.isDue], so a
+     * phone that cannot book a wake-up still checks whenever it is awake for another reason. What it
+     * loses is the phone that is awake for no other reason, which is exactly the phone this alarm
+     * exists for — so the reason is logged as itself rather than as a missing update.
+     */
+    private fun bookUpdateCheck(atMillis: Long) {
+        val at = Instant.ofEpochMilli(atMillis)
+        when (val booking = updateAlarm.schedule(atMillis)) {
+            AlarmBooking.REFUSED ->
+                Log.w(
+                    TAG,
+                    "no update-check wake-up: ${updateAlarm.unavailableReason()} — the check is " +
+                        "due at $at and will run on the first sync after that"
+                )
+            else -> Log.i(TAG, "next update check due $at ($booking)")
         }
     }
 
@@ -1504,38 +1616,6 @@ class ConnectionService : Service() {
          */
         private const val POLL_INTERVAL_MILLIS = 5 * 60 * 1000L
 
-        /**
-         * How long after the connection settles the first automatic update check runs.
-         *
-         * Not immediately. A phone coming back from a reboot has an enrollment, a policy, a
-         * notification channel and an inventory to get through first, and an update that replaced
-         * this app in the middle of that would restart every one of them. Two minutes is long
-         * enough for that to be finished and short enough that a parent who has just deployed a
-         * build does not conclude nothing happened.
-         */
-        private const val UPDATE_FIRST_CHECK_MILLIS = 2 * 60 * 1000L
-
-        /**
-         * How often the phone asks whether the server hosts a newer build (FR-15.6).
-         *
-         * A new build becomes visible when the control plane restarts — it hashes the APK on the
-         * node at startup — so this is the delay between a deploy and a phone taking it. The check
-         * costs one small authenticated GET, and a phone already on the current build downloads
-         * nothing: the comparison is made against the version the server declares.
-         */
-        private const val UPDATE_CHECK_INTERVAL_MILLIS = 15 * 60 * 1000L
-
-        /**
-         * How long the phone waits after a refused update before trying again.
-         *
-         * Long, deliberately. A refusal that is going to repeat — a signature that will never match,
-         * an installer the platform will not run — repeats every time, and retrying it every quarter
-         * of an hour costs a 13 MB download on a child's connection for each one. The reason is on
-         * the console the whole time (FR-15.7), so the parent is not waiting on the retry to find
-         * out something is wrong.
-         */
-        private const val UPDATE_RETRY_BACKOFF_MILLIS = 6 * 60 * 60 * 1000L
-
         /** The provisioning admin extras, as the platform delivered them. */
         const val EXTRA_ADMIN_EXTRAS = "io.github.helios57.familyguard.ADMIN_EXTRAS"
 
@@ -1546,6 +1626,15 @@ class ConnectionService : Service() {
          * receiving it is allowed to act rather than having to authenticate the sender first.
          */
         const val ACTION_ENFORCE = "io.github.helios57.familyguard.ENFORCE_NOW"
+
+        /**
+         * The automatic update check's wake-up, sent by [AlarmManagerPlatform] and by nothing else.
+         *
+         * Not exported, for the same reason as [ACTION_ENFORCE]. A separate action rather than a
+         * flag on that one because they are separately booked and separately cancelled, and an
+         * alarm that meant "one of two things" would have to guess which.
+         */
+        const val ACTION_UPDATE_CHECK = "io.github.helios57.familyguard.UPDATE_CHECK_NOW"
 
         /**
          * Starts the service, carrying the provisioning extras when there are any.

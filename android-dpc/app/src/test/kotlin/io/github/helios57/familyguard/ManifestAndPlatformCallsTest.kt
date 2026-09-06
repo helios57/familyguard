@@ -687,7 +687,7 @@ class ManifestAndPlatformCallsTest {
         assertTrue(
             "ConnectionService.kt no longer runs an automatic update check, so this test is " +
                 "scanning a file that has stopped carrying the thing it is about",
-            text.contains("private suspend fun updateLoop("),
+            text.contains("private suspend fun updateCheck("),
         )
         assertEquals(
             "the self-update is built in ${text.split("selfUpdater(api, policy)").size - 1} places; " +
@@ -703,12 +703,62 @@ class ManifestAndPlatformCallsTest {
             text.split("private fun selfUpdater(").size - 1,
         )
 
-        // The loop is launched into the connection's scope and cancelled with it. A coroutine that
-        // outlives the connection is a second updater running against a stale ApiClient, and the
-        // symptom is an update that reports failures from a session that no longer exists.
+        // The check is reachable only through the lambda the connection publishes, and that is
+        // dropped with the connection. A handle that outlives it is a second updater running
+        // against a stale ApiClient, and the symptom is an update reporting failures from a session
+        // that no longer exists.
         assertTrue(
-            "the update loop is not cancelled when the connection ends",
-            text.contains("updates.cancel()"),
+            "the update check is still reachable after the connection ends",
+            text.contains("checkUpdate = null"),
+        )
+    }
+
+    /**
+     * Every advance of the update schedule books the wake-up that will act on it (FR-15.6).
+     *
+     * **This is the invariant the shipped 0.6.0 broke, in the only way that has no symptom.** Its
+     * cadence was `delay(2 min)` then `delay(15 min)` inside the connection loop, and a coroutine
+     * delay is measured on a clock that stops while the phone is suspended. Nothing went red: the
+     * service stayed up, the heartbeats kept arriving, the console kept showing a device that was
+     * online — and in 38 minutes of wall clock the phone made zero `apk-info` requests, because two
+     * minutes of *uptime* had not passed. The version that replaces it decides on the wall clock and
+     * is woken by an alarm, so the way it can now fail is to advance the schedule and forget to book
+     * the alarm: a phone that goes back to sleep with nothing left to wake it, which again looks
+     * exactly like a phone that is fine.
+     *
+     * So: every call that moves the schedule is an argument to the booking, and the two counts are
+     * asserted equal rather than each asserted non-zero — one of each would satisfy "both present"
+     * while leaving three branches that never book.
+     */
+    @Test
+    fun `every advance of the update schedule books the wake-up for it`() {
+        val service = sources.single { it.name == "ConnectionService.kt" }
+        val text = code(service)
+
+        val advances = listOf("schedule.arm()", "schedule.checked()", "schedule.refused()")
+            .sumOf { text.split(it).size - 1 }
+        val booked = text.split("bookUpdateCheck(schedule.").size - 1
+
+        // The positive control. Zero advances would make the equality below hold trivially, and a
+        // renamed schedule is exactly what would produce it.
+        assertTrue(
+            "ConnectionService.kt no longer advances an update schedule at all, so this test is " +
+                "comparing two zeroes",
+            advances > 0,
+        )
+        assertEquals(
+            "$advances places move the update schedule but only $booked of them book the wake-up; " +
+                "the difference is a phone that sleeps through its next check with nothing to wake it",
+            advances,
+            booked,
+        )
+
+        // And the cadence itself is decided in one place. A number repeated here is a second
+        // schedule that agrees with the first until somebody changes one of them.
+        assertFalse(
+            "an update interval is written out in ConnectionService.kt again; the three live on " +
+                "UpdateSchedule, which is what the tests for the cadence can reach",
+            text.contains("15 * 60 * 1000L") || text.contains("6 * 60 * 60 * 1000L"),
         )
     }
 
