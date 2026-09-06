@@ -4680,3 +4680,54 @@ supposed to answer it and could not, because the question was never asked. So is
 back-off, and so is whether `UpdateReport`'s record survives the app being replaced. **And 0.6.2
 cannot install itself**: the phone is on 0.6.0, whose timer is the broken one. Somebody has to press
 **Update app** in the console exactly once. From the build that lands, the cadence is its own.
+
+### 17.12 — measured on hardware: the timer runs, and Play Protect gates a device-owner session too
+
+Both open questions from §17.10 were answered on the pilot phone on 2026-09-07, within four minutes
+of each other.
+
+**FR-15.6 runs.** The phone was moved from build 9 to build 11 by the console's **Update app**
+button at 01:16 local (`commands`: `UPDATE_APP … {"build": "9 → 11", "state": "downloaded and
+verified; installing now"}`), reconnected on build 11 at 23:16:41Z, and asked
+`/api/v1/device/apk-info` at **23:19:15Z** — about two and a half minutes later, with no command
+behind it. The comparison is the whole evidence: **zero** such requests in the 48 minutes before the
+fix, one within two and a half minutes of connecting after it. `UPDATE_FIRST_CHECK_MILLIS` is now a
+number that describes something.
+
+**Play Protect blocks a device-owner install session, not just a browser sideload.** That install
+went through the DPC's own `PackageInstaller` session as device owner, with
+`INSTALL_REASON_POLICY` and `USER_ACTION_NOT_REQUIRED`, and the owner still got the *"FamilyGuard …
+is not known"* dialog and still had to press *Install anyway*. §17.9 could only say the sideload was
+gated; this says the managed path is too, and it is the worse of the two answers because **the
+automatic path has nobody to press the button.** An unattended check will come back
+`STATUS_FAILURE_BLOCKED`, which since 0.6.1 at least reaches the parent in the platform's own words
+rather than going quiet.
+
+**Nothing in this app can turn it off**, verified against the Android 37 platform sources rather than
+recalled:
+
+- `DevicePolicyManager.setGlobalSetting`'s allowlist is exactly four settings — `ADB_ENABLED`,
+  `USB_MASS_STORAGE_ENABLED`, `STAY_ON_WHILE_PLUGGED_IN`, `WIFI_DEVICE_OWNER_CONFIGS_LOCKDOWN`. No
+  verifier setting appears in it, and the verifier *enable* flag is not public API at all (only
+  `verifier_timeout`, `verifier_default_response`, `verifier_setting_visible` and
+  `verifier_verify_adb_installs` are).
+- `UserManager.ENSURE_VERIFY_APPS` is one-way by construction: *"disallowed from disabling
+  application verification"*. It forces verification on; there is no counterpart.
+- `setPackagesSuspended` names *"the required package verifier"* among the packages that cannot be
+  suspended, so the blunt instrument is refused by the platform for exactly this role.
+
+So the two things that do work are both outside the app, and both are the operator's decision:
+
+1. **Turn *Scan apps with Play Protect* off on the phone** (Play Store → profile → Play Protect →
+   settings). A user toggle with no device-owner API, so it is one manual step per handset, and it
+   can be turned back on. Right-sized for a family fleet.
+2. **Distribute the APK through Google Play so it stops being unknown** — internal app sharing, a
+   closed track, or a managed Google Play private app, which is the channel a DPC would normally
+   use. **If this is done, the signing key must stay the one the fleet already trusts:** enrolling in
+   Play App Signing with a Google-generated key changes the certificate from `b62cda94…`, and every
+   enrolled phone then refuses the update and has to be re-provisioned. Upload the existing key as
+   the app signing key.
+
+Not applicable: Google's Play Protect appeal form covers apps flagged as *harmful*, not the "not
+known" notice; and the install-volume heuristic that relaxes the warning never arrives for a fleet
+of one.

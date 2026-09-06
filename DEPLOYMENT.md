@@ -484,6 +484,16 @@ that, compares the version the server publishes with the one it is running, and 
 all when it is already current. So replacing the APK and restarting the pod is the whole deploy — the
 fleet follows within about a quarter of an hour, and nobody has to press anything.
 
+> **Play Protect gates this on a phone that has never seen the app before, and the automatic path
+> has nobody to press *Install anyway*.** Measured 2026-09-07: an install driven by the console
+> button, through the DPC's own device-owner session, still raised *"FamilyGuard … is not known"*.
+> Nothing in the app can turn that off — see `IMPLEMENTATION_PLAN.md` §17.12 for what was checked.
+> Either turn *Scan apps with Play Protect* off on the handset (Play Store → profile → Play Protect
+> → settings; a user toggle, one step per phone), or distribute the APK through Google Play so it
+> stops being unknown — **keeping the existing signing key**, because a certificate change makes
+> every enrolled phone refuse the update. Until one of those, an unattended update comes back
+> `STATUS_FAILURE_BLOCKED` and says so on the device card.
+
 > **0.6.0 and 0.6.1 shipped that loop and it did not run.** Its cadence was a coroutine `delay`,
 > which is measured on a clock that stops while the phone is asleep, so on a real handset the first
 > two-minute check had not elapsed after 48 minutes — no error, no failed download, just a phone that
