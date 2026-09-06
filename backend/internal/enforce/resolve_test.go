@@ -108,7 +108,7 @@ func baseSource() *fakeSource {
 			AllowChildInstalls: true,
 			BedtimeStart:       "21:00",
 			BedtimeEnd:         "07:00",
-			DNSHost:            "family.adguard-dns.com",
+			DNSHost:            "dns.example-family.net",
 			Timezone:           "Europe/Zurich",
 			Version:            7,
 		},

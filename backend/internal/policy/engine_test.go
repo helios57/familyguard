@@ -105,6 +105,7 @@ func TestVectorsCoverTheEnforcementRequirements(t *testing.T) {
 		"FR-5.3",  // free-installation mode
 		"FR-5.4",  // new app waits for approval
 		"FR-5.5",  // critical whitelist
+		"FR-5.6",  // developer options and adb, as a switch
 		"FR-6.2",  // per-child filtering endpoint
 		"FR-6.4",  // domain removal restores access
 		"FR-7.1",  // youtube apps
@@ -149,7 +150,7 @@ func baseSettings() Settings {
 		BedtimeEnabled:     true,
 		BedtimeStart:       "21:00",
 		BedtimeEnd:         "07:00",
-		DNSHost:            "family.adguard-dns.com",
+		DNSHost:            "dns.example-family.net",
 		Timezone:           "Europe/Zurich",
 		Version:            3,
 		BlockedPackages:    append([]string{"com.example.game"}, DefaultCriticalPackages...),
@@ -228,7 +229,7 @@ func TestEveryStateIsReversible(t *testing.T) {
 		AllowChildInstalls: true,
 		BedtimeStart:       "21:00",
 		BedtimeEnd:         "07:00",
-		DNSHost:            "family.adguard-dns.com",
+		DNSHost:            "dns.example-family.net",
 		Timezone:           "Europe/Zurich",
 		Version:            1,
 	}

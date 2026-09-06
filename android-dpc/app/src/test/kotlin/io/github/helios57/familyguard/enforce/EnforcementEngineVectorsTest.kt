@@ -83,7 +83,7 @@ class EnforcementEngineVectorsTest {
         // The loop above is vacuously green over an empty file, and so is a suite whose resource
         // arrived truncated. Pin what was actually compared, so "0 of 0 vectors agreed" cannot read
         // as agreement. Both numbers are lower-bounded rather than exact where growth is expected.
-        assertEquals("number of vectors replayed", 26, vectors.size)
+        assertEquals("number of vectors replayed", 29, vectors.size)
         assertTrue("only $comparisons expectations were compared", comparisons >= 100)
     }
 

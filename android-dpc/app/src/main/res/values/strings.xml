@@ -92,6 +92,12 @@
     <string name="unlinked_text">Family Guard cannot report to the family console any more, because the setup code it uses was replaced. Open the console, choose this phone, tap Replace phone, and enter the setup code here. Nothing on the phone needs to be reset.</string>
     <string name="relink_heading">Link this phone again</string>
     <string name="relink_hint">Setup code from the console</string>
+    <!--
+      Shown above the field on a phone that is linked and working. The unlinked case keeps
+      unlinked_text, which explains a problem; this one explains an option, and the difference
+      matters because the section is now on screen in both states.
+    -->
+    <string name="relink_explain_linked">This phone is linked. If the console has issued a new setup code for it — after Replace phone, or because it stopped reporting — type that code here to link it again. Nothing changes until a code is accepted.</string>
     <string name="relink_submit">Link this phone</string>
     <string name="relink_working">Linking…</string>
     <string name="relink_done">Linked. The phone is reporting to the console again.</string>

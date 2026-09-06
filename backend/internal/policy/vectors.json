@@ -6,7 +6,7 @@
     "",
     "'expect' is a PARTIAL DesiredState: only the keys present are asserted, and an unknown key is a",
     "test failure rather than a silently ignored typo. Expectations are written by hand from",
-    "REQUIREMENTS.md — never generated from an implementation's output, which would assert only that",
+    "REQUIREMENTS.md \u2014 never generated from an implementation's output, which would assert only that",
     "the code does what it does."
   ],
   "vectors": [
@@ -20,12 +20,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -55,7 +56,7 @@
         "suspended_packages": [],
         "hidden_packages": [],
         "pending_approval": [],
-        "private_dns_host": "family.adguard-dns.com",
+        "private_dns_host": "dns.example-family.net",
         "blocked_domains": [],
         "safe_search": true,
         "youtube_restricted_mode": true,
@@ -78,12 +79,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": true,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -131,7 +133,7 @@
       }
     },
     {
-      "name": "bedtime: leaving the window un-suspends — the state is not one-way",
+      "name": "bedtime: leaving the window un-suspends \u2014 the state is not one-way",
       "requirements": [
         "FR-4.2"
       ],
@@ -139,12 +141,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": true,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -197,12 +200,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": true,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -239,12 +243,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": true,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -278,12 +283,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": true,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -320,12 +326,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": true,
           "bedtime_start": "21:00",
           "bedtime_end": "21:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -360,12 +367,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": true,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -401,12 +409,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 60,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -450,12 +459,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 60,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -491,12 +501,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 60,
           "bedtime_enabled": true,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -533,12 +544,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [
@@ -584,12 +596,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": false,
+          "allow_debugging": false,
           "youtube_blocked": true,
           "daily_limit_minutes": 30,
           "bedtime_enabled": true,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [
@@ -668,12 +681,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": true,
           "daily_limit_minutes": 0,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -742,12 +756,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -793,12 +808,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": false,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -865,12 +881,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -919,12 +936,13 @@
         "settings": {
           "tracking_only": true,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": true,
           "daily_limit_minutes": 30,
           "bedtime_enabled": true,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 9,
           "blocked_packages": [
@@ -959,7 +977,7 @@
         "hidden_packages": [],
         "pending_approval": [],
         "next_change_at": "",
-        "private_dns_host": "family.adguard-dns.com",
+        "private_dns_host": "dns.example-family.net",
         "safe_search": true,
         "youtube_restricted_mode": true,
         "quota_minutes": 30,
@@ -998,12 +1016,13 @@
         "settings": {
           "tracking_only": true,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -1037,6 +1056,7 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": false,
@@ -1068,12 +1088,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -1135,12 +1156,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -1209,7 +1231,7 @@
       }
     },
     {
-      "name": "managed apps: declaring an app is not allowing it — bedtime still suspends it",
+      "name": "managed apps: declaring an app is not allowing it \u2014 bedtime still suspends it",
       "requirements": [
         "FR-16.3",
         "FR-4.1"
@@ -1218,12 +1240,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": true,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 7,
           "blocked_packages": [],
@@ -1284,12 +1307,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 11,
           "blocked_packages": [],
@@ -1338,12 +1362,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 11,
           "blocked_packages": [
@@ -1393,7 +1418,7 @@
       }
     },
     {
-      "name": "family blocklist: the critical whitelist outranks it — a keyboard on the list is still not hidden",
+      "name": "family blocklist: the critical whitelist outranks it \u2014 a keyboard on the list is still not hidden",
       "requirements": [
         "FR-18.4",
         "FR-5.5"
@@ -1402,12 +1427,13 @@
         "settings": {
           "tracking_only": false,
           "allow_child_installs": true,
+          "allow_debugging": false,
           "youtube_blocked": false,
           "daily_limit_minutes": 0,
           "bedtime_enabled": false,
           "bedtime_start": "21:00",
           "bedtime_end": "07:00",
-          "dns_host": "family.adguard-dns.com",
+          "dns_host": "dns.example-family.net",
           "timezone": "Europe/Zurich",
           "version": 11,
           "blocked_packages": [],
@@ -1443,6 +1469,161 @@
         ],
         "hidden_packages": [
           "com.facebook.katana"
+        ]
+      }
+    },
+    {
+      "name": "no filtering resolver: private DNS is left alone rather than locked to nothing",
+      "requirements": [
+        "FR-6.1"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 12,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T14:00:00+02:00"
+      },
+      "expect": {
+        "private_dns_host": "",
+        "user_restrictions": [
+          "no_add_user",
+          "no_config_date_time",
+          "no_debugging_features",
+          "no_install_unknown_sources",
+          "no_safe_boot",
+          "no_uninstall_apps"
+        ]
+      }
+    },
+    {
+      "name": "developer options allowed: adb survives, and nothing else is loosened with it",
+      "requirements": [
+        "FR-5.6"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 12,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T14:00:00+02:00"
+      },
+      "expect": {
+        "private_dns_host": "",
+        "user_restrictions": [
+          "no_add_user",
+          "no_config_date_time",
+          "no_install_unknown_sources",
+          "no_safe_boot",
+          "no_uninstall_apps"
+        ],
+        "safe_search": true,
+        "youtube_restricted_mode": true
+      }
+    },
+    {
+      "name": "developer options allowed together with a resolver: only the debugging entry is missing",
+      "requirements": [
+        "FR-5.6",
+        "FR-6.1"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 12,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T14:00:00+02:00"
+      },
+      "expect": {
+        "private_dns_host": "dns.example-family.net",
+        "user_restrictions": [
+          "disallow_config_private_dns",
+          "no_add_user",
+          "no_config_date_time",
+          "no_install_unknown_sources",
+          "no_safe_boot",
+          "no_uninstall_apps"
         ]
       }
     }

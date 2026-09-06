@@ -122,10 +122,15 @@ object EnforcementEngine {
      * wipe and `adb` — and the pre-sync floor is not the place to spend one of them. It is a
      * legitimate policy restriction, so [compute] still emits it for a device that HAS synced (see
      * below), where the parent can see it and the server can withdraw it.
+     *
+     * `disallow_config_private_dns` is not here either, and for a smaller reason: this floor runs
+     * before any policy has been fetched, so there is no resolver configured for it to protect.
+     * [compute] adds it exactly when a host is set, and a floor that applied it unconditionally
+     * would have every freshly provisioned phone take a setting away and then hand it back on the
+     * first sync.
      */
     val BASELINE_RESTRICTIONS = listOf(
         RESTRICTION_SAFE_BOOT,
-        RESTRICTION_PRIVATE_DNS,
         RESTRICTION_DATE_TIME,
         RESTRICTION_ADD_USER,
         RESTRICTION_UNKNOWN_SOURCES,
@@ -199,7 +204,13 @@ object EnforcementEngine {
         // Added here rather than in the baseline: a phone that has reached the server is one the
         // parent can un-restrict through it, so the escape hatch this closes is one the control
         // plane can reopen. Before that first sync there is nobody to ask. See BASELINE_RESTRICTIONS.
-        restrictions.add(RESTRICTION_DEBUGGING)
+        // And since FR-5.6 the parent can decline it outright, which is the same argument carried
+        // one step further — the switch is in the console, where it is visible and reversible.
+        if (!input.settings.allowDebugging) restrictions.add(RESTRICTION_DEBUGGING)
+        // Only when there is a resolver to protect. `disallow_config_private_dns` stops a child
+        // undoing the DNS policy from Settings; with no host configured there is no policy to undo,
+        // and the restriction then costs whoever holds the phone a setting in exchange for nothing.
+        if (input.settings.dnsHost.isNotBlank()) restrictions.add(RESTRICTION_PRIVATE_DNS)
         if (!input.settings.allowChildInstalls) restrictions.add(RESTRICTION_INSTALL_APPS)
         restrictions.removeAll(FORBIDDEN_RESTRICTIONS)
 
@@ -445,6 +456,15 @@ data class App(
 data class Settings(
     @SerialName("tracking_only") val trackingOnly: Boolean = false,
     @SerialName("allow_child_installs") val allowChildInstalls: Boolean = false,
+    /**
+     * Leaves developer options and adb switched on (FR-5.6).
+     *
+     * Defaulted to **false**, which is the value that keeps `no_debugging_features` applied, so a
+     * phone talking to a server that predates this field behaves exactly as it did before. That is
+     * the safe direction for this particular flag and it is not the usual one: for a field that
+     * *adds* a restriction the compatible default is "off", and here "off" is what adds it.
+     */
+    @SerialName("allow_debugging") val allowDebugging: Boolean = false,
     @SerialName("youtube_blocked") val youtubeBlocked: Boolean = false,
     @SerialName("daily_limit_minutes") val dailyLimitMinutes: Int = 0,
     @SerialName("bedtime_enabled") val bedtimeEnabled: Boolean = false,

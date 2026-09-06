@@ -29,7 +29,7 @@ class EnforcementEngineHardeningTest {
         bedtimeEnabled = bedtimeEnabled,
         bedtimeStart = "21:00",
         bedtimeEnd = "07:00",
-        dnsHost = "family.adguard-dns.com",
+        dnsHost = "dns.example-family.net",
         timezone = "Europe/Zurich",
         version = 3,
         blockedPackages = listOf("com.example.game"),

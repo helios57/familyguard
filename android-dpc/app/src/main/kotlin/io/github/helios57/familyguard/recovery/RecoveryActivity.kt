@@ -77,8 +77,9 @@ class RecoveryActivity : AppCompatActivity() {
     private lateinit var statusLoading: TextView
     private lateinit var statusLines: LinearLayout
 
-    // FR-1.8. Gone from the screen unless the server has refused this device's credential.
+    // FR-1.8. Shown whenever this phone holds a credential — see [render].
     private lateinit var relinkGroup: LinearLayout
+    private lateinit var relinkExplain: TextView
     private lateinit var relinkCode: EditText
     private lateinit var relinkSubmit: Button
     private lateinit var relinkStatus: TextView
@@ -102,6 +103,7 @@ class RecoveryActivity : AppCompatActivity() {
         statusLines = findViewById(R.id.status_lines)
 
         relinkGroup = findViewById(R.id.relink_group)
+        relinkExplain = findViewById(R.id.relink_explain)
         relinkCode = findViewById(R.id.relink_code)
         relinkSubmit = findViewById(R.id.relink_submit)
         relinkStatus = findViewById(R.id.relink_status)
@@ -126,6 +128,9 @@ class RecoveryActivity : AppCompatActivity() {
                     // from. Re-asked on every start for the reason above it: a sync can succeed
                     // while this screen sits in the background, and the section must go away when
                     // it does rather than invite a parent to spend a code that is not needed.
+                    // Whether there is a credential to replace at all. Read from the same store
+                    // the enroller writes, on the same IO hop as everything else here.
+                    enrolled = EncryptedCredentialStore(this@RecoveryActivity).load() != null,
                     unlinked = LinkRefused(AndroidRecoveryStore(this@RecoveryActivity).link).refused(),
                 )
             }
@@ -197,7 +202,11 @@ class RecoveryActivity : AppCompatActivity() {
                     }
                     relinkStatus.text = getString(R.string.relink_done)
                     relinkCode.text = null
-                    relinkGroup.visibility = View.GONE
+                    // Left on screen, now reading as the ordinary "this phone is linked" case: the
+                    // section is no longer a symptom of being unlinked, so hiding it after a
+                    // success would be the same gate coming back by another route.
+                    relinkExplain.setText(R.string.relink_explain_linked)
+                    relinkSubmit.isEnabled = true
                     // The credential is new, so anything still running is holding a rejected one.
                     // Restarted rather than left to the next alarm: the parent is standing here and
                     // the console is the only place they can see that this worked.
@@ -232,11 +241,28 @@ class RecoveryActivity : AppCompatActivity() {
         val available: Boolean,
         val released: Boolean,
         val lockout: LockoutStatus,
+        val enrolled: Boolean,
         val unlinked: Boolean,
     )
 
     private fun render(state: Opening) {
-        relinkGroup.visibility = if (state.unlinked) View.VISIBLE else View.GONE
+        // Offered to any phone that has a credential, and NOT gated on having seen a 401.
+        //
+        // It used to be gated, and the gate is what the section was reported missing through: "how
+        // to relink? don't see a button". `unlinked` is true only once ConnectionService has itself
+        // received a 401 and written the flag — so a phone revoked while it was switched off, or one
+        // whose service has not managed to run since, shows nothing at all, and the field a parent
+        // has been told to use is not there. The flag is a good explanation and a bad gate: it says
+        // *why* re-linking is needed, and it cannot say whether it is possible.
+        //
+        // Nothing is spent by showing it. `Enroller.relink` sends the code to the server named in
+        // the stored credential, and a code the server did not mint is refused there — so on a phone
+        // that is perfectly happy the worst this field can do is answer "that code was not
+        // accepted".
+        relinkGroup.visibility = if (state.enrolled) View.VISIBLE else View.GONE
+        relinkExplain.setText(
+            if (state.unlinked) R.string.unlinked_text else R.string.relink_explain_linked
+        )
         when {
             !state.available -> {
                 // The reason belongs to the controller, so the screen and a submitted code give the

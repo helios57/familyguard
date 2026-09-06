@@ -25,34 +25,54 @@ container for the UI.
 
 ## 2. The three decisions that shape everything
 
-### 2.1 Content filtering is DNS-over-TLS enforced by the Device Owner — not an in-app VPN
+### 2.1 If a resolver is used at all it is DNS-over-TLS enforced by the Device Owner — never an in-app VPN
 
 The draft ran its own `VpnService`, intercepted every packet, and paired that with
 `setAlwaysOnVpnPackage(..., lockdown = true)`. Lockdown means the kernel drops all traffic the VPN
 cannot carry. If the VPN is wrong, the device has no network — and the same code blocked its own
-uninstall. That is a brick, and it violates NFR-6.
+uninstall. That is a brick, and it violates NFR-6. That decision stands and is not revisited: there
+is no packet path of ours to get wrong, nothing to keep alive, no battery cost, and no way for our
+bug to remove the device's connectivity.
 
-Instead the DPC sets `setGlobalPrivateDnsModeSpecifiedHost` to a filtering DoT resolver and locks it
-with `DISALLOW_CONFIG_PRIVATE_DNS`. The OS resolver does the filtering. There is no packet path of
-ours to get wrong, nothing to keep alive, no battery cost, and no way for our bug to remove the
-device's connectivity.
+**What changed on 2026-09-06: there is no filtering resolver by default any more.** Until then every
+child was provisioned with `dns_host = family.adguard-dns.com` and
+`setGlobalPrivateDnsModeSpecifiedHost` pinned to it, locked with `DISALLOW_CONFIG_PRIVATE_DNS`. The
+owner used it on a real phone and rejected it, and the reason is the honest one:
 
-**What this costs, stated honestly:** a public DoT resolver filters by *its* categories. It cannot
-be told "also block `example.com` for Emma". So:
+> "its not helping against AD's inside apps which are the most annoying"
+
+That is not a defect in the resolver, it is the shape of the layer. A DNS resolver sees a **name**
+and nothing else. In-app advertising is fetched by an ad SDK over the app's own TLS connection,
+very often from a hostname the app itself needs — a first-party CDN, a shared Google or Meta
+endpoint, or a name resolved once and reused. Blocking that name breaks the app; not blocking it
+serves the advert. Either way the resolver cannot separate the two, because the only thing it is
+allowed to look at is the part that is identical in both cases. A resolver is a real control for
+*categories of site* and it is worthless against advertising inside an app, and the previous default
+quietly traded a permanently-locked network setting for the second of those.
+
+So `dns_host` is now **empty by default and entirely opt-in** (FR-6.1). Empty is a defined state,
+not "off": Android reads an unset private-DNS host as OPPORTUNISTIC, so DNS is still encrypted to
+whatever resolver the network hands out, and the child's phone is no more exposed than any other
+phone on the same Wi-Fi. `DISALLOW_CONFIG_PRIVATE_DNS` is applied **only when a parent has named a
+resolver** — the lock exists to stop a child undoing a decision, and with no decision to protect it
+is just a settings screen a child cannot open.
 
 | Layer | Mechanism | Covers |
 |---|---|---|
-| DNS | Private DNS (DoT) locked by the DO | adult content, ads, trackers — device-wide, every app |
+| DNS | Private DNS (DoT), **only if a parent names a resolver**, then locked by the DO | whole categories of *site*, device-wide. **Not** advertising inside an app |
 | Apps | `setPackagesSuspended` + `setApplicationHidden` | YouTube app family, any app a parent blocks |
 | Browser | Chrome managed `URLBlocklist`, SafeSearch, YouTube restricted mode | custom domains, YouTube on the web |
 
 FR-6.4 (custom domains) and FR-7.2 (YouTube at DNS) are therefore delivered at the **browser and
 app** layers, not at DNS. A child who installs a non-managed browser can reach a custom-blocked
-domain that the DoT resolver does not itself block. The fix is a self-hosted resolver — AdGuard Home
-or Pi-hole speaking DoT — and it is deliberately out of scope here, because reaching it means
-exposing port 853, and an ingress that already terminates TLS for other services is not something
-this system gets to reconfigure (§5). `dns_host` is per-child configuration, so pointing it at such
-a resolver later is a config change, not a redesign.
+domain that no resolver blocks either.
+
+**Advertising inside apps is out of scope for this layer and is a known gap, not a solved problem.**
+It is deliberately left open rather than papered over with a control that measurably does not
+address it. Whatever eventually closes it will not be a public DoT resolver; `dns_host` stays
+per-child configuration, so pointing it at something later — a self-hosted resolver, reachable only
+by exposing port 853 through an ingress this system does not get to reconfigure (§5) — remains a
+config change rather than a redesign, but it is not the plan and it is not the default.
 
 ### 2.2 The command channel is our own — and an event is a wake-up, never a delivery
 

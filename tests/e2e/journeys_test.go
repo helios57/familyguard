@@ -77,6 +77,7 @@ type policyDTO struct {
 	ChildID            string `json:"child_id"`
 	TrackingOnly       bool   `json:"tracking_only"`
 	AllowChildInstalls bool   `json:"allow_child_installs"`
+	AllowDebugging     bool   `json:"allow_debugging"`
 	YouTubeBlocked     bool   `json:"youtube_blocked"`
 	DailyLimitMinutes  int    `json:"daily_limit_minutes"`
 	BedtimeEnabled     bool   `json:"bedtime_enabled"`
@@ -932,15 +933,28 @@ func TestPolicyEnforcementJourney(t *testing.T) {
 	if len(base.Desired.SuspendedPackages) == 0 {
 		t.Fatal("a new child has an empty suspended set; the curated blocklist (FR-18) is not reaching the device")
 	}
-	if base.Desired.PrivateDNSHost == "" {
-		t.Fatal("filtering is off by default; FR-6.1 says it is enforced by the Device Owner")
+	// No filtering resolver by default (FR-6.1). This assertion used to read the other way round —
+	// it required a resolver to be set on a brand-new child, and the default was AdGuard Family DNS.
+	// The owner removed it on 2026-09-06: a filtering resolver does nothing about advertising served
+	// from inside an app over the app's own TLS connection, which is the advertising that actually
+	// bothers anybody, so it bought a permanently-locked network setting for close to nothing. An
+	// empty host is a defined state and NOT "off": Android reads it as OPPORTUNISTIC, so DNS is
+	// still encrypted to whatever resolver the network hands out.
+	if base.Desired.PrivateDNSHost != "" {
+		t.Fatalf("a new child has private DNS pinned to %q; since 2026-09-06 no resolver is "+
+			"configured until a parent names one (FR-6.1)", base.Desired.PrivateDNSHost)
 	}
 	if !base.Desired.SafeSearch || !base.Desired.YouTubeRestrictedMode {
 		t.Fatalf("managed-browser policy is not enforced by default (FR-6.3): %+v", base.Desired)
 	}
 	// FR-2.1 hardening, and the three restrictions that must never appear (NFR-6).
+	//
+	// `disallow_config_private_dns` is not in this list and is not an omission: since 2026-09-06 no
+	// filtering resolver is configured by default, and the lock exists to stop a child undoing a
+	// resolver that is set. Both halves of that coupling are measured in
+	// TestNoFilteringResolverIsConfiguredByDefault.
 	for _, want := range []string{
-		"no_safe_boot", "no_debugging_features", "disallow_config_private_dns",
+		"no_safe_boot", "no_debugging_features",
 		"no_config_date_time", "no_add_user", "no_install_unknown_sources", "no_uninstall_apps",
 	} {
 		mustHave(t, base.Desired.UserRestrictions, want, "device-owner hardening (FR-2.1)")
@@ -1145,8 +1159,14 @@ func TestPolicyEnforcementJourney(t *testing.T) {
 	if tracking.Desired.SuspendReason != "" || len(tracking.Desired.SuspendedPackages) != 0 {
 		t.Fatalf("tracking-only still enforces bedtime: %+v", tracking.Desired)
 	}
-	if tracking.Desired.PrivateDNSHost == "" || !tracking.Desired.SafeSearch {
-		t.Fatalf("tracking-only dropped content filtering, which FR-8 keeps: %+v", tracking.Desired)
+	// The resolver this journey configured back at FR-6.2 is still in force, and so is the managed
+	// browser policy. Both are named, because tracking-only turning off DNS and tracking-only
+	// turning off SafeSearch are different bugs with the same shape.
+	if tracking.Desired.PrivateDNSHost != "kids.example-dns.test" {
+		t.Fatalf("tracking-only dropped the configured resolver, which FR-8 keeps: %+v", tracking.Desired)
+	}
+	if !tracking.Desired.SafeSearch || !tracking.Desired.YouTubeRestrictedMode {
+		t.Fatalf("tracking-only dropped managed-browser filtering, which FR-8 keeps: %+v", tracking.Desired)
 	}
 	mustHave(t, tracking.Desired.UserRestrictions, "no_debugging_features",
 		"hardening remains in effect in tracking-only (FR-8)")

@@ -528,6 +528,25 @@ func (b *browser) phone(width, height int) {
 	b.call("Emulation.setTouchEmulationEnabled", map[string]any{"enabled": true, "maxTouchPoints": 5})
 }
 
+// laptop is the other side of the 900 px breakpoint: a pointer, no touch, no device pixel ratio.
+//
+// It is not `phone` with a bigger number. `mobile: true` keeps the layout viewport and the overlay
+// scrollbars a handset has, and a 1280 px "phone" would measure a layout no hardware produces —
+// while `mobile: false` is what makes the media query, the scrollbar gutter and hover-only affordances
+// behave the way they do on the machine a parent actually opens the console on.
+func (b *browser) laptop(width, height int) {
+	b.t.Helper()
+	b.call("Emulation.setDeviceMetricsOverride", map[string]any{
+		"width": width, "height": height,
+		"deviceScaleFactor": 1, "mobile": false,
+		"screenWidth": width, "screenHeight": height,
+	})
+	// No maxTouchPoints on the way off: the protocol validates it as 1..16 even when `enabled` is
+	// false, so passing 0 fails the call with "Touch points must be between 1 and 16" and leaves
+	// the page in whatever touch mode the previous override set.
+	b.call("Emulation.setTouchEmulationEnabled", map[string]any{"enabled": false})
+}
+
 // installabilityErrors asks Chrome whether it would install this page.
 //
 // tryCall rather than call: the method is experimental, so "this browser does not implement it" is a
@@ -575,6 +594,16 @@ func (b *browser) navigate(rawURL string) {
 // TypeError with a swallowed result is the shape of a measurement that silently measured nothing.
 func (b *browser) eval(expression string, out any) {
 	b.t.Helper()
+	if thrown := b.tryEval(expression, out); thrown != "" {
+		b.t.Fatalf("the page threw while evaluating:\n%s\n--- expression ---\n%s", thrown, expression)
+	}
+}
+
+// tryEval is eval without the verdict: it returns the exception text rather than failing, and "" when
+// the expression evaluated. Only a poll should use it — a one-shot measurement that throws has not
+// measured anything and must be fatal, which is what eval above is for.
+func (b *browser) tryEval(expression string, out any) string {
+	b.t.Helper()
 	result := b.call("Runtime.evaluate", map[string]any{
 		"expression":    expression,
 		"returnByValue": true,
@@ -600,10 +629,10 @@ func (b *browser) eval(expression string, out any) {
 		if envelope.Exception.Exception != nil && envelope.Exception.Exception.Description != "" {
 			detail = envelope.Exception.Exception.Description
 		}
-		b.t.Fatalf("the page threw while evaluating:\n%s\n--- expression ---\n%s", detail, expression)
+		return detail
 	}
 	if out == nil {
-		return
+		return ""
 	}
 	if len(envelope.Result.Value) == 0 {
 		b.t.Fatalf("the expression returned undefined:\n%s", expression)
@@ -611,16 +640,35 @@ func (b *browser) eval(expression string, out any) {
 	if err := json.Unmarshal(envelope.Result.Value, out); err != nil {
 		b.t.Fatalf("could not decode %s into %T: %v", truncate(string(envelope.Result.Value), 300), out, err)
 	}
+	return ""
 }
 
 // waitFor polls a boolean expression. The timeout is a failure with the expression in it, never a
 // skip: a condition that never came true is the measurement not happening.
+//
+// A poll whose expression THROWS is "not yet", not a failure, and that distinction is load-bearing.
+// Every wait here reaches into the DOM — `!document.getElementById('app').hidden` — and during a
+// navigation the element is legitimately absent for a moment, so the expression raises a TypeError
+// on a document that is merely still arriving. Failing on it turns a slow machine into a red that
+// names a null property rather than a missing condition, which is how a contended CI box produces a
+// failure indistinguishable from a broken console. Measured 2026-09-06: this test suite went red on
+// `Cannot read properties of null (reading 'hidden')` in a run where every other layer was green,
+// solely because the page took 38 s to load under load.
+//
+// What is NOT lost by tolerating it: an expression that throws every time still fails at the
+// deadline, and the last exception is printed with the rest of the report — so a genuinely wrong
+// expression says so, and says what it threw, instead of only "it never happened".
 func (b *browser) waitFor(expression string, timeout time.Duration, what string) {
 	b.t.Helper()
 	deadline := time.Now().Add(timeout)
+	lastThrow := ""
 	for {
 		var ok bool
-		b.eval("!!("+expression+")", &ok)
+		if thrown := b.tryEval("!!("+expression+")", &ok); thrown != "" {
+			lastThrow, ok = thrown, false
+		} else {
+			lastThrow = ""
+		}
 		if ok {
 			return
 		}
@@ -628,8 +676,12 @@ func (b *browser) waitFor(expression string, timeout time.Duration, what string)
 			var url, html string
 			b.eval("location.href", &url)
 			b.eval("document.body ? document.body.innerHTML.slice(0, 600) : '<no body>'", &html)
-			b.t.Fatalf("waited %s for %s and it never happened.\nexpression: %s\nat: %s\n%s\nbody: %s",
-				timeout, what, expression, url, b.pageErrorReport(), html)
+			threw := ""
+			if lastThrow != "" {
+				threw = "\nthe expression threw every time, most recently: " + lastThrow
+			}
+			b.t.Fatalf("waited %s for %s and it never happened.\nexpression: %s%s\nat: %s\n%s\nbody: %s",
+				timeout, what, expression, threw, url, b.pageErrorReport(), html)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

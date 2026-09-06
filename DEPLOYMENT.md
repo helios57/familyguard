@@ -616,7 +616,7 @@ a one-time step per phone. Skipping them fails in opposite ways, and only one of
 
 | Appop | If it is missing |
 |---|---|
-| `GET_USAGE_STATS` (`PACKAGE_USAGE_STATS`) | **Screen time cannot be measured at all.** Every query returns nothing. The DPC reports *not measured* rather than zero, so the console says so instead of showing a child who spent the day off their phone — but the daily limit (FR-3) can never be reached until this is granted. The phone raises an ongoing notification for it; tapping that opens Usage access **scrolled to FamilyGuard's own row, flashing**, so nobody has to find one entry in a list of two hundred. On a build whose Settings does not accept the highlight the phone falls back to the plain list and logs that it did. |
+| `GET_USAGE_STATS` (`PACKAGE_USAGE_STATS`) | **Screen time cannot be measured at all.** Every query returns nothing. The DPC reports *not measured* rather than zero, so the console says so instead of showing a child who spent the day off their phone — but the daily limit (FR-3) can never be reached until this is granted. The phone raises an ongoing notification for it; tapping that opens Usage access **scrolled to FamilyGuard's own row, flashing**, so nobody has to find one entry in a list of two hundred. On a build whose Settings does not accept the highlight the phone falls back to the plain list and logs that it did. **The grant is noticed the instant it is made** — the DPC watches the appop, so the notification clears and the first measurement is sent while you are still holding the phone. Before 0.5.0 the only thing that re-read the appop was the sync, so a parent who granted it correctly kept being told it was missing for up to fifteen minutes, and forever on a phone the server had stopped accepting. |
 | `SCHEDULE_EXACT_ALARM` | Bedtime still starts, late. The DPC falls back to a wake-up the platform may delay and logs it as `INEXACT`; it does not fall back to no alarm. |
 
 From the phone: **Settings → Apps → Special app access → Usage access → FamilyGuard**, and the same
@@ -688,10 +688,18 @@ out and makes you confirm it, but if it has happened — or if the credential is
 — the phone comes back without a factory reset, and without losing its enrollment, its name or its
 history. It is the same device row afterwards.
 
-The phone knows: a `401` from the control plane raises an ongoing **"This phone is no longer
-linked"** notification, and the recovery screen grows a *Re-link this phone* field. Only a `401`
-does that. A `404` or a `409` is a fault in one request, not a statement about the credential, and
-raising the alarm for those is how the one notification that matters gets swiped away.
+**The *Re-link this phone* field is on the recovery screen whenever the phone holds a credential**,
+whether or not anything has gone wrong. It was gated on the `401` flag until 0.5.0, and the gate is
+what "how do I relink? I don't see a button" turned out to be: the flag is written by
+`ConnectionService` when it personally receives a `401`, so a phone that was revoked while it was
+switched off — or one whose service has not managed to run since — showed a parent nothing at all,
+on the one screen they had been told to look at. Nothing is spent by offering it: the code is checked
+by the server, and a phone that does not need re-linking just gets "that code was not accepted".
+
+What the `401` still does is *explain*: it raises the ongoing **"This phone is no longer linked"**
+notification and changes the wording above the field. Only a `401` does that. A `404` or a `409` is a
+fault in one request, not a statement about the credential, and raising the alarm for those is how
+the one notification that matters gets swiped away.
 
 1. **In the console:** the device's card → **Replace phone** → confirm. The sheet shows the QR *and*
    the same code as type-able text underneath. Take the text: a phone that is already Device Owner
@@ -713,15 +721,33 @@ another one.
   which means a parent with console access. A lost phone stays lost.
 
 **A phone running 0.3.0 or older has no re-link screen**, because the DPC never re-enrolled while it
-still held a credential. For those the way back really is a factory reset — or the recovery code
-first, then a sideload of the current APK, then re-link:
+still held a credential — and it cannot get one by updating itself, because FR-15 self-update runs
+inside an authenticated sync and an unlinked phone has none. That is a genuine bootstrap trap: the
+build that can re-link is exactly the build an unlinked phone cannot reach. For those the way back is
+the recovery code first, then a sideload of the current APK, then re-link. **A factory reset is not
+required and should not be the first move** — the console said it was until 0.5.0, which is part of
+why this looked like a dead end.
 
-```bash
-# On a phone that has been released by its recovery code, DISALLOW_INSTALL_UNKNOWN_SOURCES and
-# DISALLOW_DEBUGGING_FEATURES are both cleared, so adb and a sideload become possible again.
-adb install -r familyguard-<version>.apk    # same signing key, so it installs OVER the old one:
-                                            # Device Owner and app data both survive
-```
+Redeeming the recovery code clears every managed restriction, `no_install_unknown_sources` among
+them. So, on the phone itself and with no cable and no computer:
+
+1. FamilyGuard → **Recovery** → type the recovery code. Everything lifts.
+2. In the phone's own browser open **`https://<your host>/dpc.apk`** and tap the download to
+   install. Same signing key, so it installs **over** the old build: Device Owner and app data both
+   survive, and nothing has to be re-provisioned.
+3. Console → **Replace phone** for a fresh setup code.
+4. FamilyGuard → **Recovery** → **Re-link this phone**, and type it.
+
+The console's *Recovery code* sheet now carries those four steps, so they are in front of the parent
+at the moment they need them rather than only here.
+
+If a cable is genuinely easier, the release clears `DISALLOW_DEBUGGING_FEATURES` too and step 2
+becomes `adb install -r familyguard-<version>.apk`. That needs developer options switched on by hand
+first (Settings → About phone → tap Build number seven times): clearing the restriction lets the
+toggle be used, it does not turn it on. From 0.5.0 there is also a per-child **Allow developer
+options and USB debugging** switch (FR-5.6) which keeps adb available without a release at all —
+useful on a phone you are working on, and off by default on every other, because it is the one
+restriction whose absence is how you get back in when a sync stops happening.
 
 A release survives a reboot from 0.4.0 onward (FR-12.6). On 0.3.0 it does not — the boot receiver
 re-applied the baseline over a released device — so on an older build do the sideload before the

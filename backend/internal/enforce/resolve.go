@@ -171,6 +171,7 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 		Settings: policy.Settings{
 			TrackingOnly:          pol.TrackingOnly,
 			AllowChildInstalls:    pol.AllowChildInstalls,
+			AllowDebugging:        pol.AllowDebugging,
 			YouTubeBlocked:        pol.YouTubeBlocked,
 			DailyLimitMinutes:     pol.DailyLimitMinutes,
 			BedtimeEnabled:        pol.BedtimeEnabled,

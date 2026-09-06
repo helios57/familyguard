@@ -69,7 +69,12 @@ or remove parents; the others differ only in that.
   phone**, with a setup code the parent generates in the console, without a factory reset. The
   phone learns it has been unlinked from a `401` — and only from a `401`, because every other
   non-retryable status is a fault in one request rather than a statement about the credential —
-  and says so in an ongoing notification and on the recovery screen. Re-linking is the deliberate
+  and says so in an ongoing notification. **The re-link field itself is offered on the recovery
+  screen whenever the phone holds a credential, gated on nothing else** — the `401` flag explains
+  why re-linking is needed and cannot say whether it is possible, so a phone revoked while it was
+  switched off, or one whose service has not managed to run since, would otherwise show a parent
+  nothing at all. Nothing is spent by offering it: a code the server did not mint is refused at the
+  server. Re-linking is the deliberate
   exception to FR-1.4's once-only exchange, and it is bounded by three things: the server address
   comes from the stored credential and never from what was typed, so a code cannot move the phone
   to another control plane; it needs a code the server minted, so a phone a parent deliberately
@@ -117,7 +122,11 @@ Applied at provisioning and re-applied on every boot:
   returns nothing and every app reads zero minutes — which is indistinguishable from a child who
   did not use their phone. The device reports whether it holds the grant, the console says so
   wherever it shows a number that depends on it, and the phone offers the setting in one tap.
-  Unmeasurable is never presented as measured.
+  Unmeasurable is never presented as measured. **The grant is noticed when it happens**, not at the
+  next sync: the phone watches the appop, so the warning clears and the first measurement is
+  reported while the parent is still holding the phone. A notice that survives the act it asked for
+  is read as the app being broken, and on a phone that cannot reach the server there is no next sync
+  to correct it.
 
 ### FR-4 Bedtime
 - FR-4.1 Per-child bedtime window with start and end time; the window may cross midnight.
@@ -136,10 +145,23 @@ Applied at provisioning and re-applied on every boot:
 - FR-5.5 **Critical whitelist**: dialer, SMS/messaging, contacts, emergency information, settings
   and the package installer can never be suspended or hidden by any rule, quota, bedtime, or
   command. Emergency calling must work at every moment of every policy state.
+- FR-5.6 **Developer options and adb are a per-child switch**, defaulting to off (the restriction
+  applied). `no_debugging_features` is the one restriction whose cost falls on whoever administers
+  the phone rather than on the child: applying it as Device Owner switches adb off, the setting
+  outlives every reboot, and it cannot be undone from outside the device — so on a phone that has
+  also stopped reaching the control plane it removes the last way in. It stays the default because
+  adb un-suspends anything; the switch exists so the phone somebody is developing against can
+  decline it, visibly, from the console, and have it back on the next sync.
 
 ### FR-6 Content filtering
-- FR-6.1 System-wide DNS filtering of adult content, ads and trackers, enforced by the Device Owner
-  and not changeable on the device.
+- FR-6.1 System-wide DNS filtering, enforced by the Device Owner, **when a resolver is configured**,
+  and then not changeable on the device. **No resolver is configured by default** (2026-09-06): the
+  product shipped defaulting to a third-party filtering resolver, which is a filtering choice nobody
+  made and does not do the job its name suggests — a DoT resolver sees names, so it cannot remove
+  advertising an app fetches over its own connection to its own backend. With no resolver set the
+  phone uses opportunistic encrypted DNS, and `disallow_config_private_dns` is **not** applied,
+  because there is then no policy for it to protect. In-app advertising is out of scope until
+  something is built that actually addresses it.
 - FR-6.2 The filtering endpoint is configurable per child in the console.
 - FR-6.3 Managed-browser policy: SafeSearch enforced, YouTube restricted mode enforced, and a
   URL blocklist applied to the managed browser.
@@ -366,6 +388,14 @@ and survives a reinstall, and which never removes an app that a factory reset wo
   requirement was implemented: `setGlobalPrivateDnsModeSpecifiedHost` is API 29, so on 26–28 FR-6.1
   cannot be met at all and the app would enforce everything else while silently leaving filtering
   off. Refusing to install is the honest behaviour.*
+- **NFR-14 The running notice is as quiet as the platform allows.** A foreground service must
+  declare itself, and this one should: a DPC that hid what it was doing would be the wrong thing to
+  build. But it says so at `IMPORTANCE_MIN` — no status-bar icon, no sound, no badge, one collapsed
+  line at the bottom of the shade — because a persistent notification a family looks at all day is
+  one they learn to dismiss, and the notices that *do* need acting on (unlinked, usage access) share
+  the shade with it. A channel's importance is fixed when the channel is created, so lowering it
+  means a new channel id and deleting the old one; a release that only edits the importance changes
+  nothing on a phone that already has the app.
 
 ---
 

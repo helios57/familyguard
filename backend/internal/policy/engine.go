@@ -188,16 +188,28 @@ type App struct {
 
 // Settings mirrors the child's policy row, flattened with the rule tables it is always read with.
 type Settings struct {
-	TrackingOnly       bool   `json:"tracking_only"`
-	AllowChildInstalls bool   `json:"allow_child_installs"`
-	YouTubeBlocked     bool   `json:"youtube_blocked"`
-	DailyLimitMinutes  int    `json:"daily_limit_minutes"`
-	BedtimeEnabled     bool   `json:"bedtime_enabled"`
-	BedtimeStart       string `json:"bedtime_start"`
-	BedtimeEnd         string `json:"bedtime_end"`
-	DNSHost            string `json:"dns_host"`
-	Timezone           string `json:"timezone"`
-	Version            int64  `json:"version"`
+	TrackingOnly       bool `json:"tracking_only"`
+	AllowChildInstalls bool `json:"allow_child_installs"`
+
+	// AllowDebugging withholds RestrictionDebugging, leaving developer options and adb usable
+	// (FR-5.6).
+	//
+	// It is the only restriction with a switch of its own because it is the only one whose cost is
+	// paid by the person administering the phone rather than by the child. Applying
+	// no_debugging_features as device owner switches adb off, the setting outlives every reboot,
+	// and there is no way to undo it from outside the device — so on the handset somebody is
+	// developing against, it removes the last way in. Every other restriction can be lifted by
+	// changing the policy and waiting for a sync; this one cannot, because it can take away the
+	// channel you would use to find out why the sync is not happening.
+	AllowDebugging    bool   `json:"allow_debugging"`
+	YouTubeBlocked    bool   `json:"youtube_blocked"`
+	DailyLimitMinutes int    `json:"daily_limit_minutes"`
+	BedtimeEnabled    bool   `json:"bedtime_enabled"`
+	BedtimeStart      string `json:"bedtime_start"`
+	BedtimeEnd        string `json:"bedtime_end"`
+	DNSHost           string `json:"dns_host"`
+	Timezone          string `json:"timezone"`
+	Version           int64  `json:"version"`
 
 	BlockedPackages []string `json:"blocked_packages"`
 	AllowedPackages []string `json:"allowed_packages"`
@@ -340,13 +352,24 @@ func Compute(in Input) (DesiredState, error) {
 	out.AllowInstalls = in.Settings.AllowChildInstalls
 	restrictions := newSet([]string{
 		RestrictionSafeBoot,
-		RestrictionDebugging,
-		RestrictionPrivateDNS,
 		RestrictionDateTime,
 		RestrictionAddUser,
 		RestrictionUnknownSources,
 		RestrictionUninstallApps,
 	})
+	if !in.Settings.AllowDebugging {
+		restrictions.add(RestrictionDebugging)
+	}
+	// Coupled to there being a resolver to protect, rather than applied always.
+	//
+	// disallow_config_private_dns exists so a child cannot undo the DNS policy from Settings. With
+	// no host configured there is no policy to undo, and the restriction then only takes a setting
+	// away from whoever holds the phone in exchange for nothing — including from the parent. The
+	// default host was removed on 2026-09-06 (migration 0008), which turned "always on" from a
+	// detail into the common case.
+	if strings.TrimSpace(in.Settings.DNSHost) != "" {
+		restrictions.add(RestrictionPrivateDNS)
+	}
 	if !in.Settings.AllowChildInstalls {
 		restrictions.add(RestrictionInstallApps)
 	}

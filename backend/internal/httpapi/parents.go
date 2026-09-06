@@ -186,6 +186,7 @@ func (s *Server) getPolicy(c *gin.Context) {
 type patchPolicyRequest struct {
 	TrackingOnly       *bool   `json:"tracking_only"`
 	AllowChildInstalls *bool   `json:"allow_child_installs"`
+	AllowDebugging     *bool   `json:"allow_debugging"`
 	YouTubeBlocked     *bool   `json:"youtube_blocked"`
 	DailyLimitMinutes  *int    `json:"daily_limit_minutes"`
 	BedtimeEnabled     *bool   `json:"bedtime_enabled"`
@@ -224,10 +225,13 @@ func (s *Server) patchPolicy(c *gin.Context) {
 			bad = append(bad, "unknown time zone "+*req.Timezone)
 		}
 	}
-	if req.DNSHost != nil && strings.TrimSpace(*req.DNSHost) == "" {
-		// An empty DNS host would disable filtering while the console still showed it as on.
-		bad = append(bad, "dns_host cannot be empty — set the family default rather than clearing it")
-	}
+	// An empty dns_host is deliberately ACCEPTED, and this used to be the one field a parent could
+	// not clear. It read "set the family default rather than clearing it", which assumed there was
+	// a sensible family default to fall back to; the default was a third-party filtering resolver
+	// nobody had chosen, so the rule amounted to "you may change which resolver watches your
+	// children, never whether one does". Empty is a defined state on the phone — see
+	// DnsPolicyManager: it means opportunistic, encrypted DNS to the network's own resolver, not
+	// DNS switched off.
 	if len(bad) > 0 {
 		// No problem string may contain "; ": it is the separator, and a caller splitting the
 		// message back into a list would silently read one problem as two. The em dash above is
@@ -239,6 +243,7 @@ func (s *Server) patchPolicy(c *gin.Context) {
 	pol, err := s.store.UpdatePolicy(c.Request.Context(), childID, store.PolicyUpdate{
 		TrackingOnly:       req.TrackingOnly,
 		AllowChildInstalls: req.AllowChildInstalls,
+		AllowDebugging:     req.AllowDebugging,
 		YouTubeBlocked:     req.YouTubeBlocked,
 		DailyLimitMinutes:  req.DailyLimitMinutes,
 		BedtimeEnabled:     req.BedtimeEnabled,

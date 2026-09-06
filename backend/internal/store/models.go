@@ -138,15 +138,19 @@ type Policy struct {
 	ChildID            uuid.UUID `json:"child_id"`
 	TrackingOnly       bool      `json:"tracking_only"`
 	AllowChildInstalls bool      `json:"allow_child_installs"`
-	YouTubeBlocked     bool      `json:"youtube_blocked"`
-	DailyLimitMinutes  int       `json:"daily_limit_minutes"`
-	BedtimeEnabled     bool      `json:"bedtime_enabled"`
-	BedtimeStart       string    `json:"bedtime_start"`
-	BedtimeEnd         string    `json:"bedtime_end"`
-	DNSHost            string    `json:"dns_host"`
-	Timezone           string    `json:"timezone"`
-	Version            int64     `json:"version"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	// AllowDebugging leaves developer options and adb switched on (FR-5.6). False everywhere it is
+	// not deliberately turned on, because the restriction it withholds is the one that cannot be
+	// undone from outside the phone.
+	AllowDebugging    bool      `json:"allow_debugging"`
+	YouTubeBlocked    bool      `json:"youtube_blocked"`
+	DailyLimitMinutes int       `json:"daily_limit_minutes"`
+	BedtimeEnabled    bool      `json:"bedtime_enabled"`
+	BedtimeStart      string    `json:"bedtime_start"`
+	BedtimeEnd        string    `json:"bedtime_end"`
+	DNSHost           string    `json:"dns_host"`
+	Timezone          string    `json:"timezone"`
+	Version           int64     `json:"version"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type AppRule struct {

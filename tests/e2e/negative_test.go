@@ -695,10 +695,6 @@ func TestMalformedRequestsAreRefusedWithAReason(t *testing.T) {
 			path: "/children/" + child + "/policy", token: parent,
 			body: map[string]any{"timezone": "Mars/Olympus"}, status: http.StatusBadRequest,
 			code: "invalid_input", says: []string{"unknown time zone Mars/Olympus"}},
-		{what: "clearing the DNS host", method: http.MethodPatch,
-			path: "/children/" + child + "/policy", token: parent,
-			body: map[string]any{"dns_host": "  "}, status: http.StatusBadRequest,
-			code: "invalid_input", says: []string{"dns_host cannot be empty"}},
 
 		// App rules and domains.
 		{what: "an app rule with no package", method: http.MethodPut,
@@ -765,14 +761,14 @@ func TestMalformedRequestsAreRefusedWithAReason(t *testing.T) {
 	resp := h.call(http.MethodPatch, "/children/"+child+"/policy", parent, map[string]any{
 		"daily_limit_minutes": 5000,
 		"bedtime_start":       "9pm",
+		"bedtime_end":         "25:00",
 		"timezone":            "Mars/Olympus",
-		"dns_host":            "",
 	})
 	resp.expectError(http.StatusBadRequest, "invalid_input")
 	message := envelopeOf(t, resp).Message
 	for _, want := range []string{
 		"between 0 and 1440 minutes", "bedtime_start must look like 21:00",
-		"unknown time zone Mars/Olympus", "dns_host cannot be empty",
+		"bedtime_end must look like 21:00", "unknown time zone Mars/Olympus",
 	} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("the combined refusal does not mention %q: %q", want, message)

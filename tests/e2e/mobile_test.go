@@ -155,16 +155,25 @@ const measureJS = `(() => {
 // a failure says which one, which is the difference between a finding and a hunt.
 func (b *browser) measure(t *testing.T, screen string) layout {
 	t.Helper()
+	return b.measureAt(t, screen, phoneWidth)
+}
+
+// measureAt is measure with the width it is supposed to be measuring named by the caller, so the
+// calibration below still discriminates when the caller is not a phone. It takes the width as an
+// argument rather than reading it back out of the page: a check that asserts the viewport equals
+// whatever the viewport happens to be is the shape of a control that evaluates nothing.
+func (b *browser) measureAt(t *testing.T, screen string, wantWidth int) layout {
+	t.Helper()
 	var out layout
 	b.eval(fmt.Sprintf(measureJS, minTapPx, minInputFontPx), &out)
 
 	// Calibration, on every screen rather than once: the emulation override is the only reason any
-	// of this is a phone measurement, and an override that silently stopped applying would turn the
-	// whole file into a desktop layout check that passes.
-	if out.ViewportWidth != phoneWidth {
-		t.Fatalf("%s: the page laid out at %.0f px, not %d — the phone emulation is not in effect, "+
-			"so nothing this file reports is a measurement of a phone",
-			screen, out.ViewportWidth, phoneWidth)
+	// of this is a measurement of the width it claims, and an override that silently stopped
+	// applying would turn the whole file into a check of some other layout that passes.
+	if out.ViewportWidth != float64(wantWidth) {
+		t.Fatalf("%s: the page laid out at %.0f px, not %d — the viewport emulation is not in "+
+			"effect, so nothing this reports is a measurement of that width",
+			screen, out.ViewportWidth, wantWidth)
 	}
 	if out.Elements < 5 || out.Interactive < 1 {
 		t.Fatalf("%s: %d visible elements and %d interactive ones — this screen is empty, and an "+
@@ -185,8 +194,8 @@ func (l layout) check(t *testing.T, screen string) {
 			"first.\noverflowing: %s", screen, l.ScrollWidth, l.ClientWidth, formatOverflow(l.Overflowing))
 	}
 	if len(l.Overflowing) > 0 {
-		t.Errorf("%s: %d element(s) stick out past the %d px viewport:\n%s",
-			screen, len(l.Overflowing), phoneWidth, formatOverflow(l.Overflowing))
+		t.Errorf("%s: %d element(s) stick out past the %.0f px viewport:\n%s",
+			screen, len(l.Overflowing), l.ViewportWidth, formatOverflow(l.Overflowing))
 	}
 	// The child switcher is the one container built to be swiped sideways; app.css says so where it
 	// is defined. Anything else that scrolls sideways is content that did not fit.

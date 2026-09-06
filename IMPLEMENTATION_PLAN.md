@@ -9,7 +9,7 @@ reports "not measured" and does not count as done.
 
 ## Where this stands
 
-**Phases 0–15 are done and calibrated.** `tests/run_all.sh` runs seven layers: a secret scan over
+**Phases 0–16 are done and calibrated.** `tests/run_all.sh` runs seven layers: a secret scan over
 the full commit history, the Go control plane, the deployment manifests, the container image under
 the manifest's own restrictions, the e2e suite against a real server binary / a real PostgreSQL / a
 real browser, the Android unit suite, and the instrumented suite on a device-owned emulator across a
@@ -3993,13 +3993,14 @@ proven.
 | Requirement | Implemented in | Proven by |
 |---|---|---|
 | FR-1 enrollment / QR | 3.2, 3.4, 5.2, 5.3 | e2e `TestDeviceLifecycleJourney`, `TestEnrollmentCredentialsAreSingleUse`, `TestTheQRPointsAtAnAPKThisServerServes`; `TestQRHoldsTheRealPayload`, `TestPayloadCarriesTheExtrasAndroidActuallyReads`, `TestExtraNamesAreExactlyAndroidsSpelling`, `TestChecksumIsComputedFromRealBytes`, `TestAPKIsServedWithTheChecksumTheQRWouldCarry`; `EnrollerTest` |
-| FR-1.7 / FR-1.8 replacing and re-linking a phone | 15.1, 15.2 | e2e `TestANewSetupCodeDoesNotSilentlyRevokeAWorkingPhone` (the credential of a working phone survives a request that did not say it meant to replace it), `TestReplacingAPhoneOnPurposeRevokesTheOldOne` (the other half, without which the guard could be a permanent refusal), `TestAFirstSetupCodeNeedsNoAcknowledgement`, `TestARevokedPhoneCanReLinkWithoutAFactoryReset`; `TestConsoleRendersOnAPhone/replace_phone` for the confirmation as a parent meets it; `EnrollerTest`'s seven re-link cases and `LinkRefusedTest`'s seven. **Calibrated 5/5** ([15.5](#155--calibration)). **Not proven:** the re-link screen on a handset — nobody has typed a code into a phone yet |
+| FR-1.7 / FR-1.8 replacing and re-linking a phone | 15.1, 15.2, 16.2 | e2e `TestANewSetupCodeDoesNotSilentlyRevokeAWorkingPhone` (the credential of a working phone survives a request that did not say it meant to replace it), `TestReplacingAPhoneOnPurposeRevokesTheOldOne` (the other half, without which the guard could be a permanent refusal), `TestAFirstSetupCodeNeedsNoAcknowledgement`, `TestARevokedPhoneCanReLinkWithoutAFactoryReset`; `TestConsoleRendersOnAPhone/replace_phone` for the confirmation as a parent meets it; `EnrollerTest`'s seven re-link cases and `LinkRefusedTest`'s seven. **Calibrated 5/5** ([15.5](#155--calibration)). **16.2 ungated the field**: it was offered only once `ConnectionService` had personally seen a 401, so a phone revoked while switched off held a dead credential and showed no control. It is now offered whenever the phone holds a credential at all, which is the honest precondition; only the explanatory wording still differs. **Not proven:** the re-link screen on a handset — nobody has typed a code into a phone yet, and the phone that needs to cannot get the build that has the screen without the sideload route in DEPLOYMENT.md |
 | FR-2 hardening | 5.2 | `HardeningManagerTest`, `EnforcementEngineHardeningTest`, `RestrictionKeysMatchThePlatformTest`; `TestNoRestrictionCanBlockCallingOrRecovery` |
 | FR-2.2 automatic network time | 5.11 | `ClockPolicyManagerTest` (8 cases over the pure manager) and `HardeningClockTest` (3) — the read-back that catches a device accepting `setAutoTimeEnabled` and staying off, an unreadable clock reported as a failure rather than assumed on, and the two facts about where it runs: a clock that will not be fixed makes the **whole baseline** not-ok even with every restriction in effect, and a sync reports `clock = null` rather than a success for something it never looked at. `ClockGatewayVersionSplitTest` reads `DpmClockGateway.kt` for the API 29/30 split, which no JVM test can execute and whose collapse is invisible — `setAutoTimeRequired` compiles everywhere and means *forbid changing it* on API 30+. **Calibrated 19/19.** Found by 5.10: the requirement was cited by nothing because nothing implemented it |
 | FR-3 screen time | 5.6, 3.3 | both halves. Server: `TestQuotaIsReadForTheLocalDay`, `TestDayKeyMatchesTheDayTheResolverReads`, `TestUnknownTimezoneIsAnErrorNotAFallback`. Device (5.6): `SpanFolderTest`, `DayAttributionTest`, `ScreenOnClockTest`, `UsageLedgerTest`, `UsageTrackerTest`, `UsageReporterTest` — the monotonic ceiling (FR-3.2), the screen-off pause (FR-3.3), the cut at local midnight, and `UsageTick.NotMeasured` rather than a zero when `PACKAGE_USAGE_STATS` was never granted, which is the failure that would otherwise show a parent a child who spent the day off their phone |
 | FR-4 bedtime | 5.4 | `EnforcementEngineVectorsTest` against the shared vectors; `TestSharedVectors`, `TestVectorsCoverTheEnforcementRequirements`, `TestNextChangeAtIsInTheFuture` |
 | FR-5 apps | 5.4, 5.5, 3.3 | `RestrictionPlannerTest`, `AppSuspensionManagerTest`, `StateApplierTest`; `TestAppRulesSplitByAction`, `TestCriticalPackagesAreNeverSuspended`, `TestUninstalledAppsAreNotSuspended`, `TestHiddenPackagesAreAlsoSuspended`, `TestSystemAppsStayEnabledByRequest`; e2e `TestPolicyEnforcementJourney`; and its two preconditions, which fail silently rather than loudly — `ManifestAndPlatformCallsTest` *the permissions the shipped app asks for are exactly the ones it needs* (`QUERY_ALL_PACKAGES`, without which every blocked package reads "not installed") and *the install watcher is registered at runtime, not declared in the manifest* (without which a newly installed app is unrestrained until the next poll) |
-| FR-6 filtering | 5.5 | `ChromePolicyManagerTest`, `DnsPolicyManagerTest`; `TestNormalizeDomainMatchesTheStore` |
+| FR-5.6 developer options / adb | 16.3 | e2e `TestDeveloperOptionsCanBeAllowedPerChild` — the switch on withholds `no_debugging_features` and **nothing else**, asserted against the whole restriction set rather than one membership test, with the switch-off case as the positive control so the test cannot pass on an engine that never applies the restriction at all. Two shared vectors (with and without a resolver) replay it on both engines. **Not proven:** that adb actually comes back on a phone — no device has run with the switch on
+| FR-6 filtering | 5.5, 16.6 | `ChromePolicyManagerTest`, `DnsPolicyManagerTest`; `TestNormalizeDomainMatchesTheStore`; e2e `TestNoFilteringResolverIsConfiguredByDefault`. FR-6.1 was **rewritten** in 16.6: there is no filtering resolver by default, and `disallow_config_private_dns` is applied only when a parent has named one. Both halves of that coupling are asserted, which matters because either alone passes on a broken engine — "no resolver by default" is also true of an engine that has lost the lock entirely, and the lock's presence is also true of one that pins a resolver nobody asked for. `TestPolicyEnforcementJourney` carries the default-state snapshot and used to assert the opposite; it is the test the sweep caught. **Not proven:** what a phone does with an empty private-DNS host — OPPORTUNISTIC is the documented behaviour and no device has been read back |
 | FR-7 YouTube | 5.4, 5.5 | `EnforcementEngineVectorsTest` (the YouTube set is symmetric across the vectors), `ChromePolicyManagerTest` (`ForceGoogleSafeSearch`, restricted mode strict) |
 | FR-8 tracking-only | 5.4 | `TestTrackingOnlyKeepsFilteringAndHardening`, `EnforcementEngineVectorsTest` |
 | FR-9 commands | 3.5, 3.6, 5.7 | both halves. Server: `TestParentLockIsStateNotACommand`; e2e `TestPushWakeUps`. Device (5.7): `CommandExecutorTest`, `CommandQueueTest`, `CommandHandlersTest`, `SirenControllerTest`, `LocationProbeTest`, `LockManagerTest` — a command is answered by executing it and not by fetching it, each ack lands as its command finishes, an ack that fails is `unacknowledged` rather than `failed`, `LOCATE_NOW` delivers the position *before* it acknowledges, a cached fix keeps its true timestamp, the siren carries its own five-minute deadline, and a phone with no PIN reports the failure rather than a keyguard dismissed by a swipe. Plus the two guards nothing runtime can reach: `CommandHandlersTest` *the handlers implement exactly the command types the server accepts*, which parses `ValidCommandTypes` out of `backend/internal/store/models.go` rather than restating it, and `ManifestAndPlatformCallsTest` *the command drain runs outside the sync lock*, which is the only place the non-reentrant-`Mutex` deadlock can be caught before the day a parent presses a button and nothing ever answers. **Calibrated 11/11**, each verdict naming the individual test method — see the record above |
@@ -4008,15 +4009,15 @@ proven.
 | FR-12 recovery | 5.8, 3.4 | both halves. Server: `TestRecoveryCodeRoundTrip`, `TestRecoveryCodesAreUniquePerDevice`, `TestHashTokenDiscriminates`, `TestRecoveryAlphabetIsAscii`. Device: 7 JVM suites / 63 tests over `recovery/` — `RecoveryVectorsTest` replays the 60 cases in `backend/internal/auth/recovery-vectors.json` — hand-written normalisations plus PBKDF2 digests from Python's `hashlib`, a third implementation neither half shares — so a normalisation or derivation divergence is red in CI rather than in a car park. **58 breaks, 58 red** (47 Kotlin, 11 Go); the one that stayed green on the first pass found a missing test rather than a missing guard, and is recorded under [5.8](#58-calibration--58-breaks-47-kotlin-11-go-58-red) |
 | FR-12.6 a boot does not undo a recovery | 15.3 | `HardeningManagerTest` — *a released device that reboots stays released*, *a released device is still left wipeable*, *it leaves alone a restriction it did not set*, *it does not touch the clock*, and the calibration partner *the ordinary boot path on the same device hardens all six*, which is what makes the first of those evidence rather than a tautology. **Not proven:** the branch in `AdminReceiver.applyBaseline` that chooses between them — that is Android code with no JVM test, and no phone has been rebooted while released |
 | FR-13 / FR-13.1 console | 4.x | e2e `TestConsoleIsServedAndMobileReady`, `TestBrowserSignInJourney`; `TestConsoleServesEveryRoute`, `TestConsoleDeclaresTheMobileViewport`, `TestConsoleReferencesOnlyMountedAssets`, `TestConsoleHasNoInlineScriptOrStyle`, `TestConsoleRevalidatesWithETag`, `TestConsoleDoesNotSwallowUnknownPaths` |
-| FR-13.2 mobile-first | 4.4, 6.5 | e2e `TestConsoleRendersOnAPhone` — the signed-out screen, the five views, the drawer and the provisioning sheet measured in a real browser at 360x800: no horizontal page scroll, no sideways-scrolling list, every touch target >= 44 px, no card wider than the viewport, 16 px inputs, the sign-in button above the fold, the header still at the top after scrolling to the end, the first card below it rather than behind it, permanent chrome under 15% of the screen, the drawer modal and closing on Escape and on navigation, the QR legible. Driven against a **seeded** family, because an empty console lays out perfectly and the overflow this catches comes from a long device name or a package id. `tests/e2e/calibrate-mobile.sh` is the executable calibration record: fourteen breaks, each required to go red *naming its own rule*, then green on restore — and it found a real defect in its subject the first time it ran (the pinned-navigation check measured the bar only at the end of a long page, where a `position: static` bar also sits at the bottom). Source-level companions: `TestConsoleDeclaresTheMobileViewport` — a missing viewport meta makes the whole mobile suite vacuous at 980 px. **Partial on one clause:** "navigation reachable one-handed" is no longer fully met — the menu opens from the top-left corner, the least reachable point on a large phone. Accepted on the owner's explicit preference for a top navigation (2026-09-03); the drawer's destinations are placed in its lower half, so only the opening tap is affected, and that placement is itself asserted (`#drawer-nav .tab` must start below 35% of the screen) and calibrated rather than left as prose |
+| FR-13.2 mobile-first | 4.4, 6.5 | e2e `TestConsoleRendersOnAPhone` — the signed-out screen, the five views, the drawer and the provisioning sheet measured in a real browser at 360x800: no horizontal page scroll, no sideways-scrolling list, every touch target >= 44 px, no card wider than the viewport, 16 px inputs, the sign-in button above the fold, the header still at the top after scrolling to the end, the first card below it rather than behind it, permanent chrome under 15% of the screen, the drawer modal and closing on Escape and on navigation, the QR legible. Driven against a **seeded** family, because an empty console lays out perfectly and the overflow this catches comes from a long device name or a package id. `tests/e2e/calibrate-mobile.sh` is the executable calibration record: fourteen breaks, each required to go red *naming its own rule*, then green on restore — and it found a real defect in its subject the first time it ran (the pinned-navigation check measured the bar only at the end of a long page, where a `position: static` bar also sits at the bottom). Source-level companions: `TestConsoleDeclaresTheMobileViewport` — a missing viewport meta makes the whole mobile suite vacuous at 980 px. **Partial on one clause:** "navigation reachable one-handed" is no longer fully met — the menu opens from the top-left corner, the least reachable point on a large phone. Accepted on the owner's explicit preference for a top navigation (2026-09-03); the drawer's destinations are placed in its lower half, so only the opening tap is affected, and that placement is itself asserted (`#drawer-nav .tab` must start below 35% of the screen) and calibrated rather than left as prose. **16.1 added the width this suite never measured**: `TestTheConsoleHasOneNavigationAtEveryWidth` drives a real browser across the 900 px breakpoint in both directions and asserts there is exactly one navigation on either side. `TestConsoleRendersOnAPhone` stayed green through the whole defect and its fix — it measures at 360 px, where the menu button is correct either way, so it does not bind to it |
 | FR-13.3 installable, no desktop-only input | 4.4, 6.7 | e2e `TestTheConsoleInstallsToAPhone` — Chrome's own verdict over CDP (`Page.getAppManifest`, `Page.getInstallabilityErrors`, `Page.getManifestIcons`), opened by a fail-closed negative control on `about:blank` so that an empty error list cannot mean "this browser computes nothing". `TestConsoleNeedsNoDesktopOnlyInput` covers the second half — no `:hover`, `contextmenu`, `dblclick`, `accesskey` or mouse-only pointer event in any served asset — with a byte-count floor so an empty 200 cannot read as clean. **Calibrated 8/8** (four each, including one harness break per side); the manifest-route checks that used to stand alone here read back our own bytes and are not a statement about installing anything. Not proven: behaviour on a real cellular connection, and installation on any engine other than Chrome |
 | FR-13.4 phone states its own condition | 5.9 | `DeviceStatusTest` — 25 cases over the pure composer, including the three the console cannot see: a policy received but never applied, a device out of contact, and a phone that cannot measure usage at all. The last is the one this row exists for: `NOT_MEASURED` is a third level, carried through `ForegroundReader.spans()` returning `null` rather than an empty list, and asserted to render as prominently as a fault rather than as a zero. `SynchronizerTest` (4 tests) pins the contact stamp to receipt and nowhere else, so the line cannot report a week-old phone as freshly synced. Three independent guards keep the device token off a screen anyone holding the phone can read — the composer's output, a source scan (`ManifestAndPlatformCallsTest` *the status block never reads the device token*), and the rendered view tree (`StatusScreenTest`). Instrumented `UsageAccessTest` revokes the real `GET_USAGE_STATS` appop, **reads the mode back from the system**, and asserts the screen says so — the appop cannot be granted by `setPermissionGrantState` and a revoked one makes `queryEvents` return nothing rather than throw, which is the silent zero this whole requirement is about. **Calibrated 38/38** (32 JVM, 6 on-device) — see the record above |
-| FR-3.6 the phone says it cannot measure | 15.4 | e2e `TestAPhoneThatCannotMeasureScreenTimeSaysSo` — three-valued on the heartbeat, a later omitting heartbeat does not clear a recorded `false`, and the **list** endpoint carries the field as well as the single-device one, which is where a console warning would otherwise be invisible. The deep link and its highlight extras have no automated coverage at all: an intent is resolved at run time against a Settings this project does not own |
+| FR-3.6 the phone says it cannot measure | 15.4 | e2e `TestAPhoneThatCannotMeasureScreenTimeSaysSo` — three-valued on the heartbeat, a later omitting heartbeat does not clear a recorded `false`, and the **list** endpoint carries the field as well as the single-device one, which is where a console warning would otherwise be invisible. **16.5 added the other half**: the phone now notices the grant at the moment it happens, via `AppOpsManager.startWatchingMode` on `OPSTR_GET_USAGE_STATS`, instead of only on the next sync — which on an unlinked phone was never, and is what the owner actually hit. The deep link, its highlight extras and the watcher itself have no automated coverage at all: an intent is resolved at run time against a Settings this project does not own, and `AppOpsManager` is not reachable from a JVM test |
 | FR-14 audit | 3.7 | e2e `TestEveryAuditedActionIsWritten` — all **21** audited actions driven over real HTTP (17 parent-side, 4 device-side), each asserted as a row naming actor type, actor id, action, target type and target *id*; nine detail keys checked so the row says *which* change was made; every row required to carry a `request_id`; and a source-scanning ratchet over `internal/httpapi/*.go` that fails when a 22nd action appears. **Calibrated 6/6** — see the record below. Also `TestRecoveryAndAudit`, which checks ten action names |
 | FR-15 keeping the DPC current | 9 | three layers, and only the third can see it. JVM: `AppUpdaterTest` drives the five checks with every dependency a function, so the whole decision runs off a device. Server + e2e: `TestAPKInfoDescribesTheFileThisServerWillHandOver`, `TestAPKInfoIsNotFoundWhenTheServerHostsNoDPC`, `TestAParentCanTellThePhoneToUpdateItself`, `TestTheHeartbeatReportsWhichDPCThePhoneIsRunning`, `TestAnAPKReplacedUnderTheRunningServerIsRefused`, and `apk_test.go`'s seven over the bytes themselves. Device: **`tests/android/self-update.sh` + `TestTheServerReplacesTheDPCOnARealDevice`**, which builds the DPC twice from one tree, enrols the lower build against a real server and watches the higher one arrive — passed 2026-09-05 in 176 s, with the phone's own log as the second witness (`wake:connected: commands done=1` → `PackageManager: installation completed` → `FamilyGuardUpdate: self-update installed`) on a device whose adb had been off since the first policy applied. Its negative control is the same command again, declined as "already running". `tests/android/calibrate-update.sh` breaks each of the five checks in turn and records the refusal. **Not proven anywhere:** the update path on a phone that is not an emulator, and the `MY_PACKAGE_REPLACED` restart on an OEM build that kills background starts more aggressively than AOSP |
 | FR-16 managed applications | 12 | four layers, and the one that decided the design is the device. Server: `TestAnUploadedAPKIsReadRatherThanDescribed`, `TestMultipartAndRawBodyAgree`, `TestTwoVersionsOfOneAppBothLive`, `TestTheSameFileTwiceIsNotAConflict`, `TestAPackageSignedByAnotherKeyIsRefused`, `TestWhatIsNotAnAPKIsRefusedAsSuch`, `TestTheDirectoryOnTheNodeIsAlsoASource`, `TestADeploymentWithoutAnAPKDirSaysSo`, `TestDeletingAnAppRemovesItsFileToo`, `TestAManagedAppDownloadNeedsADeviceCredential`, plus `internal/apk`'s parser tests. Policy: `TestDeclaringAnAppReachesThePhoneAsSomethingItCanFetch`, `TestAnUpgradeIsANewVersionInTheSamePolicy`, `TestWithdrawingAnAppRemovesItFromThePolicy`, `TestDeclaringSomethingTheCatalogDoesNotHaveIsRefused`, `TestTheConsoleSeesADeclarationWithNothingBehindIt`; the shared vectors carry three new cases so both engines normalise a declared set identically. JVM: `ManagedAppApplierTest` (12) and `AppUpdaterTest`'s four new cases. **Device: `ManagedInstallTest`** — the restriction matrix in [12.1](#121--which-restrictions-bind-the-device-owner-measured-on-a-phone-rather-than-argued-from-the-source), the install→upgrade→withdraw lifecycle against a real second application, and `getInstallSourceInfo` as a real filter. **Calibrated 11/11** ([12.2](#122--the-jvm-calibration-including-one-break-that-proved-a-test-binds-to-nothing)), and the record includes one assertion that binds to nothing at the JVM layer and says so. **Not proven:** any of it on hardware rather than an emulator, and the API 29 floor |
 | FR-17 API keys | 12 | e2e `TestAnAPIKeyIsTheSameParent`, `TestTheTokenIsShownOnceAndNeverAgain`, `TestRevokingAKeyEndsItImmediately`, `TestAKeyCannotMintACredential`, `TestAKeyThatWasNeverIssuedIsNotDistinguishable`, `TestOnlyThePrimaryAdminMintsKeys`, `TestAKeyNeedsAName`, `TestTheAuditTrailTellsAScriptFromAPerson` — the last two of those are the ones that matter most: a key must not be able to mint a credential that outlives its own revocation, and an audit row must say a script acted rather than a person |
-| FR-18 family blocklist | 14 | e2e `TestTheCuratedBlocklistIsSeededAndReachesAPhone`, `TestTheBlocklistCoversAChildAddedAfterIt`, `TestAChildAllowExemptsOnlyThatChild`, `TestTheCriticalWhitelistOutranksTheBlocklist`, `TestDeletingACuratedEntryIsPermanent`, `TestABlocklistChangeBumpsEveryChildsPolicyVersion`, `TestTheBlocklistIsReachableByAPIKeyAndGuardedByRole`, `TestTheBlocklistRefusesWhatCanNeverMatchAnApp`, `TestTheBlocklistIsAudited`; three shared vectors replayed by **both** engines. The four that carry the requirement rather than the plumbing: the phone is told to hide packages **no inventory reported** (an implementation that blocks only what it can see leaves the installer stub that puts Facebook back); a child created *after* the entry is covered by it; one child's ALLOW exempts that child and a **second child is the control** that the entry did not simply vanish; and the device's own dialer, put on the list deliberately, is neither hidden nor suspended — with a non-critical package blocked in the same call, so an implementation that ignored the list entirely could not pass by doing nothing. `TestDeletingACuratedEntryIsPermanent` restarts the server, which is the only thing that separates "seeded once" from "re-applied on boot". **Calibrated 3/3 on the engine** (drop the union / drop the ALLOW carve-out / apply the list after the critical whitelist), each break red in the vector that owns the property and green on restore. **Not proven:** any of it on hardware — no phone has yet reported one of these packages back as hidden |
+| FR-18 family blocklist | 14 | e2e `TestTheCuratedBlocklistIsSeededAndReachesAPhone`, `TestTheBlocklistCoversAChildAddedAfterIt`, `TestAChildAllowExemptsOnlyThatChild`, `TestTheCriticalWhitelistOutranksTheBlocklist`, `TestDeletingACuratedEntryIsPermanent`, `TestABlocklistChangeBumpsEveryChildsPolicyVersion`, `TestTheBlocklistIsReachableByAPIKeyAndGuardedByRole`, `TestTheBlocklistRefusesWhatCanNeverMatchAnApp`, `TestTheBlocklistIsAudited`; three shared vectors replayed by **both** engines. The four that carry the requirement rather than the plumbing: the phone is told to hide packages **no inventory reported** (an implementation that blocks only what it can see leaves the installer stub that puts Facebook back); a child created *after* the entry is covered by it; one child's ALLOW exempts that child and a **second child is the control** that the entry did not simply vanish; and the device's own dialer, put on the list deliberately, is neither hidden nor suspended — with a non-critical package blocked in the same call, so an implementation that ignored the list entirely could not pass by doing nothing. `TestDeletingACuratedEntryIsPermanent` restarts the server, which is the only thing that separates "seeded once" from "re-applied on boot". **Calibrated 3/3 on the engine** (drop the union / drop the ALLOW carve-out / apply the list after the critical whitelist), each break red in the vector that owns the property and green on restore. **Not proven:** any of it on hardware — no phone has yet reported one of these packages back as hidden. `com.spotify.music` was added as a parent row on the live database in 16.7 and is in the same position: the app is not installed on the only enrolled phone, so the entry is pre-emptive by design |
 | NFR-1/2 auth | 2.4, 3.x | e2e `TestBrowserSignInJourney`, `TestBrowserSignInFailureModes`, `TestIDTokenIsVerifiedNotTrusted`, `TestSessionTokensAreForgeryResistant`, `TestOneDeviceCannotActOnAnother`; `TestVerifyRejects`, `TestVerifyAcceptsGenuineToken`, `TestVerifyDoesNotFetchJWKSPerToken`, `TestUnknownKidRefreshIsRateLimited`, `TestRefreshKeepsCacheOnBadDocument`, `TestSessionRejects`, `TestSessionRoundTrip`, `TestSessionIssuerRefusesWeakKey`, `TestBearerToken` |
 | NFR-3 no fabricated success | 3.6, 5.3, 5.5 | `TestEveryReadFailureIsReported`; and the mutation sweeps — 5.3's 39 breaks and 5.5's 39, each one a place the code could have believed a return code instead of reading state back |
 | NFR-4 persistence | 2.2 | e2e `TestStateSurvivesRestart` |
@@ -4028,5 +4029,259 @@ proven.
 | NFR-9 abuse resistance | 2.5 | e2e `TestRateLimitProtectsTheServer`, `TestOversizedBodiesAreRefusedAsTooLarge`, `TestMalformedRequestsAreRefusedWithAReason`, `TestCORSAllowsOnlyTheConfiguredOrigins`, `TestSecurityHeadersOnEveryAnswer`; `TestRateLimiter*` (7), `TestRateLimitCannotBeEscapedByAForgedHeader`, `TestBodyLimit`, `TestCORS*`, `TestSecurityHeaders`, `TestHSTSOnlyOverTLS` |
 | NFR-11 deployability | 7.1, 7.3, 7.4, 7.5 | `deploy/` renders under `kubectl kustomize`, calibrated against a deliberately broken manifest; `DEPLOYMENT.md`; `tests/image/smoke.sh` — **twelve assertions, all calibrated**, registered as the `image` layer of `tests/run_all.sh`. Two of the twelve were false greens the calibration itself found (`docker top` printing "uid root, not root" as a pass; a crash under `--read-only` reported as NOT MEASURED because `docker port` says nothing about an exited container) |
 | NFR-13 supported platforms | 5.11, 5.10 | `app/build.gradle.kts` sets `minSdk = 29`, and `RequirementCitationsTest` is what ties the number to the requirement. The requirement itself was **wrong** until 5.10 — it said API 26, while `setGlobalPrivateDnsModeSpecifiedHost` is API 29, so a 26–28 install would have enforced everything except FR-6.1 and left filtering silently off. Proven on the floor as of 2026-08-18: the `android-instrumented` layer runs on an API 29 emulator — 16 testcases in the provisioned pass, 1 after a real reboot — and it was the *first* run at 29 that found two defects an API 34 run had not (§7.6) |
+| NFR-14 the running notice is as quiet as the platform allows | 16.4 | **Nothing.** `IMPORTANCE_MIN` on a channel with a new id, the old id deleted, plus builder-level `PRIORITY_MIN` / `VISIBILITY_SECRET` / `setSilent` / `setShowWhen(false)`. Whether that reads as quiet enough is a judgement made by looking at a phone, and the trap this row exists to remember — channel importance is **immutable after creation**, so lowering it in place is accepted, changes nothing and reports no error — is guarded only by the comment that records it. The requirement is cited, which is the one thing `RequirementCitationsTest` can check; it is not tested
 | every requirement, both directions | 5.10 | `RequirementCitationsTest` — no id cited anywhere in the repo that `REQUIREMENTS.md` does not define (it found four — FR-13.4, cited twelve times and never written, plus three misnumbered store citations), and no requirement that nothing claims (it found eight, one of which was a genuine gap — see FR-2.2). Scans `kt kts go md xml sh py ts yaml yml sql`; a third test fails if either set is implausibly small, if any of `kt`/`go`/`xml`/`md` stops appearing among the citing files, or if a fabricated id is ever reported as defined — two empty sets compare equal, and a walk that resolved the wrong directory is the greenest result available |
 | NFR-12 test integrity | 6.5, 1.4 | the calibration records in this document; `run_all.sh`'s comparison of the classes that reported against the classes *declared* in `src/test` (file names were the unit until the 5.5 sweep found that wrong in both directions); the four known-bad probes that made `actionlint`'s zero findings mean something |
+
+## Phase 16 — six things the owner found by using it (FR-1.8, FR-5.6, FR-6.1, FR-3.6, NFR-14)
+
+Phase 15 shipped the re-link path. Phase 16 is what the owner reported after living with 0.4.0 for a
+day, consolidated into one change rather than six: a console with two navigations, a re-link control
+nobody could reach, no way to keep adb alive on a phone being worked on, a permanent notification, a
+usage-access grant that the phone ignored until the next sync, and a filtering resolver that
+measurably did not do the job it was there for.
+
+They are grouped because five of the six touch the policy path and would otherwise mean five
+migrations, five vector-file rewrites and five APK releases. One release, one migration, one pass
+over the shared vectors.
+
+### 16.1 — one navigation at every width, and a media query that adds no specificity
+
+Reported as two defects — *"the sidenav is empty and I still have a top menu"* — and it is one.
+
+`placeChrome()` moves `#mainnav` and `#child-switcher`, as single nodes, between `#topbar-row` and
+the drawer as `matchMedia('(min-width: 900px)')` flips. Moving the node rather than rendering it
+twice is deliberate: two copies is how a console ends up with two sets of tab state. At 900 px and up
+the nodes are in the header, so the drawer is *supposed* to be unreachable, and `app.css` said so:
+
+```css
+@media (min-width: 900px) {
+  .menu-btn { display: none; }      /* specificity (0,1,0) */
+}
+```
+
+**A media query contributes nothing to specificity.** That rule is `(0,1,0)`, exactly the same as
+
+```css
+.btn-icon { min-width: var(--tap); display: inline-grid; place-items: center; padding: 0; }
+```
+
+200 lines further down the same file — and the ☰ carries both classes. Equal specificity is decided
+by source order, so the later rule won and the button was displayed at every width. Tapping it opened
+a drawer whose two slots `placeChrome` had just emptied. The reporter saw an empty drawer *and* a top
+menu and described both; there was one cause.
+
+The fix is one selector, `.topbar .menu-btn`, which is `(0,2,0)` and wins on its own merits rather
+than on where it happens to sit in the file.
+
+Three things were ruled out before the CSS was read, because each would have produced the same
+report: a stale deploy (the served bytes byte-match the local file), HTTP caching (`Cache-Control:
+no-cache` plus a content-hash ETag), and a service worker (there is none).
+
+**`TestTheConsoleHasOneNavigationAtEveryWidth`** is the new guard, and it is a *rendered* test, not a
+source scan: it drives a real Chrome across the breakpoint in both directions and reads
+`getComputedStyle` on the button together with which parent each navigation node is actually in. A
+source scan could not have caught this, because the source contains a rule that says exactly the
+right thing. Only the cascade disagreed.
+
+This is the first e2e test in the suite that renders at a laptop width. `browser.laptop(w,h)` is new
+beside `phone()`, and `measure()` was split into `measureAt(t, screen, wantWidth)` because it
+hard-asserted 360 px and reported a laptop-width layout as "the phone emulation is not in effect".
+One protocol trap on the way: `Emulation.setTouchEmulationEnabled` validates `maxTouchPoints` as
+1..16 **even when `enabled` is false**, so passing `0` fails the call with *"Touch points must be
+between 1 and 16"* and silently leaves the page in the previous override's touch mode. The field is
+omitted rather than zeroed.
+
+### 16.2 — the re-link field, offered whenever there is something to re-link (FR-1.8)
+
+Reported as *"how to relink ? don't see a button"*, and there were two independent reasons for that.
+
+**The first is a bootstrap trap and it is the one that actually bit.** The handset is running 0.3.0,
+which has no re-link screen at all — that shipped in 0.4.0. FR-15 self-update runs *inside an
+authenticated sync*, and the phone is unlinked, so it can never fetch the build that would give it
+the screen. An unlinked phone cannot self-update onto the version that lets it stop being unlinked.
+The way out does not involve adb: redeem the recovery code (which drops `no_install_unknown_sources`
+along with everything else), open `/dpc.apk` in the phone's own browser, install over the top — same
+signing key, so Device Owner and app data survive — and only then re-link. `DEPLOYMENT.md` §*When a
+phone stops reporting* now carries this in order, including the instruction not to reboot between
+the release and the install on 0.3.0, whose boot receiver re-hardens.
+
+**The second would have bitten next.** Even on 0.4.0 the field was gated on `LinkRefused.refused()`
+— it appeared only once `ConnectionService` had personally observed a 401. A phone whose service is
+not running, or which was revoked while it was switched off, holds a credential the server has
+already forgotten and has never seen the 401 that would reveal the control. The gate was answering
+*"has this phone been told?"* when the question a parent is asking is *"is there anything here to
+re-link?"*.
+
+It is now gated on the phone holding a credential at all — `EncryptedCredentialStore.load() != null`
+— which is the honest precondition, and `Opening` carries `enrolled` for it. The explanatory text
+still differs between the two states, because a phone that knows it was refused should say so; what
+no longer differs is whether the field exists. After a successful re-link the group stays visible
+with the linked wording rather than disappearing, so a parent who mistypes once does not watch the
+control vanish.
+
+### 16.3 — developer options and adb, as a per-child switch (FR-5.6)
+
+*"i want a switch to allow developer functions and adb"*.
+
+`no_debugging_features` was unconditional, in `BASELINE_RESTRICTIONS` on the device and in the
+baseline set in the Go engine. It is now withheld when `allow_debugging` is set, and nothing else
+moves with it — the switch buys adb and adb only.
+
+It is deliberately **off by default**, and the comment on `Settings.AllowDebugging` says why at
+length: on a phone that is not the one you are developing against, this restriction is the last way
+in. Every other restriction can be lifted by changing the policy and waiting for a sync. This one
+cannot, because it can take away the channel you would use to find out why the sync is not
+happening. That is the same shape as 16.2's bootstrap trap, one layer down.
+
+Migration `0008` adds the column. Two new shared vectors cover it: one with a resolver and one
+without, so *"only the debugging entry is missing"* is asserted against the full restriction set
+rather than against a single membership test.
+
+### 16.4 — a running notice as quiet as Android permits (NFR-14)
+
+*"i dont want to see the family guard notification all the time, make it "invisible"."*
+
+It cannot be removed. A foreground service must post a notification; that is how Android makes a
+background-resident app visible to the person holding the phone, and a DPC that could hide its own
+presence is a different category of software. What it *can* be is `IMPORTANCE_MIN`, which is the
+floor: no status-bar icon, no sound, no heads-up, no badge, and a single collapsed line at the
+bottom of the shade. NFR-14 records both halves — the floor, and the fact that it is a floor.
+
+**The load-bearing detail is the channel id.** `NotificationChannel` importance is immutable once the
+channel has been created: lowering it on an existing channel is accepted, changes nothing, and
+reports no error. On an installed phone the old channel already exists, so the obvious one-line edit
+would have shipped as a no-op and read as "Android will not allow it". The channel id is therefore
+new (`family-guard-connection-quiet`) and the old one is deleted by id, which is what makes the
+change take effect on an upgrade rather than only on a fresh install. Builder-level `PRIORITY_MIN`,
+`VISIBILITY_SECRET`, `setSilent` and `setShowWhen(false)` cover the pre-channel API paths and the
+lock screen.
+
+### 16.5 — noticing the grant at the moment it happens (FR-3.6)
+
+*"i did give it the permission but it did not check again"*.
+
+The report is precise and the diagnosis matched it exactly: the only place that re-read the appop was
+`telemetry()`, which runs on a sync. So the phone would notice the grant at the next heartbeat — up
+to fifteen minutes later, and **never** on a phone that is unlinked, which is the state the phone was
+actually in. From the parent's side that is indistinguishable from the grant not having worked.
+
+`AppOpsManager.startWatchingMode(OPSTR_GET_USAGE_STATS, packageName, listener)` is the platform's own
+push notification of exactly this change, it is API 19+, and it is therefore safe on the API 29 floor.
+The watcher is registered in `onStartCommand`, unregistered in `onDestroy`, filters on both the op
+and the package (the callback fires for other packages), clears the standing notice, and — when the
+grant arrives — kicks a sync so the console learns about it in seconds instead of at the next poll.
+The resync closure is captured beside `live` in `connect()`, so it is whatever synchronizer is
+current rather than one captured at construction.
+
+**Not proven:** the watcher has no JVM test, because `AppOpsManager` is exactly the platform surface
+a JVM test cannot exercise, and the instrumented layer has been NOT MEASURED since the emulator
+stopped accepting device-owner provisioning. This is a phone-only measurement and it is owed.
+
+### 16.6 — no filtering resolver by default (FR-6.1)
+
+> *"i dont want the adguard DNS -> its not helping against AD's inside apps which are the most
+> annoying. NO ADGUARD DNS!!!!! ... I will add a feature for a usefull adblock later once the rest
+> works"*
+
+Every child was provisioned with `dns_host = family.adguard-dns.com` and the DPC pinned
+`setGlobalPrivateDnsModeSpecifiedHost` to it, locked with `disallow_config_private_dns`. The owner is
+right about the mechanism, not just about the preference. A resolver sees a **name**. In-app
+advertising is fetched by an ad SDK over the app's own TLS connection, very often from a hostname the
+app itself needs; blocking that name breaks the app and not blocking it serves the advert, and the
+resolver is not permitted to look at the part that would tell the two apart. The default bought a
+permanently-locked network setting in exchange for a category of filtering the owner does not want
+and no help at all with the one he does.
+
+Three coupled changes, and the middle one is the point:
+
+1. `dns_host` defaults to `''`. Migration `0008` moves the column default and rewrites the rows that
+   still carry the AdGuard host, bumping their version so phones re-read. `0001_init.sql` is left
+   alone: a migration that has been applied is history, and rewriting it changes nothing on a
+   database that already ran it while making the two disagree.
+2. **`disallow_config_private_dns` is applied only when a resolver is actually configured.** The lock
+   exists so a child cannot undo a parent's decision; with no decision to protect it was a settings
+   screen a child could not open, for nothing. This is the half that a "just clear the default"
+   change would have missed, leaving every phone locked out of its own DNS settings forever.
+3. The API stops rejecting an empty `dns_host`. It was the one field a parent could not clear, which
+   is precisely the shape of a default nobody chose.
+
+**Empty is a defined state, not "off".** Android reads an unset private-DNS host as OPPORTUNISTIC: DNS
+is still encrypted to whatever resolver the network offers. The child's phone is no more exposed than
+any other phone on the same Wi-Fi, and the docs say so rather than leaving a reader to assume the
+worst or the best.
+
+`vectors.json` went 26 → 29 and every fixture host moved off `family.adguard-dns.com` to
+`dns.example-family.net`, so the corpus no longer teaches the old default by example. CONCEPT.md §2.1
+is rewritten: advertising inside apps is now stated as a **known open gap** rather than covered by a
+table row that claimed a DNS layer handles "ads, trackers — device-wide, every app". Leaving that
+claim in place is what made the wrong default look justified for four phases.
+
+### 16.7 — Spotify, as data rather than as code
+
+*"also make sure spotify is blocked"*.
+
+`com.spotify.music` went onto the family blocklist as a **parent row**, not into
+`store.DefaultBlockedPackages`. The curated constant is documented as *"software that arrives on a
+phone without anybody choosing it"* — vendor preinstalls — and it ships in the binary to every
+deployment of a public repository. Spotify is a parenting decision about one family, and it belongs
+in that family's data.
+
+Applied against the live database in one transaction mirroring `SetFamilyBlockedPackage` exactly:
+lift any dismissal, upsert the row, `UPDATE policies SET version = version + 1`. Read back: one row,
+and Aurelia's policy v2 → v3. The audit row is written with `actor_type = 'SYSTEM'` rather than
+`'PARENT'`, because no parent performed it and a console that showed one would be lying about who
+did. The one thing the SQL cannot do is the handler's `notifyChild` fan-out, so a device learns at
+its next poll rather than immediately — moot here, as no phone is currently linked.
+
+**Spotify is not installed on the phone.** The inventory holds 504 rows and none of them matches
+`%spotify%` or `%music%`, on a query calibrated against the same table (84 rows match `%google%`, 239
+`%samsung%`). So this is pre-emptive, which is exactly what the blocklist is designed for: the DPC
+filters the desired set against what is installed before it touches anything, so an entry for an
+absent app costs nothing and takes effect the moment the app appears.
+
+### 16.8 — calibration
+
+| Break | Expected red | Observed |
+|---|---|---|
+| the original `.menu-btn { display: none }` inside the media query restored | `TestTheConsoleHasOneNavigationAtEveryWidth` | RED — *"at 1280 px the menu button is visible (computed display \"grid\") while the navigation it opens is in the header: tapping it opens an empty drawer"*; GREEN on `.topbar .menu-btn` |
+| `allow_debugging` ignored by the Go engine | `TestDeveloperOptionsCanBeAllowedPerChild` | RED, and its positive control (the switch off ⇒ the restriction present) is what stops the test passing on an engine that never applies the restriction at all |
+| a resolver configured but `disallow_config_private_dns` withheld | `TestNoFilteringResolverIsConfiguredByDefault` | RED — the second half of the coupling, without which "no lock by default" would also pass on an engine that had lost the lock entirely |
+| the three new vectors added while the Kotlin engine was left alone | `EnforcementEngineVectorsTest` | RED — *"number of vectors replayed expected:<26> but was:<29>"*. The count pin doing its job: a Go-side vector the device engine never replays is the drift this file exists to prevent |
+| NFR-14 written in REQUIREMENTS.md and cited nowhere | `RequirementCitationsTest` | RED — *"these requirements are in REQUIREMENTS.md and nothing anywhere names them … [NFR-14]"* |
+| the old FR-6.1 default assertion left in place | e2e `TestPolicyEnforcementJourney` | RED — *"filtering is off by default; FR-6.1 says it is enforced by the Device Owner"*. Found by the full sweep, not by the targeted runs: the assertion lived in a journey test that none of the new tests touch |
+| a field inserted into `Settings` with a comment | `gofmt -l` | DIRTY — inserting a commented field splits an alignment group and re-aligns every sibling. Caught by the sweep's gofmt step, whose *output* is the signal; `gofmt -l` exits 0 either way |
+| a `waitFor` expression that can never evaluate | any browser test | RED at the deadline, *naming the throw* — *"waited 5s for the sign-in screen and it never happened … the expression threw every time, most recently: TypeError: Cannot read properties of null (reading 'hidden')"*. The calibration partner for the `browser.waitFor` change below: tolerating a transient throw must not make a permanent one green |
+
+Two of those were found by running the whole sweep rather than the tests for the change, and both
+were in code the change did not edit. That is the argument for the sweep being the gate.
+
+**One harness defect, found by the sweep and fixed rather than retried.** `browser.waitFor` failed
+the test when its expression *threw*, and every wait in this suite reaches into the DOM
+(`!document.getElementById('app').hidden`). During a navigation that element is legitimately absent
+for a moment, so on a contended machine the poll raised a TypeError against a document that was
+merely still arriving: the new laptop test went red on *"Cannot read properties of null (reading
+'hidden')"* in a run where every other layer was green, purely because the page took 38 s to load.
+That red is unfalsifiable from the message — it names a null property, not a missing condition, and
+reads exactly like a broken console. A throw is now "not yet"; the deadline still fails, and now
+prints the last exception, so a genuinely wrong expression says what it threw instead of only that
+nothing happened. The same run also produced two `psql … : signal: killed` failures, which is the
+harness's own 30 s command timeout under the same contention — infrastructure, recorded here so the
+next reader does not go looking for a product defect behind it.
+
+**Negative result worth recording.** `TestConsoleRendersOnAPhone` stayed green across the entire nav
+fix, in both directions. It measures at 360 px, where the menu button is correct in both the broken
+and the fixed CSS, so it does not bind to this defect — it is not weak evidence for 16.1, it is no
+evidence, and the laptop-width test exists because of that.
+
+### 16.9 — what is not proven
+
+- The appop watcher (16.5) has no automated coverage on any layer. `AppOpsManager` is not reachable
+  from a JVM test and the instrumented layer is NOT MEASURED.
+- The quiet notification (16.4) is asserted by nothing. Whether `IMPORTANCE_MIN` reads as "invisible
+  enough" is a judgement made by looking at a phone, and the channel-id trap is guarded only by the
+  comment that records it.
+- The ungated re-link field (16.2) still has not been used on a handset. FR-1.8 remains unproven on
+  hardware for the same reason it was after Phase 15.
+- Spotify (16.7) is on the list but no phone has reported it back as hidden, because it is not
+  installed on the only enrolled phone and that phone is unlinked.

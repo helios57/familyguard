@@ -733,7 +733,13 @@ async function showProvisioning(dev) {
       'To get it working again you have to pick that phone up and type the new code into it: '
       + 'FamilyGuard \u203a Recovery \u203a Re-link this phone. Nothing you can do from here will '
       + 'bring it back.',
-      'A phone running an older build of the app cannot re-link at all, and needs a factory reset.',
+      // Not "needs a factory reset", which is what this line said until 2026-09-06 and which is
+      // false. An older build has no Re-link screen, but redeeming the recovery code drops
+      // no_install_unknown_sources along with everything else, so the phone can install the current
+      // build from its own browser — same signing key, so Device Owner and app data survive. The
+      // sentence mattered: a parent read it and concluded the phone was unrecoverable.
+      'A phone running an older build has no Re-link screen yet. Use Recovery code first, then open '
+      + '/dpc.apk in that phone\u2019s browser and install over the top — no factory reset, no cable.',
       'Only do this for a phone you are replacing, or one you have lost.',
     ],
     confirmLabel: 'Replace ' + dev.name,
@@ -768,9 +774,20 @@ async function showProvisioning(dev) {
 async function showRecovery(dev) {
   const out = await act('Recovery code', () => api('/devices/' + dev.id + '/recovery-code'));
   if (!out) return;
+  // Two things use this code, and until 2026-09-06 the sheet named only the first. The second is
+  // the one a parent reaches for in an emergency: a phone that was revoked, or that is running a
+  // build with no Re-link screen, is recovered through here and not through a factory reset. A
+  // parent who does not know that reads "no button" and concludes the phone is gone.
+  const stuck = (n, text) => el('p', { class: 'muted', text: n + '. ' + text });
   openSheet('Recovery code for ' + dev.name, el('div', { class: 'stack' },
     el('p', { class: 'muted', text: 'Type this on the phone to unlock it when there is no internet. Keep it where your child cannot read it.' }),
-    el('div', { class: 'code', text: out.recovery_code })));
+    el('div', { class: 'code', text: out.recovery_code }),
+    el('h3', { text: 'Phone unlinked, or on an old build?' }),
+    el('p', { class: 'muted', text: 'The same code brings it back. No factory reset, no cable. Do not restart the phone between steps 1 and 2.' }),
+    stuck(1, 'On the phone: FamilyGuard \u203a Recovery \u203a enter this code. Every restriction lifts.'),
+    stuck(2, 'In the phone\u2019s own browser, open /dpc.apk on this site and install over the top. Your settings survive.'),
+    stuck(3, 'Here: Replace phone, to get a fresh setup code.'),
+    stuck(4, 'On the phone: FamilyGuard \u203a Recovery \u203a Re-link this phone, and type that code.')));
 }
 
 /* ---- rules -------------------------------------------------------------- */
@@ -811,7 +828,13 @@ function renderRules(data) {
     toggle('tracking_only', 'Watch only', 'See what is happening, change nothing on the phone.'),
     toggle('allow_child_installs', 'Let them install apps', 'Off means new apps wait for your approval.'),
     toggle('youtube_blocked', 'Block YouTube', 'Blocks the app and the site.'),
-    toggle('bedtime_enabled', 'Bedtime', 'Pauses apps overnight. Calls always work.'));
+    toggle('bedtime_enabled', 'Bedtime', 'Pauses apps overnight. Calls always work.'),
+    // FR-5.6. Last in the card and worded as what it costs, because it is the only switch here
+    // whose "on" makes the phone easier to interfere with rather than harder — and the only one
+    // whose effect a parent cannot undo by flipping it back if the phone has meanwhile stopped
+    // reaching the console.
+    toggle('allow_debugging', 'Allow developer options and USB debugging',
+      'For a phone you are developing on. Off switches adb off, and a phone that then loses contact with this console cannot be reached over USB either.'));
 
   const bedtime = el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h2', { text: 'Bedtime and screen time' })),
@@ -854,8 +877,22 @@ function renderRules(data) {
             refresh();
           },
         }))))
-      : el('p', { class: 'muted', text: 'Only the built-in adult-content filter is active.' }),
-    el('p', { class: 'muted', text: 'Filtering uses ' + p.dns_host + '.' }));
+      : el('p', { class: 'muted', text: 'No sites are blocked by name.' }),
+    // Editable, and legitimately clearable.
+    //
+    // This was one line of prose reading "Filtering uses <host>." — a setting the console showed
+    // and could not change, over a default nobody had chosen. Empty is a real answer here: it means
+    // the phone uses whatever encrypted resolver the network offers, which is what a phone without
+    // this app on it does.
+    el('div', {}, el('label', { for: 'dns', text: 'Encrypted DNS resolver (optional)' }),
+      el('input', {
+        id: 'dns', type: 'text', value: p.dns_host || '', placeholder: 'none',
+        autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false',
+        onchange: (e) => save({ dns_host: e.target.value.trim() }, 'DNS resolver'),
+      }),
+      el('p', { class: 'muted', text: p.dns_host
+        ? 'Names resolved through ' + p.dns_host + '. A resolver only sees names, so it cannot remove advertising an app fetches over its own connection.'
+        : 'Empty: the phone uses the network\u2019s own resolver. Leaving it empty is fine \u2014 a DNS resolver cannot see, and so cannot remove, advertising served inside an app.' })));
 
   const cards = [rules, bedtime, domains];
   // Rules are a property of the child and are saved whether or not a phone exists to carry them, so

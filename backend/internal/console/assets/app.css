@@ -230,7 +230,15 @@ p { margin: 0 0 0.6em; }
 .tab[aria-current="page"] { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
 
 @media (min-width: 900px) {
-  .menu-btn { display: none; }
+  /* `.topbar .menu-btn`, not `.menu-btn`.
+     A media query adds no specificity, so a bare `.menu-btn { display: none }` here is (0,1,0) and
+     loses to `.btn-icon { display: inline-grid }` 200 lines further down this file purely on source
+     order — and the ☰ carries both classes. That shipped: at 900 px and up the navigation is in the
+     header where it belongs AND the menu button is still offered, so tapping it opens a drawer
+     whose two slots placeChrome has just emptied. Reported as "the sidenav is empty and I still
+     have a top menu", which is one defect, not two. Measured in
+     TestTheConsoleHasOneNavigationAtEveryWidth. */
+  .topbar .menu-btn { display: none; }
   .crumb { display: none; }
   .topbar { padding-inline: 20px; }
   .topbar #mainnav { display: flex; }

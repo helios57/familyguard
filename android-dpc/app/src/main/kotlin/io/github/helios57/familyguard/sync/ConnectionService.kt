@@ -1,6 +1,7 @@
 package io.github.helios57.familyguard.sync
 
 import android.Manifest
+import android.app.AppOpsManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -183,10 +184,28 @@ class ConnectionService : Service() {
         LocationProbe(AndroidLocationSource(this), { System.currentTimeMillis() })
     }
 
+    /**
+     * The platform's own notification that the usage-access appop changed (FR-3.6).
+     *
+     * Held so it can be unregistered; null until [watchUsageAccess] has run once.
+     */
+    private var usageAccessWatcher: AppOpsManager.OnOpChangedListener? = null
+
+    /**
+     * One sync, through the same path everything else uses, or null before the loop is up.
+     *
+     * A lambda rather than four more fields: [syncAndDrain] needs the synchronizer, the reporting
+     * and the command queue that [connect] built together, and three separately published fields
+     * are three chances for a caller to hold a matched set from two different connections.
+     */
+    @Volatile
+    private var resync: (suspend (String) -> Unit)? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         grantOwnPermissions()
+        watchUsageAccess()
         // Then, before anything that can block: the platform kills a service that has not called
         // this within five seconds of being started in the foreground.
         ServiceCompat.startForeground(
@@ -248,8 +267,70 @@ class ConnectionService : Service() {
         // Otherwise the wake-up outlives the service that answers it: it restarts this one, which
         // stops again for whatever reason it stopped for, at every edge for the life of the device.
         runCatching { alarm.schedule(DesiredState()) }
+        usageAccessWatcher?.let { watcher ->
+            runCatching { getSystemService(AppOpsManager::class.java)?.stopWatchingMode(watcher) }
+            usageAccessWatcher = null
+        }
         scope.cancel()
         super.onDestroy()
+    }
+
+    /**
+     * Notices the moment a parent turns Usage access on, instead of waiting for the next sync
+     * (FR-3.6).
+     *
+     * This is the half that was missing, and its absence is what the notice looked like from the
+     * outside: a parent walks the Settings path the notification links to, grants the appop, comes
+     * back — and FamilyGuard still says it cannot measure screen time. Nothing was wrong except
+     * that the only thing that re-read the appop was `telemetry()`, which runs on a sync, and the
+     * next sync is up to fifteen minutes away — or never, on a phone whose credential the server
+     * has stopped accepting. Reported on 2026-09-06: "I did give it the permission but it did not
+     * check again."
+     *
+     * `startWatchingMode` is the platform telling us rather than us polling: the callback fires on
+     * the change itself, so the notice clears while the parent is still holding the phone and
+     * looking at it, which is the only moment at which clearing it means anything.
+     *
+     * Scoped to this package's own op. A watcher on every package would need a permission this app
+     * does not hold and would be answering a question nobody asked.
+     *
+     * The callback runs on a binder thread, so it does the two cheap things — read the appop, move
+     * the notification — inline, and hands the expensive one (a sync, so the console learns too) to
+     * the service's scope.
+     */
+    private fun watchUsageAccess() {
+        if (usageAccessWatcher != null) return
+        val appOps = getSystemService(AppOpsManager::class.java) ?: run {
+            Log.w(TAG, "no AppOpsManager: a usage-access grant will only be noticed on the next sync")
+            return
+        }
+        val watcher = AppOpsManager.OnOpChangedListener { op, pkg ->
+            // Filtered rather than trusted: the platform is documented to call this for the op and
+            // package asked for, and a build that calls it for others must not make this service
+            // sync on every appop change on the device.
+            if (op != AppOpsManager.OPSTR_GET_USAGE_STATS || pkg != packageName) return@OnOpChangedListener
+            val granted = UsageAccess.granted(this)
+            Log.i(TAG, "usage-access appop changed: granted=$granted")
+            usageAccessNotice(missing = !granted)
+            if (granted) {
+                // So the console stops showing the warning too, and so the first usage sample lands
+                // now rather than at the next scheduled tick. Null before the loop is up, and that
+                // path reports the appop in its own first heartbeat anyway.
+                val run = resync ?: return@OnOpChangedListener
+                scope.launch {
+                    runCatching { run("usage-access granted") }
+                        .onFailure { Log.w(TAG, "the sync after the grant failed: ${it.message}") }
+                }
+            }
+        }
+        val ok = runCatching {
+            appOps.startWatchingMode(AppOpsManager.OPSTR_GET_USAGE_STATS, packageName, watcher)
+        }.isSuccess
+        if (ok) {
+            usageAccessWatcher = watcher
+        } else {
+            Log.w(TAG, "could not watch the usage-access appop; grants will be noticed on the next sync")
+        }
     }
 
     private suspend fun connect() {
@@ -306,6 +387,7 @@ class ConnectionService : Service() {
         // rather than finding no synchronizer and logging that it did nothing.
         live = synchronizer
         val commands = policy?.let { commandQueue(api, it, synchronizer, reports) }
+        resync = { why -> syncAndDrain(synchronizer, reports, commands, why) }
 
         // Once at start, before the stream. A phone that comes back from a reboot must not wait for
         // the server to have something to say before it enforces the policy it already has.
@@ -1172,17 +1254,39 @@ class ConnectionService : Service() {
 
     private fun notification(): Notification {
         val manager = getSystemService(NotificationManager::class.java)
-        // Low importance: it must be visible — the platform requires a foreground service to say so
-        // — but a phone that pings every time it reconnects is a phone whose owner turns the
-        // notification off.
+        // NFR-14. IMPORTANCE_MIN, which is the quietest a foreground service is permitted to be: no icon in
+        // the status bar, no sound, no heads-up, and one collapsed line at the bottom of the shade.
+        // The platform will not let it go further than that — a foreground service must declare
+        // itself, and a DPC that hid what it was doing would be the wrong thing to build anyway.
+        //
+        // **The id changed, and that is the whole reason this works.** A NotificationChannel is
+        // owned by the person holding the phone the moment it exists: every later
+        // createNotificationChannel with the same id keeps the importance already recorded and
+        // silently ignores the new one. Lowering IMPORTANCE_LOW to IMPORTANCE_MIN on
+        // "family-guard-connection" would therefore have shipped, run, and changed nothing on the
+        // one phone that has the app installed — the exact shape of a fix that cannot be falsified
+        // from the outside. A new id is a new channel with the importance we asked for, and the old
+        // one is deleted so the app's notification settings do not accumulate a dead entry per
+        // release.
+        manager?.deleteNotificationChannel(CHANNEL_LEGACY)
         manager?.createNotificationChannel(
             NotificationChannel(
                 CHANNEL,
                 getString(R.string.connection_channel),
-                NotificationManager.IMPORTANCE_LOW,
-            )
+                NotificationManager.IMPORTANCE_MIN,
+            ).apply {
+                setShowBadge(false)
+                lockscreenVisibility = Notification.VISIBILITY_SECRET
+            }
         )
         return NotificationCompat.Builder(this, CHANNEL)
+            // Belt and braces with the channel: on a build where the channel already existed at a
+            // higher importance (a downgrade this app cannot make) these still keep it out of the
+            // way, and on API 29 they are what the ranker reads.
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .setSilent(true)
+            .setShowWhen(false)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(getString(R.string.connection_running))
             .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
@@ -1212,7 +1316,18 @@ class ConnectionService : Service() {
 
     companion object {
         private const val TAG = "FamilyGuard/Connection"
-        private const val CHANNEL = "family-guard-connection"
+        /**
+         * The running notice's channel.
+         *
+         * Suffixed, and the suffix is load-bearing rather than decorative: channel importance is
+         * fixed at creation, so this id was changed on 2026-09-06 to move the notice from
+         * IMPORTANCE_LOW to IMPORTANCE_MIN. Any future change to this channel's importance needs
+         * another new id and another delete of the one before it.
+         */
+        private const val CHANNEL = "family-guard-connection-quiet"
+
+        /** The pre-2026-09-06 channel, deleted on sight. See [CHANNEL]. */
+        private const val CHANNEL_LEGACY = "family-guard-connection"
         private const val NOTIFICATION_ID = 1
 
         /** A separate channel so a parent can silence the running notice and still be told this. */
