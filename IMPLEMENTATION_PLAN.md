@@ -4531,3 +4531,76 @@ is where this section started — so the recovery route is strictly the cheaper 
   survives the app being replaced is exactly the thing that needs a phone.
 - The back-off is asserted by nothing. A refusal setting `wait` to six hours is one assignment in a
   loop that no test enters.
+
+### 17.9 — Play Protect, and the integer that was hiding the reason
+
+The owner took the phone onto 0.6.0 by the route in §17.7, and reported one thing it does not
+cover: **the browser install was stopped by Google Play Protect** — *"FamilyGuard has been blocked
+by Play Protect because it's not known"* — and completed only after *Install anyway*. The phone is
+on `0.6.0` / build 9 and reporting.
+
+**What that measures, and what it does not.** It measures the *browser* path: an ordinary
+user-facing session, from an installer with no privilege, for an app Google has never seen. Play
+Protect interposing there is its documented job. It says nothing about the path FR-15 actually
+uses, which is a device owner committing its own session with `USER_ACTION_NOT_REQUIRED` — that has
+still never run on this phone. The 0.5.0 attempt that started all of this never reached a verifier:
+it was answered `STATUS_PENDING_USER_ACTION` at commit, which is before verification. So: **not
+measured**, and worth being explicit about rather than reasoning from the sideload.
+
+**What the platform guarantees, which is where the real defect was.**
+`PackageInstaller.STATUS_FAILURE_BLOCKED` is documented as *"a device policy may be blocking the
+operation, a package verifier may have blocked the operation, or the app may be required for core
+system operation"* — three unrelated causes behind one integer — and it says the result *"may also
+contain `EXTRA_OTHER_PACKAGE_NAME` with the specific package blocking the install"*. This app read
+`EXTRA_STATUS` and `EXTRA_STATUS_MESSAGE` and threw that extra away. Had Play Protect stopped the
+silent path, the console would have shown `status=2 (no message)`: a number that is not wrong, that
+names none of the three causes, and that a parent cannot act on. `installFailureReason` now maps
+every documented status to a sentence and names the blocker, glossing the two packages Play Protect
+lives in (`com.google.android.gms`, `com.android.vending`) as Play Protect — because that is the
+name that was on the screen. Both status paths go through it, counted by a source guard, because a
+phrasing improvement made to the path a person is watching is exactly the one the other path does
+not get.
+
+**What cannot be done, checked rather than recalled.** There is no supported way for a device owner
+to turn app verification off. `UserManager.ENSURE_VERIFY_APPS` only *forces it on* — "disallowed
+from disabling application verification" — and `DevicePolicyManager.setGlobalSetting`'s documented
+allowlist does not contain `PACKAGE_VERIFIER_ENABLE`. Both read out of the android-37.0 platform
+sources in the local SDK. Play Protect trusting this app would mean Google having seen it, which
+for a privately distributed DPC means Play, and this fleet is not going there.
+
+**What was done instead, and it is a hint rather than a fix.** Sessions now set
+`setPackageSource(PACKAGE_SOURCE_OTHER)` on API 33+, which the platform documents as
+*"informational and may be used as a signal by the system"*. `PACKAGE_SOURCE_OTHER` is the honest
+value for a policy install; `PACKAGE_SOURCE_STORE` would be a lie about provenance told to a
+verifier, which is not a thing this app does. Leaving it unspecified describes the session as one
+whose installer declined to say.
+
+**A defect found on the way.** `setInstallReason` is API **26**; it sat behind the same
+`SDK_INT >= S` guard as `setRequireUserAction`, which is API 31. So on every device at the bottom of
+the supported range — the Galaxy S20 floor is API 29 — the platform was told nothing about why the
+install was happening. Moved out of the guard. Nothing measured it before, because the only phone in
+the fleet is API 36.
+
+Calibrated, scripted, both red on the intended test and restored with `git diff --stat`: dropping
+`EXTRA_OTHER_PACKAGE_NAME` from the self-update receiver fails *a blocked install names what blocked
+it, in one place*; removing the Play Protect branch fails *a verifier block names Play Protect rather
+than the package it lives in*.
+
+### 17.10 — 0.6.1 exists to answer the question on hardware
+
+FR-15.6 has never run on a phone, and until today it could not: the only handset was on a build that
+could not install anything. It is now on 0.6.0, which makes the automatic path testable for the first
+time by the ordinary means — publish a build and wait.
+
+That is what 0.6.1 is. It changes the reporting and two session hints and nothing about what an
+update *is*, so the outcome is unambiguous either way:
+
+- the phone arrives on build 10 with nobody touching it → FR-15.6 is proven on hardware, and Play
+  Protect does not gate a device-owner session;
+- the phone stays on build 9 and its card carries a reason → also an answer, in the platform's own
+  words, which is the thing §17.9 built.
+
+A silent stay on build 9 with no reason would be a third outcome and the only bad one: it would mean
+the loop never ran, and the next place to look is the fifteen-minute `delay` that nothing measures
+(§17.8).
+

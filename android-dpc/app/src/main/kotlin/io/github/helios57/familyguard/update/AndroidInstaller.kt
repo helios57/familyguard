@@ -230,11 +230,23 @@ class AndroidInstaller(private val context: Context) {
     private fun sessionParams(packageName: String): PackageInstaller.SessionParams {
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(packageName)
+        // Says why this install happened, to the platform and to anything auditing it. A device
+        // policy install is not a user-initiated one, and the distinction is what keeps this out of
+        // the "recently installed by the user" surfaces a child would look at.
+        //
+        // API 26, not 31. It sat behind the same guard as `setRequireUserAction` until 2026-09-06,
+        // which meant the platform was told nothing about why the install happened on exactly the
+        // devices at the bottom of the supported range — the Galaxy S20 floor is API 29.
+        params.setInstallReason(PackageManager.INSTALL_REASON_POLICY)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Documented as "informational and may be used as a signal by the system", so this is a
+            // hint and never a guarantee — but `PACKAGE_SOURCE_OTHER` is the honest value for a
+            // policy install, and leaving it `PACKAGE_SOURCE_UNSPECIFIED` describes this session as
+            // one whose installer did not say. Claiming `PACKAGE_SOURCE_STORE` would be a lie about
+            // provenance told to a verifier, which is not a thing this app does.
+            params.setPackageSource(PackageInstaller.PACKAGE_SOURCE_OTHER)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Says why this install happened, to the platform and to anything auditing it. A device
-            // policy install is not a user-initiated one, and the distinction is what keeps this out
-            // of the "recently installed by the user" surfaces a child would look at.
-            params.setInstallReason(PackageManager.INSTALL_REASON_POLICY)
             params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
         }
         return params
@@ -278,17 +290,10 @@ class AndroidInstaller(private val context: Context) {
                 }
                 val code = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, Int.MIN_VALUE)
                 val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty()
-                results.offer(
-                    when (code) {
-                        PackageInstaller.STATUS_SUCCESS -> SUCCESS
-                        // Not an outcome: the platform is asking for a tap that a device owner
-                        // should never be asked for. Named, because the operation is now stuck and
-                        // "timed out" would send the reader to look at the network.
-                        PackageInstaller.STATUS_PENDING_USER_ACTION ->
-                            "the platform asked for a person to confirm this, which a device owner should not be asked"
-                        else -> "status=$code ${message.ifEmpty { "(no message)" }}"
-                    }
-                )
+                // The blocking package, which is the whole diagnosis for a `STATUS_FAILURE_BLOCKED`
+                // and is discarded by anything that reads only the status. See [installFailureReason].
+                val blockedBy = intent.getStringExtra(PackageInstaller.EXTRA_OTHER_PACKAGE_NAME)
+                results.offer(installFailureReason(code, message, blockedBy))
             }
         }
         val filter = IntentFilter(action)
@@ -396,28 +401,17 @@ class UpdateStatusReceiver : BroadcastReceiver() {
         if (intent.action != AndroidInstaller.ACTION_INSTALL_STATUS) return
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, Int.MIN_VALUE)
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty()
+        // `STATUS_FAILURE_BLOCKED` names the package that blocked it here and nowhere else, and on
+        // this fleet the expected blocker is Google Play Protect refusing an app it does not know.
+        val blockedBy = intent.getStringExtra(PackageInstaller.EXTRA_OTHER_PACKAGE_NAME)
         val report = androidUpdateReport(context)
-        when (status) {
-            PackageInstaller.STATUS_SUCCESS -> {
-                Log.i(TAG, "self-update installed")
-                report.clear()
-            }
-            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                // Not expected on a fully managed device: a device owner installs without a prompt,
-                // and the session is created asking for none. If it happens anyway the update is
-                // stuck, and saying so to the parent is worth more than launching a dialog onto a
-                // child's screen for an app they did not ask to update.
-                val reason = "Android asked for someone to confirm this install; a device owner " +
-                    "should never be asked, so nothing was installed"
-                Log.e(TAG, reason)
-                report.record(reason, runningVersionCode(context))
-            }
-            else -> {
-                val reason = "Android refused the update: status=$status " +
-                    message.ifEmpty { "(no message)" }
-                Log.e(TAG, reason)
-                report.record(reason, runningVersionCode(context))
-            }
+        val reason = installFailureReason(status, message, blockedBy)
+        if (reason.isEmpty()) {
+            Log.i(TAG, "self-update installed")
+            report.clear()
+        } else {
+            Log.e(TAG, reason)
+            report.record(reason, runningVersionCode(context))
         }
     }
 

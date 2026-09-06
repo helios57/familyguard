@@ -3,6 +3,7 @@ package io.github.helios57.familyguard
 import io.github.helios57.familyguard.policy.DpmRestrictionGateway
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -615,6 +616,52 @@ class ManifestAndPlatformCallsTest {
                 "that drifts is the one nobody watches",
             1,
             text.split(sessionParams).size - 1,
+        )
+    }
+
+    /**
+     * A blocked install says what blocked it, and one function decides how (FR-15.7).
+     *
+     * `STATUS_FAILURE_BLOCKED` covers a device policy, a package verifier and a core system
+     * package, and the platform separates them only by naming the blocking package in
+     * `EXTRA_OTHER_PACKAGE_NAME`. An install path that reads the status and not that extra reports
+     * a number for a cause the platform had already identified — which is what the console showed
+     * on 2026-09-06, the day Play Protect stopped an install of this very app.
+     *
+     * Counted rather than inspected, and counted in both paths: the self-update receiver and the
+     * managed-app watcher fail for the same reasons, and a phrasing improvement applied to the one
+     * a person is watching leaves the other on the old text.
+     */
+    @Test
+    fun `a blocked install names what blocked it, in one place`() {
+        val installer = sources.single { it.name == "AndroidInstaller.kt" }
+        val text = code(installer)
+
+        // The positive control. Every count below is satisfied by a file that stopped handling
+        // install statuses altogether, and so is a file that was renamed out from under this test.
+        assertTrue(
+            "AndroidInstaller.kt no longer reads an install status, so this test is scanning a " +
+                "file that has stopped carrying the thing it is about",
+            text.contains("PackageInstaller.EXTRA_STATUS"),
+        )
+
+        assertEquals(
+            "the blocking package is read in ${text.split("PackageInstaller.EXTRA_OTHER_PACKAGE_NAME").size - 1} " +
+                "of the two status paths; the one that does not read it reports a bare number for " +
+                "a cause the platform named",
+            2,
+            text.split("PackageInstaller.EXTRA_OTHER_PACKAGE_NAME").size - 1,
+        )
+        assertEquals(
+            "the two status paths do not both go through installFailureReason; two mappings drift, " +
+                "and the one that drifts is the one nobody is watching",
+            2,
+            text.split("installFailureReason(").size - 1,
+        )
+        assertFalse(
+            "a status is still being formatted into text by hand; that is the mapping this test " +
+                "exists to keep in one place",
+            text.contains("status=\$"),
         )
     }
 
