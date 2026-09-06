@@ -253,9 +253,18 @@ object EnforcementEngine {
             else -> REASON_NONE
         }
 
+        val allowed = sortedSetOfPackages(input.settings.allowedPackages)
+
         val blocked = sortedSetOfPackages(input.settings.blockedPackages)
         if (input.settings.youtubeBlocked) blocked.addAll(YOUTUBE_PACKAGES)
-        val allowed = sortedSetOfPackages(input.settings.allowedPackages)
+        // The family list is a default for every child, and a child-level ALLOW is the exemption
+        // from it (FR-18). The carve-out is one-directional on purpose: an ALLOW does not lift a
+        // BLOCK from this child's own rules, because a household default must never overrule a
+        // decision somebody made about this child. Mirrors the Go engine line for line; the shared
+        // vectors are what keep the two honest.
+        for (pkg in sortedSetOfPackages(input.settings.familyBlockedPackages)) {
+            if (pkg !in allowed) blocked.add(pkg)
+        }
 
         val suspended = sortedSetOf<String>()
         val hidden = sortedSetOf<String>()
@@ -446,6 +455,16 @@ data class Settings(
     @SerialName("version") val version: Long = 0,
     @SerialName("blocked_packages") val blockedPackages: List<String> = emptyList(),
     @SerialName("allowed_packages") val allowedPackages: List<String> = emptyList(),
+    /**
+     * The blocklist that applies to every child in the family (FR-18) — vendor preinstalls a parent
+     * decided nobody should have.
+     *
+     * Defaulted to empty so that a phone running this build against a server that predates FR-18
+     * computes what that server would compute, rather than failing to parse a policy it is holding
+     * because it is offline. That is the direction of compatibility that matters here: the phone is
+     * the side that cannot be rolled back in a hurry.
+     */
+    @SerialName("family_blocked_packages") val familyBlockedPackages: List<String> = emptyList(),
     @SerialName("blocked_domains") val blockedDomains: List<String> = emptyList(),
     /**
      * The applications a parent has declared this child's phone should have (FR-16).

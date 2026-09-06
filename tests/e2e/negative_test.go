@@ -537,9 +537,11 @@ func TestEnrollmentCredentialsAreSingleUse(t *testing.T) {
 	}
 
 	// Minting again invalidates the previous credential at the moment the parent looks at the new QR,
-	// not when the old one expires.
-	_, second := h.provision(parent.Token, device.ID)
-	_, third := h.provision(parent.Token, device.ID)
+	// not when the old one expires. `reprovision` and not `provision`: this device is enrolled now,
+	// and FR-1.7 makes the server refuse a code for an enrolled phone unless the caller says it
+	// means to replace it. Which is exactly what these two calls are doing.
+	_, second := h.reprovision(parent.Token, device.ID)
+	_, third := h.reprovision(parent.Token, device.ID)
 	if second == third {
 		t.Fatal("two provisioning calls produced the same enrollment token; it is not being re-minted")
 	}

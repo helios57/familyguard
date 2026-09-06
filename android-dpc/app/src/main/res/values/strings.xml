@@ -14,6 +14,9 @@
     -->
     <string name="connection_channel">Connection</string>
     <string name="connection_running">Connected to the family settings</string>
+    <string name="setup_channel">Setup needed</string>
+    <string name="usage_access_title">Screen time is not being measured</string>
+    <string name="usage_access_text">FamilyGuard needs Usage access to see how long apps are used. Without it, screen time reads as zero and daily limits never apply. Tap to open the setting, then turn FamilyGuard on.</string>
 
     <!--
       The recovery screen (FR-12). Every one of these is read by somebody who is already annoyed:
@@ -81,4 +84,17 @@
         <item quantity="one">%d second</item>
         <item quantity="other">%d seconds</item>
     </plurals>
+
+    <!-- FR-1.8. The phone is still the device owner and still holds its recovery material; what it
+         has lost is the server's acceptance of its credential. Worded so a parent knows the phone
+         is not broken and knows the fix is on their side, in the console. -->
+    <string name="unlinked_title">This phone is no longer linked</string>
+    <string name="unlinked_text">Family Guard cannot report to the family console any more, because the setup code it uses was replaced. Open the console, choose this phone, tap Replace phone, and enter the setup code here. Nothing on the phone needs to be reset.</string>
+    <string name="relink_heading">Link this phone again</string>
+    <string name="relink_hint">Setup code from the console</string>
+    <string name="relink_submit">Link this phone</string>
+    <string name="relink_working">Linking…</string>
+    <string name="relink_done">Linked. The phone is reporting to the console again.</string>
+    <string name="relink_refused">That setup code was not accepted. Codes can only be used once and expire after 30 minutes — issue a new one in the console.</string>
+    <string name="relink_deferred">The server could not be reached. Check the phone is online and try again.</string>
 </resources>

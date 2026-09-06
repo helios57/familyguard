@@ -113,6 +113,10 @@ func TestVectorsCoverTheEnforcementRequirements(t *testing.T) {
 		"FR-7.4",  // the inverse lifts all of it
 		"FR-8",    // tracking-only
 		"FR-16.3", // the declared set of managed apps reaches the device
+		"FR-18.1", // the family blocklist reaches every child
+		"FR-18.2", // it covers a package that is not installed yet
+		"FR-18.3", // a child ALLOW is the exemption; a child BLOCK is not overruled
+		"FR-18.4", // the critical whitelist outranks it
 		"NFR-6",   // unbrickable
 	}
 	covered := map[string]bool{}

@@ -41,6 +41,14 @@ func (s *Store) CreateDevice(ctx context.Context, childID uuid.UUID, name string
 // ResetEnrollment issues a fresh enrollment token for a device that has not enrolled, or that is
 // being re-provisioned. It also clears the device token, so the old credential stops working the
 // moment a new QR is generated.
+//
+// On an ENROLLED device that is a revocation the phone cannot recover from — the DPC never
+// re-enrolls while it holds a credential, so the way back is a factory reset. The caller must have
+// said it means to; the guard is in httpapi.mintProvisioning, one layer up, because that is where
+// the request that carries the acknowledgement is. Keeping this statement unconditional is
+// deliberate: a store method that quietly declined half its work would leave the enrollment token
+// minted and the device still holding a credential, which is the state where a QR exists that
+// nothing will ever consume.
 func (s *Store) ResetEnrollment(ctx context.Context, deviceID uuid.UUID, tokenHash []byte, expiresAt time.Time) error {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE devices
@@ -140,7 +148,7 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 		        d.enrolled_at, d.created_at,
 		        COALESCE(s.battery_level, NULL), COALESCE(s.charging, NULL), COALESCE(s.screen_on, NULL),
 		        COALESCE(s.connectivity, ''), COALESCE(s.policy_version, 0), s.last_seen_at,
-		        COALESCE(s.app_version_name, ''), COALESCE(s.app_version_code, 0)
+		        COALESCE(s.app_version_name, ''), COALESCE(s.app_version_code, 0), s.usage_access
 		   FROM devices d
 		   LEFT JOIN device_state s ON s.device_id = d.id
 		  WHERE ($1::uuid IS NULL OR d.child_id = $1)
@@ -158,7 +166,7 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 			&d.CriticalPackages, &d.EnrolledAt, &d.CreatedAt,
 			&d.State.BatteryLevel, &d.State.Charging, &d.State.ScreenOn,
 			&d.State.Connectivity, &d.State.PolicyVersion, &d.State.LastSeenAt,
-			&d.State.AppVersionName, &d.State.AppVersionCode); err != nil {
+			&d.State.AppVersionName, &d.State.AppVersionCode, &d.State.UsageAccess); err != nil {
 			return nil, err
 		}
 		d.State.DeviceID = d.ID
@@ -212,8 +220,8 @@ func (s *Store) RecoveryCode(ctx context.Context, deviceID uuid.UUID) (string, e
 func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceState) error {
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO device_state (device_id, battery_level, charging, screen_on, connectivity, policy_version,
-		                           app_version_name, app_version_code, last_seen_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+		                           app_version_name, app_version_code, usage_access, last_seen_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
 		 ON CONFLICT (device_id) DO UPDATE SET
 		     battery_level  = COALESCE(EXCLUDED.battery_level, device_state.battery_level),
 		     charging       = COALESCE(EXCLUDED.charging, device_state.charging),
@@ -227,10 +235,14 @@ func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceSt
 		     app_version_name = COALESCE(NULLIF(EXCLUDED.app_version_name, ''), device_state.app_version_name),
 		     app_version_code = CASE WHEN EXCLUDED.app_version_code > 0
 		                             THEN EXCLUDED.app_version_code ELSE device_state.app_version_code END,
+		     -- COALESCE and not a plain assignment: an older DPC omits the field, and overwriting
+		     -- a measured true with "did not say" would clear the one signal that tells a parent
+		     -- their screen-time numbers mean nothing.
+		     usage_access   = COALESCE(EXCLUDED.usage_access, device_state.usage_access),
 		     last_seen_at   = NOW(),
 		     updated_at     = NOW()`,
 		deviceID, st.BatteryLevel, st.Charging, st.ScreenOn, st.Connectivity, st.PolicyVersion,
-		st.AppVersionName, st.AppVersionCode)
+		st.AppVersionName, st.AppVersionCode, st.UsageAccess)
 	return err
 }
 
@@ -252,10 +264,11 @@ func (s *Store) GetDeviceState(ctx context.Context, deviceID uuid.UUID, offlineA
 	var st DeviceState
 	err := s.pool.QueryRow(ctx,
 		`SELECT device_id, battery_level, charging, screen_on, connectivity, policy_version, last_seen_at,
-		        app_version_name, app_version_code
+		        app_version_name, app_version_code, usage_access
 		   FROM device_state WHERE device_id = $1`, deviceID).
 		Scan(&st.DeviceID, &st.BatteryLevel, &st.Charging, &st.ScreenOn, &st.Connectivity,
-			&st.PolicyVersion, &st.LastSeenAt, &st.AppVersionName, &st.AppVersionCode)
+			&st.PolicyVersion, &st.LastSeenAt, &st.AppVersionName, &st.AppVersionCode,
+			&st.UsageAccess)
 	if err != nil {
 		return nil, mapErr(err)
 	}

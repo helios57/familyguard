@@ -10,7 +10,24 @@ data class InstalledApp(
     val packageName: String,
     val label: String,
     val systemApp: Boolean,
+    /** Hidden by this DPC — the app is on the phone and the child cannot see or launch it. */
+    val hidden: Boolean = false,
+    /** Suspended by this DPC — visible, greyed out, and it will not start. */
+    val suspended: Boolean = false,
 )
+
+/**
+ * What this device currently restrains, so the inventory can say so per app (FR-18.6).
+ *
+ * Separate from the inventory read because it needs device ownership and the inventory does not: a
+ * phone that is not the owner still reports its apps, and reports every one of them as unrestrained,
+ * which is the truth.
+ */
+interface AppRestraint {
+    fun hidden(): Set<String>
+
+    fun suspended(): Set<String>
+}
 
 /**
  * The installed-app inventory (FR-5.1).
@@ -41,13 +58,40 @@ interface InstalledAppReader {
 class PlatformInstalledAppReader(
     private val context: Context,
     private val ownPackage: String = context.packageName,
+    /**
+     * Null when this app is not the device owner. Two jobs: it says which apps are restrained, and
+     * it is the only way a *hidden* app stays in the inventory at all — hiding clears the
+     * installed-for-this-user flag, so the plain read drops it. Without this the console would stop
+     * listing the very apps the family blocked and show them as "not installed here", which is the
+     * one answer a parent asking "is the bloatware gone?" must never be given.
+     */
+    private val restraint: AppRestraint? = null,
 ) : InstalledAppReader {
 
     private var lastReason: String = ""
 
     override fun installed(): List<InstalledApp>? {
         val pm = context.packageManager
-        val infos = runCatching { applications(pm) }.getOrElse {
+        val hidden = runCatching { restraint?.hidden() }.getOrElse {
+            lastReason = "the hidden-app read failed, so the inventory would under-report: ${it.message}"
+            return null
+        }.orEmpty()
+        val suspended = runCatching { restraint?.suspended() }.getOrElse {
+            lastReason = "the suspended-app read failed, so the inventory would under-report: ${it.message}"
+            return null
+        }.orEmpty()
+        val infos = runCatching {
+            val present = applications(pm, 0)
+            if (hidden.isEmpty()) present else {
+                // Only when something is hidden, so a phone with nothing blocked pays nothing. The
+                // wide read is filtered by what DPM says is hidden rather than taken whole: it also
+                // returns packages that are genuinely gone with only their data retained, and the
+                // console would list them as apps the child has.
+                val names = present.mapTo(mutableSetOf()) { it.packageName }
+                present + applications(pm, PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong())
+                    .filter { it.packageName !in names && it.packageName in hidden }
+            }
+        }.getOrElse {
             lastReason = "the package manager refused the inventory read: ${it.message}"
             return null
         }
@@ -62,6 +106,8 @@ class PlatformInstalledAppReader(
                     .getOrDefault(it.packageName),
                 systemApp = it.flags and
                     (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0,
+                hidden = it.packageName in hidden,
+                suspended = it.packageName in suspended,
             )
         }.sortedBy { it.packageName }
 
@@ -81,11 +127,11 @@ class PlatformInstalledAppReader(
      * The same call twice: the flags overload is deprecated from API 33 and its replacement does not
      * exist below it, so nothing compiles warning-free across minSdk 29 to current in one expression.
      */
-    private fun applications(pm: PackageManager): List<ApplicationInfo> =
+    private fun applications(pm: PackageManager, flags: Long): List<ApplicationInfo> =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
+            pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(flags))
         } else {
             @Suppress("DEPRECATION")
-            pm.getInstalledApplications(0)
+            pm.getInstalledApplications(flags.toInt())
         }
 }

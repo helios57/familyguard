@@ -338,6 +338,16 @@ var collectionsCoveredElsewhere = map[string]string{
 		"other array in that tree",
 	"DeviceIDsForChild": "never serialised. It fans a policy change out to a child's devices " +
 		"inside the server and its result is a list of ids, not a response body",
+	"ListFamilyBlockedPackages": "legitimately non-empty on a fresh system, and driven by " +
+		"blocklist_test.go instead. The rows are not seeded — migration 0005 plants nothing and " +
+		"assertMigrationsSeedNothing above proves it — they are composed at read time from " +
+		"store.DefaultBlockedPackages, a curated package list that ships in the binary exactly as " +
+		"policy.DefaultCriticalPackages and policy.YouTubePackages do. NFR-5 is about invented " +
+		"families, children and devices; a policy default that a parent can see, edit and " +
+		"permanently delete is none of those",
+	"FamilyBlockedPackageNames": "the same list in the shape the engine consumes; it arrives " +
+		"inside the policy response as input.settings.family_blocked_packages, which section 7 " +
+		"scans for nulls along with every other array in that tree",
 	"ManagedAppsForChild": "not its own endpoint; it arrives inside the policy response as " +
 		"desired.managed_apps and input.settings.managed_apps, which section 7 scans for nulls " +
 		"along with every other array in that tree. The console reads the DECLARATION instead, " +

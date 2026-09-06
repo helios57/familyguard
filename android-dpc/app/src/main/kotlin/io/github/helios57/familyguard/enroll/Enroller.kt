@@ -76,6 +76,51 @@ class Enroller(
         if (token.isEmpty()) {
             return EnrollResult.Misprovisioned("the provisioning extras carry no $EXTRA_ENROLLMENT_TOKEN")
         }
+        return exchange(serverUrl, token, facts)
+    }
+
+    /**
+     * Exchanges a fresh setup code for a new credential on a phone that is ALREADY enrolled and
+     * whose credential the server no longer recognises (FR-1.8).
+     *
+     * This is the deliberate exception to the idempotence guard in [enroll], and it exists because
+     * without it there is no way back at all. Issuing a new setup code from the console revokes the
+     * device server-side — `device_token_hash` and `enrolled_at` are nulled — and the phone cannot
+     * notice, because [enroll] answers `AlreadyEnrolled` for as long as anything is stored. The
+     * phone then holds a credential nothing will accept, forever, and the only remedy was a factory
+     * reset: on a phone that had been in a child's hands for weeks, over one tap of a button that
+     * used to be labelled "Setup QR". That happened, on the first real phone this project enrolled.
+     *
+     * Three properties make this safe to expose on the one screen a person can start:
+     *
+     *  - **The server URL comes from the STORED credential, never from what was typed.** A setup
+     *    code is a bearer token and nothing else; it cannot move this phone to a different control
+     *    plane, so the worst a typed string can do is fail.
+     *  - **It needs a code the server minted.** Re-linking is not something the device can decide
+     *    to do — a parent has to issue a setup code in the console, which is the same authority
+     *    that revoked it. A lost phone that a parent deliberately cut off stays cut off.
+     *  - **It replaces the credential as one unit**, including the recovery material, because the
+     *    server generates new material on every enrollment. The old recovery code stops working the
+     *    moment this succeeds, and the console shows the new one.
+     *
+     * @param setupCode the enrollment token, as the console shows it.
+     */
+    fun relink(setupCode: String, facts: DeviceFacts = DeviceFacts()): EnrollResult {
+        val current = store.load()
+            ?: return EnrollResult.Misprovisioned(
+                "this device has no credential to re-link: it has never enrolled"
+            )
+        val token = setupCode.trim()
+        if (token.isEmpty()) return EnrollResult.Misprovisioned("no setup code was entered")
+        return exchange(current.serverUrl, token, facts)
+    }
+
+    /**
+     * The half [enroll] and [relink] share: validate the URL, spend the token, store what comes
+     * back. Everything above it is about *whether* to do this; nothing below it knows which caller
+     * asked.
+     */
+    private fun exchange(serverUrl: String, token: String, facts: DeviceFacts): EnrollResult {
         // The reason is a message a parent may end up reading off the phone, and it must never carry
         // the enrollment token: it is a bearer credential until it is spent.
         urlProblem(serverUrl)?.let { return EnrollResult.Misprovisioned(it) }

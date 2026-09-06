@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -158,6 +159,11 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p := v1.Group("", s.requireParent())
 	p.GET("/me", s.me)
 	p.GET("/family", s.getFamily)
+	// FR-18. Readable by any parent; changed only by an admin, because one entry moves every phone
+	// in the family at once.
+	p.GET("/family/blocked-packages", s.listFamilyBlocklist)
+	p.PUT("/family/blocked-packages", s.requireRole(store.RolePrimaryAdmin, store.RoleAdmin), s.putFamilyBlocklist)
+	p.DELETE("/family/blocked-packages", s.requireRole(store.RolePrimaryAdmin, store.RoleAdmin), s.deleteFamilyBlocklist)
 	p.GET("/parents", s.listParents)
 	// requireInteractiveParent, here and on /api-keys below: these are the routes that hand out or
 	// take away a credential, and an API key that can mint one outlives its own revocation.
@@ -353,19 +359,41 @@ func (s *Server) fail(c *gin.Context, err error) {
 // error, so without this branch the caller is told their JSON is malformed when it was perfectly
 // well-formed and merely too large — and the one action that would fix it, sending less, is the one
 // the message does not suggest.
+// bindOptionalJSON is bindJSON for an endpoint whose body is optional. An absent body leaves dst
+// at its zero value; a body that is present and malformed is still refused, because silently
+// ignoring it would make a misspelled field read as "not asked for" — and on the one endpoint that
+// needs this, "not asked for" is the safe answer that hides the caller's mistake.
+func bindOptionalJSON(c *gin.Context, dst any) bool {
+	if c.Request.Body == nil || c.Request.ContentLength == 0 {
+		return true
+	}
+	dec := jsonDecoder(c.Request.Body)
+	if err := dec.Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
+		return bindFailed(c, err)
+	}
+	return true
+}
+
 func bindJSON(c *gin.Context, dst any) bool {
 	dec := jsonDecoder(c.Request.Body)
 	if err := dec.Decode(dst); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			failWith(c, http.StatusRequestEntityTooLarge, "body_too_large",
-				"request body exceeds the maximum accepted size")
-			return false
-		}
-		failWith(c, http.StatusBadRequest, "invalid_body", "request body is not valid JSON: "+err.Error())
-		return false
+		return bindFailed(c, err)
 	}
 	return true
+}
+
+func bindFailed(c *gin.Context, err error) bool {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		failWith(c, http.StatusRequestEntityTooLarge, "body_too_large",
+			"request body exceeds the maximum accepted size")
+		return false
+	}
+	failWith(c, http.StatusBadRequest, "invalid_body", "request body is not valid JSON: "+err.Error())
+	return false
 }
 
 // uuidParam reads a uuid path parameter, answering 400 rather than looking it up and answering 404:

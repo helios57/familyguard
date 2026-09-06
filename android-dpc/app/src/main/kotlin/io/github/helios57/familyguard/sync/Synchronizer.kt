@@ -260,6 +260,7 @@ class Synchronizer(
                 policyVersion = cache.appliedVersion(),
                 appVersionName = t.appVersionName,
                 appVersionCode = t.appVersionCode,
+                usageAccess = t.usageAccess,
             )
         ).pendingCommands
     }
@@ -295,4 +296,13 @@ data class DeviceTelemetry(
      */
     val appVersionName: String = "",
     val appVersionCode: Long = 0,
+    /**
+     * Whether this phone may read usage stats (FR-3.6). Null when it has not been asked.
+     *
+     * Reported because the failure it describes is invisible from every other signal: without the
+     * appop every query returns nothing, every package reads zero minutes, no quota is ever
+     * reached, and the console shows a child who spent the day off their phone. Zero measured
+     * minutes and zero measurable minutes look identical until the phone says which one it is.
+     */
+    val usageAccess: Boolean? = null,
 )

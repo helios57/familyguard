@@ -1,0 +1,11 @@
+-- FR-3.6: whether the phone can actually measure screen time.
+--
+-- PACKAGE_USAGE_STATS is an appop. No device-owner API grants it, so it is turned on by hand in
+-- Settings, and until it is, every usage query on the phone returns nothing: zero minutes for every
+-- app, no daily limit ever reached, and a console showing a child who was off their phone all day.
+-- Zero measured and zero measurable are indistinguishable from here, which makes this the most
+-- expensive silent failure in the product.
+--
+-- NULLABLE, and NULL means the phone has not said — an older DPC does not send the field, and
+-- recording that as "no access" would put a warning on every working device the day this ships.
+ALTER TABLE device_state ADD COLUMN usage_access BOOLEAN;

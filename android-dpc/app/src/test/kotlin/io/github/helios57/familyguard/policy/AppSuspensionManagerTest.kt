@@ -74,7 +74,9 @@ class AppSuspensionPlannerTest {
     fun `plans only what is installed and not already in the wanted state`() {
         val plan = AppSuspensionPlanner.plan(
             desiredSuspended = listOf("com.game", "com.chat", "com.never.installed"),
-            desiredHidden = listOf("com.game"),
+            // A package the caller wants hidden is deliberately a different one here; the two lists
+            // overlapping has its own rule and its own test below.
+            desiredHidden = listOf("com.chat"),
             installed = setOf("com.game", "com.chat", OWN),
             currentlySuspended = setOf("com.chat"),
             currentlyHidden = emptySet(),
@@ -83,7 +85,7 @@ class AppSuspensionPlannerTest {
 
         assertEquals(listOf("com.game"), plan.suspend)
         assertEquals(emptyList<String>(), plan.release)
-        assertEquals(listOf("com.game"), plan.hide)
+        assertEquals(listOf("com.chat"), plan.hide)
         assertEquals(listOf("com.never.installed"), plan.absent)
     }
 
@@ -198,6 +200,81 @@ class AppSuspensionPlannerTest {
         assertEquals(listOf("com.game"), plan.suspend)
         assertEquals(emptyList<String>(), plan.absent)
     }
+
+    @Test
+    fun `a package that is hidden is not also suspended`() {
+        val plan = AppSuspensionPlanner.plan(
+            // What every blocked app looks like: the engine puts it on both lists (FR-5.2).
+            desiredSuspended = listOf("com.facebook.katana"),
+            desiredHidden = listOf("com.facebook.katana"),
+            installed = setOf("com.facebook.katana", OWN),
+            currentlySuspended = emptySet(),
+            currentlyHidden = emptySet(),
+            protectedPackages = PROTECTED,
+        )
+
+        // Hiding clears the installed-for-this-user flag, after which the platform answers
+        // `isPackageSuspended` for the package with NameNotFoundException — read as "not
+        // suspended". Ask for both and the next sync re-requests the suspension, has it refused,
+        // and records a failure; and so does the one after that, forever, for every app the family
+        // blocks. A hidden app cannot be launched, so there is nothing for suspension to add.
+        assertEquals(emptyList<String>(), plan.suspend)
+        assertEquals(listOf("com.facebook.katana"), plan.hide)
+        assertEquals(emptyList<String>(), plan.absent)
+    }
+
+    @Test
+    fun `a hidden package the parent unblocked comes back`() {
+        val plan = AppSuspensionPlanner.plan(
+            desiredSuspended = emptyList(),
+            desiredHidden = emptyList(),
+            installed = setOf("com.facebook.katana", OWN),
+            currentlySuspended = emptySet(),
+            currentlyHidden = setOf("com.facebook.katana"),
+            protectedPackages = PROTECTED,
+        )
+
+        // The reversibility the family blocklist advertises, at the layer that decides it. The
+        // other half is [InstalledPackagesTest]: this plan is only reachable if the gateway can
+        // still see a package it has hidden.
+        assertEquals(listOf("com.facebook.katana"), plan.reveal)
+    }
+}
+
+class InstalledPackagesTest {
+
+    @Test
+    fun `a package the platform hid is still actionable`() {
+        val union = InstalledPackages.union(
+            present = listOf("com.chat", OWN),
+            known = listOf("com.chat", OWN, "com.facebook.katana", "com.long.gone"),
+            isHidden = { it == "com.facebook.katana" },
+        )
+
+        // Without the hidden package here, nothing downstream can ever reveal it: `hidden()`
+        // enumerates this set, so the package is in neither the current-hidden set nor the wanted
+        // one, and deleting the rule that hid it does nothing at all.
+        assertEquals(setOf("com.chat", OWN, "com.facebook.katana"), union)
+        // And the wide read is a candidate list, not an answer: a package the platform merely
+        // remembers is not something this DPC can act on, and asking it to would be a refusal
+        // reported as a failure on every sync.
+        assertFalse("com.long.gone" in union)
+    }
+
+    @Test
+    fun `the platform is asked only about what the narrow read did not return`() {
+        val asked = mutableListOf<String>()
+
+        InstalledPackages.union(
+            present = listOf("com.chat", OWN),
+            known = listOf("com.chat", OWN, "com.facebook.katana"),
+            isHidden = { asked += it; true },
+        )
+
+        // One binder call per package, on a phone that reported 504 of them. The answer cannot
+        // change the result for a package the narrow read already returned.
+        assertEquals(listOf("com.facebook.katana"), asked)
+    }
 }
 
 class AppSuspensionManagerTest {
@@ -212,9 +289,11 @@ class AppSuspensionManagerTest {
         val outcome = manager(gateway).apply(listOf("com.game", "com.chat"), listOf("com.game"))
 
         assertTrue(outcome.toString(), outcome.ok)
-        assertEquals(listOf("com.chat", "com.game"), outcome.suspended)
+        // `com.game` is on both lists, so it is hidden and not also suspended — hiding is the
+        // stronger of the two and the platform stops reporting suspension once it lands.
+        assertEquals(listOf("com.chat"), outcome.suspended)
         assertEquals(listOf("com.game"), outcome.hidden)
-        assertEquals(setOf("com.game", "com.chat"), gateway.suspended())
+        assertEquals(setOf("com.chat"), gateway.suspended())
         assertEquals(setOf("com.game"), gateway.hidden())
     }
 
@@ -287,17 +366,37 @@ class AppSuspensionManagerTest {
     }
 
     @Test
-    fun `one package failing both ways reports the suspension, which is the specific half`() {
+    fun `a package on both lists reports the hiding, because that is what was asked for`() {
         val gateway = FakeAppGateway(
             installed = setOf("com.game", OWN),
+            // Inert: nothing asks this platform to suspend the package at all.
             ignoreSuspend = setOf("com.game"),
             ignoreHide = setOf("com.game"),
         )
 
         val outcome = manager(gateway).apply(listOf("com.game"), listOf("com.game"))
 
+        assertFalse(outcome.ok)
+        // One line per package, and it names the call that was actually made. Reporting a missing
+        // *suspension* here would charge a failure to a call this code deliberately never makes,
+        // on every sync, for every app the family blocks.
         assertEquals(1, outcome.missing.size)
-        assertEquals("suspension requested, accepted, and not in effect", outcome.missing["com.game"])
+        assertEquals("hiding requested, accepted, and not in effect", outcome.missing["com.game"])
+        assertTrue(gateway.suspendCalls.isEmpty())
+    }
+
+    @Test
+    fun `unblocking a hidden app brings it back`() {
+        val gateway = FakeAppGateway(
+            installed = setOf("com.facebook.katana", OWN),
+            hidden = setOf("com.facebook.katana"),
+        )
+
+        val outcome = manager(gateway).apply(emptyList(), emptyList())
+
+        assertTrue(outcome.toString(), outcome.ok)
+        assertEquals(listOf("com.facebook.katana"), outcome.revealed)
+        assertEquals(emptySet<String>(), gateway.hidden())
     }
 
     @Test

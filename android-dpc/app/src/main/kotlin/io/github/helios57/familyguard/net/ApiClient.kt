@@ -93,6 +93,8 @@ data class HeartbeatRequest(
      */
     @SerialName("app_version_name") val appVersionName: String = "",
     @SerialName("app_version_code") val appVersionCode: Long = 0,
+    /** Null when unknown; false is a measured "this phone cannot see screen time" (FR-3.6). */
+    @SerialName("usage_access") val usageAccess: Boolean? = null,
 )
 
 @Serializable
@@ -120,6 +122,8 @@ data class InventoryApp(
     @SerialName("package_name") val packageName: String,
     @SerialName("label") val label: String = "",
     @SerialName("system_app") val systemApp: Boolean = false,
+    @SerialName("hidden") val hidden: Boolean = false,
+    @SerialName("suspended") val suspended: Boolean = false,
 )
 
 @Serializable

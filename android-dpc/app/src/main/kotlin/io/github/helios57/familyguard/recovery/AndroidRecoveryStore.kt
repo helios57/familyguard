@@ -7,7 +7,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
 /**
- * The three pieces of recovery state that must survive a reboot, in one encrypted file.
+ * The four pieces of recovery state that must survive a reboot, in one encrypted file.
  *
  * One file rather than three, because they are one concern and clearing part of it is never right:
  * a lockout without its journal is a device that punished someone and cannot say so, and a journal
@@ -23,7 +23,7 @@ import kotlinx.serialization.json.Json
  * was killed is a lockout a power button defeats, and the process being killed is the expected
  * behaviour of the thing being defended against.
  *
- * Three properties rather than one class implementing all three interfaces: `LockoutStore.load()`
+ * Four properties rather than one class implementing all four interfaces: `LockoutStore.load()`
  * and `RecoveryJournalStore.load()` differ only in return type, which is a conflicting overload in
  * Kotlin. Splitting them also keeps each caller holding exactly the interface it uses.
  */
@@ -63,6 +63,26 @@ class AndroidRecoveryStore(context: Context) {
         }
     }
 
+    /**
+     * In this file rather than beside the credential, and for the reason the class comment gives:
+     * the credential is the thing that gets replaced when a phone is re-linked, and the record of
+     * *why* it had to be must not be replaced along with it.
+     */
+    val link: LinkRefusedStore = object : LinkRefusedStore {
+        override fun refusedSince(): Long? =
+            preferences.getLong(KEY_REFUSED_SINCE, ABSENT).takeIf { it != ABSENT }
+
+        override fun setRefusedSince(epochMillis: Long?) {
+            val editor = preferences.edit()
+            if (epochMillis == null) {
+                editor.remove(KEY_REFUSED_SINCE)
+            } else {
+                editor.putLong(KEY_REFUSED_SINCE, epochMillis)
+            }
+            editor.commit()
+        }
+    }
+
     val journal: RecoveryJournalStore = object : RecoveryJournalStore {
         override fun load(): List<RecoveryAttempt> {
             val stored = preferences.getString(KEY_JOURNAL, null) ?: return emptyList()
@@ -80,6 +100,7 @@ class AndroidRecoveryStore(context: Context) {
         const val FILE = "family-guard-recovery"
         const val KEY_LOCKOUT = "lockout"
         const val KEY_ACTIVE_SINCE = "active_since"
+        const val KEY_REFUSED_SINCE = "link_refused_since"
         const val KEY_JOURNAL = "journal"
 
         /** `getLong` needs a default and 0 is a legal instant. Nothing is ever stored at Long.MIN. */

@@ -255,11 +255,20 @@ func (b *browser) switchTab(t *testing.T, tab, ready string) {
     const r = e.getBoundingClientRect();
     return cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0 && r.height > 0;
   };
+  // Already here. Clicking the tab you are on changes no hash, fires no hashchange and re-renders
+  // nothing, so the marker below would never clear and this helper would time out after 20 s
+  // saying the view was never rendered afresh — a sentence about a broken page describing a no-op
+  // click. Two consecutive subtests on one tab is an ordinary thing to write, so the helper
+  // handles it rather than every caller having to know which tab the one before it left on.
+  // The menu is deliberately left shut on this path: opening the drawer is only a way to REACH the
+  // link, and on this path there is no link to click — the drawer would stay open over whatever
+  // the caller measures next.
+  if (location.hash === '#/%s') { refresh(); return; }
   if (shown(menu)) menu.click();
   const link = document.querySelector('.tab[data-tab=%q]');
   if (!shown(link)) throw new Error('the %q link is not visible even after opening the menu');
   link.click();
-})()`, tab, tab), nil)
+})()`, tab, tab, tab), nil)
 	b.waitFor(fmt.Sprintf(
 		"location.hash === '#/%s' && document.getElementById('stale-view-marker') === null && "+
 			"document.querySelector(%q) !== null", tab, ready),
@@ -682,18 +691,13 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 	// second phone at lives. It is measured separately because it is not in the DOM until it opens.
 	t.Run("provisioning sheet", func(t *testing.T) {
 		defer b.focus(t)()
-		// Waited for by the button this subtest is about to click, not by "a card exists".
+		// Waited for by the button this subtest is about to click, not by "a card exists". Scoped
+		// to the phone that has never enrolled: on the enrolled one the same button revokes the
+		// device, and that path is measured in "replace phone" below.
 		b.switchTab(t, "home", "#view .card")
-		b.waitFor(`[...document.querySelectorAll('#view button')]`+
-			`.some((x) => /set up|qr|provision/i.test(x.textContent))`,
-			20*time.Second, "the set-up button on the home view")
-		b.eval(`(() => {
-  const buttons = [...document.querySelectorAll('#view button')];
-  const setup = buttons.find((x) => /set up|qr|provision/i.test(x.textContent));
-  if (!setup) throw new Error('no set-up button on the home view: ' +
-    buttons.map((x) => x.textContent.trim()).join(' | '));
-  setup.click();
-})()`, nil)
+		b.waitFor(deviceCardButton("The spare phone", `/set up|qr|provision/i`)+" !== null",
+			20*time.Second, "the set-up button on the spare phone's card")
+		b.eval(deviceCardButton("The spare phone", `/set up|qr|provision/i`)+".click()", nil)
 		b.waitFor("document.getElementById('sheet').open", 20*time.Second, "the provisioning sheet")
 		b.waitFor("document.querySelector('#sheet-body svg') !== null", 20*time.Second, "the QR to render")
 
@@ -721,11 +725,151 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 		b.eval("document.getElementById('sheet-close').click()", nil)
 	})
 
+	// FR-1.7, rendered. The single most expensive button in this console: on an enrolled phone it
+	// does not "show the code again", it REVOKES the device — the phone stops reporting at once and
+	// only comes back if somebody picks it up and types the new code into it (FR-1.8), which a
+	// phone on an older build cannot do at all. That is how the first real phone in this family was
+	// disconnected, by a parent tapping a button labelled "Setup QR" expecting to re-read a code.
+	//
+	// Three things are measured here and each one failed in a different way before: the button says
+	// what it does, the confirmation is drawn where a thumb is (a window.confirm is at the top of
+	// the screen, cannot mark the destructive answer, and blocks the page so hard that headless
+	// Chrome cannot see past it), and backing out leaves the phone enrolled.
+	t.Run("replace phone", func(t *testing.T) {
+		defer b.focus(t)()
+		b.switchTab(t, "home", "#view .card")
+
+		var label string
+		b.eval(deviceCardButton(enrolledPhoneName, `/replace|set up|qr|provision/i`)+".textContent.trim()", &label)
+		if !strings.Contains(strings.ToLower(label), "replace") {
+			t.Errorf("the enrolled phone's provisioning button reads %q; it revokes the device, and "+
+				"a label that reads like \"show me that code again\" is what disconnected the first "+
+				"real phone", label)
+		}
+
+		b.eval(deviceCardButton(enrolledPhoneName, `/replace|set up|qr|provision/i`)+".click()", nil)
+		b.waitFor("document.getElementById('sheet').open", 20*time.Second, "the confirmation sheet")
+		// No QR: this is the confirmation, and a sheet that went straight to the code would mean
+		// the device had already been revoked by the time the parent read anything.
+		var sheet struct {
+			Title   string   `json:"title"`
+			Body    string   `json:"body"`
+			Buttons []string `json:"buttons"`
+			HasQR   bool     `json:"hasQR"`
+		}
+		b.eval(`(() => {
+  const body = document.getElementById('sheet-body');
+  return {
+    title: document.getElementById('sheet-title').textContent.trim(),
+    body: body.textContent,
+    buttons: [...body.querySelectorAll('button')].map((x) => x.textContent.trim()),
+    hasQR: body.querySelector('svg') !== null,
+  };
+})()`, &sheet)
+		if sheet.HasQR {
+			t.Error("tapping Replace phone went straight to a QR code: the device is revoked before " +
+				"the parent has been asked anything")
+		}
+		// The consequence in the parent's own terms, and both halves of it. "Revokes" is what
+		// happens to the phone; the re-link sentence is what it costs to undo — somebody has to
+		// physically pick the phone up. A sheet that mentioned only the second would read as
+		// reassurance for an action that is still destructive.
+		for _, phrase := range []string{"revokes", "re-link", "older build"} {
+			if !strings.Contains(strings.ToLower(sheet.Body), phrase) {
+				t.Errorf("the confirmation never says %q, so the parent is not told what this "+
+					"costs. It reads: %q", phrase, sheet.Body)
+			}
+		}
+		if len(sheet.Buttons) != 2 {
+			t.Fatalf("the confirmation offers %v; it needs exactly one way forward and one way out",
+				sheet.Buttons)
+		}
+
+		b.measure(t, "replace phone confirmation").check(t, "replace phone confirmation")
+
+		// Back out. The way most parents will leave this sheet, and the one that must not have
+		// touched the phone.
+		b.eval(`(() => {
+  const cancel = [...document.querySelectorAll('#sheet-body button')].pop();
+  cancel.click();
+})()`, nil)
+		b.waitFor("!document.getElementById('sheet').open", 20*time.Second, "the confirmation to close")
+		// Re-read the server's answer rather than the DOM that was already on screen: the question
+		// is whether the phone is still enrolled, and only a fresh fetch can tell.
+		b.eval("(async () => { await refresh(); return true; })()", nil)
+
+		var stillEnrolled bool
+		b.eval(deviceCardButton(enrolledPhoneName, `/replace/i`)+" !== null", &stillEnrolled)
+		if !stillEnrolled {
+			t.Error("cancelling the confirmation revoked the phone anyway: its card no longer offers " +
+				"Replace, so the console believes it is not enrolled")
+		}
+	})
+
 	// The catalog sheet (FR-16). It is measured separately for the same reason the provisioning one
 	// is — it is not in the DOM until it opens — and it is worth measuring because it holds the two
 	// controls in the whole console that a phone lays out worst: a native `<input type="file">`,
 	// whose button is drawn by the browser and ignores most of what the stylesheet asks for, and a
 	// list whose rows carry a package name, a build number, a size and a minimum SDK on one line.
+	// FR-18's card, on the screen it lives on. The layout is already covered by the apps-tab
+	// measurement above; what this adds is that the card is populated at all — a fetch that failed
+	// renders an empty list and a reassuring heading, which looks identical to "nothing is blocked"
+	// and is the state a parent would most want to be told about.
+	t.Run("family blocklist card", func(t *testing.T) {
+		defer b.focus(t)()
+		b.switchTab(t, "apps", "#view .list li")
+		var blocklist struct {
+			Heading string   `json:"heading"`
+			Entries []string `json:"entries"`
+			Notes   int      `json:"notes"`
+		}
+		b.eval(`(() => {
+  const card = [...document.querySelectorAll('#view .card')]
+    .find((c) => /blocked for everyone/i.test(c.querySelector('h2')?.textContent || ''));
+  if (!card) throw new Error('no family blocklist card on the apps view: ' +
+    [...document.querySelectorAll('#view .card h2')].map((h) => h.textContent.trim()).join(' | '));
+  return {
+    heading: card.querySelector('h2').textContent.trim(),
+    entries: [...card.querySelectorAll('li .label small')].map((s) => s.textContent.trim()),
+    notes: document.querySelectorAll('#view .applist li .label small').length,
+  };
+})()`, &blocklist)
+		if len(blocklist.Entries) == 0 {
+			t.Error("the family blocklist card rendered with no entries; the curated set should be there")
+		}
+		var sawFacebook bool
+		for _, e := range blocklist.Entries {
+			if strings.Contains(e, "com.facebook.katana") {
+				sawFacebook = true
+			}
+		}
+		if !sawFacebook {
+			t.Errorf("the card lists %v and none of it is the curated Facebook entry", blocklist.Entries)
+		}
+
+		// FR-18.6, rendered: the entry has to say what the PHONE reports, and the phone in this
+		// seed reports com.facebook.katana as hidden. The state line is the whole answer to "is the
+		// bloatware actually gone?", and it is the line that silently lied: the inventory request
+		// filtered system apps, so this read "Not installed on any phone here." about a package
+		// sitting on the phone in front of the parent. Asserting the true string rather than the
+		// absence of the false one — a card that renders no state line at all would pass the
+		// negative form.
+		var state string
+		b.eval(`(() => {
+  const card = [...document.querySelectorAll('#view .card')]
+    .find((c) => /blocked for everyone/i.test(c.querySelector('h2')?.textContent || ''));
+  const row = [...card.querySelectorAll('li')]
+    .find((li) => /com\.facebook\.katana/.test(li.textContent));
+  if (!row) throw new Error('no com.facebook.katana row in the blocklist card');
+  return [...row.querySelectorAll('.label small')].map((s) => s.textContent.trim()).join(' ~ ');
+})()`, &state)
+		if !strings.Contains(state, "Hidden on the phone") {
+			t.Errorf("the phone reports com.facebook.katana hidden and the blocklist card says %q; "+
+				"a parent reading this cannot tell a block that worked from one that never reached "+
+				"the phone", state)
+		}
+	})
+
 	t.Run("app catalog sheet", func(t *testing.T) {
 		defer b.focus(t)()
 		b.switchTab(t, "apps", "#view .list li")
@@ -811,6 +955,12 @@ func seedAFamilyWorthLookingAt(t *testing.T, h *harness) {
 			{"package_name": pkgChat, "label": "Chat"},
 			{"package_name": pkgYouTube, "label": "YouTube"},
 			{"package_name": pkgAOSPPhone, "label": "Phone", "system_app": true},
+			// The preinstall the blocklist exists for, in the shape a real Samsung reports it:
+			// system_app, so it cannot be uninstalled, and hidden, because the phone has applied
+			// the family entry. Both flags matter to the rendered check below — a console that
+			// asks for the inventory without include_system=1 never sees this row at all, and the
+			// blocklist card then reports the household's headline entry as not installed.
+			{"package_name": "com.facebook.katana", "label": "Facebook", "system_app": true, "hidden": true},
 			{"package_name": "com.supercell.clashofclans.and.a.very.long.package.identifier",
 				"label": "An app with a name long enough to need the ellipsis it was given"},
 		},
@@ -827,6 +977,12 @@ func seedAFamilyWorthLookingAt(t *testing.T, h *harness) {
 	h.call(http.MethodPost, "/device/location", enrolled.DeviceToken, map[string]any{
 		"latitude": 47.3769, "longitude": 8.5417,
 	}).expect(http.StatusOK)
+
+	// A second phone, added and never set up. Two reasons. The QR sheet has to be measured on a
+	// device that legitimately has a code to show — asking the enrolled one for a new code is the
+	// destructive path now, and it is measured separately below. And the home view's two device
+	// states, "waiting to be set up" and "reporting", are then both on screen at this width.
+	h.newDevice(parent.Token, child.ID, "The spare phone")
 
 	h.patchPolicy(parent.Token, child.ID, map[string]any{
 		"bedtime_enabled": true, "bedtime_start": "21:00", "bedtime_end": "07:00",
@@ -863,7 +1019,44 @@ func seedAFamilyWorthLookingAt(t *testing.T, h *harness) {
 	}
 	h.call(http.MethodGet, "/devices?child_id="+child.ID, parent.Token, nil).
 		expect(http.StatusOK).decode(&devices)
-	if len(devices.Devices) != 1 {
-		t.Fatalf("the seed left %d devices, expected 1", len(devices.Devices))
+	if len(devices.Devices) != 2 {
+		t.Fatalf("the seed left %d devices, expected 2 (one enrolled, one spare)", len(devices.Devices))
 	}
+}
+
+// enrolledPhoneName is the device seedAFamilyWorthLookingAt enrolls. Named because two subtests
+// have to tell it apart from the spare phone beside it, and a copy of the string in each is a way
+// for one of them to keep passing after the seed changes.
+const enrolledPhoneName = "Mira's phone — the blue one with the cracked screen"
+
+// deviceCardButton builds a JS expression resolving to one button inside one device's card.
+//
+// Scoped to the card on purpose. `document.querySelectorAll('#view button')` finds the first match
+// anywhere on the view, so with two phones on screen a test asking for "the set-up button" gets
+// whichever card was drawn first — which is how the same expression can measure the harmless path
+// on one run and the device-revoking one on the next.
+//
+// Matched on the card's HEADING, not its text. With more than one phone the home view draws a
+// status strip above the cards, and that strip names every device — so a search by textContent
+// finds the strip first, it holds no buttons, and the answer comes back as "this phone has no such
+// button" for a card that is right there. Returns null rather than throwing, so it also works as a
+// waitFor condition.
+func deviceCardButton(deviceName, pattern string) string {
+	return `(() => {
+  const card = [...document.querySelectorAll('#view .card')]
+    .find((c) => (c.querySelector('.card-head h2')?.textContent || '').includes(` + jsString(deviceName) + `));
+  if (!card) return null;
+  return [...card.querySelectorAll('button')].find((x) => ` + pattern + `.test(x.textContent)) || null;
+})()`
+}
+
+// jsString quotes a Go string as a JavaScript literal. json.Marshal is exactly right for this: JSON
+// string syntax is a subset of JavaScript's, and it escapes the quotes and the non-ASCII dash in the
+// device name above, which is where a hand-rolled version would break.
+func jsString(v string) string {
+	out, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(out)
 }

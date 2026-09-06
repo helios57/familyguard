@@ -9,7 +9,7 @@ reports "not measured" and does not count as done.
 
 ## Where this stands
 
-**Phases 0–8 are done and calibrated.** `tests/run_all.sh` runs seven layers: a secret scan over
+**Phases 0–15 are done and calibrated.** `tests/run_all.sh` runs seven layers: a secret scan over
 the full commit history, the Go control plane, the deployment manifests, the container image under
 the manifest's own restrictions, the e2e suite against a real server binary / a real PostgreSQL / a
 real browser, the Android unit suite, and the instrumented suite on a device-owned emulator across a
@@ -38,7 +38,10 @@ in a repository that holds no secret, and the resolution had to be reached witho
 the job redacts them and printing one would have been the actual leak —
 [6.9](#69--six-leaks-in-a-repository-that-has-no-secrets).
 
-**Nothing is deployed.** Phase 7 produced [`deploy/`](deploy/) — a kustomization that renders
+**It is deployed, and one real phone is enrolled.** `v0.1.0` went out in Phase 8 and the tag has
+moved since; [Phase 13](#phase-13--the-first-real-phone) is the first handset, and
+[Phase 15](#phase-15--the-phone-that-could-not-come-back-fr-17-fr-18-fr-126-fr-36) is what that
+phone found within the hour. Phase 7 produced [`deploy/`](deploy/) — a kustomization that renders
 complete — and [`DEPLOYMENT.md`](DEPLOYMENT.md), which carries the seven steps in the order they have
 to happen. Six of them are things no sync can do for itself: DNS, the two data directories and their
 ownership, the signed APK **and its DER certificate** in place before the first apply, the
@@ -3640,6 +3643,335 @@ What it has done since:
   feature — exactly the "zero in a window with no traffic" shape this project treats as *not
   measured*.
 
+## Phase 14 — one list for the whole family (FR-18)
+
+The ask was "make sure all bloat-ware is removed from all connected phones (like facebook)", and the
+first thing worth writing down is what was **already** true: an `app_rules` BLOCK suspends *and*
+hides a package, covers it whether or not it is currently installed, and is overridden last and
+unconditionally by the critical whitelist. The enforcement half of this feature needed nothing. What
+was missing was the *scope*: `app_rules` is keyed by `child_id`, so "nobody in this house has
+Facebook" had to be entered once per child and again for every child added later — a decision that
+decays into a per-child chore, and the failure it produces is silent.
+
+So FR-18 is the same instrument pointed at a wider scope, and everything below is about the three
+places that scope could have been got wrong.
+
+### 14.1 — what is NOT here, and why
+
+**No uninstall.** Entries are hidden and suspended, and that is the whole mechanism. Hiding is
+reversible from the console, survives a reinstall, and cannot remove something a factory reset would
+not bring back. The DPC's uninstall path stays bounded to packages whose installer record names this
+app (`AndroidInstaller.installedByThisApp`, which also excludes its own package) and that bound was
+**not loosened** — widening it to reach vendor preinstalls would have made the blocklist able to do
+something no parent could undo, in exchange for tidiness.
+
+**No re-application on restart.** See 14.3.
+
+### 14.2 — the curated set is code, not seeded rows, and the emptiness ratchet is what said so
+
+The first implementation seeded seven rows in migration `0005`. `TestAFreshSystemShowsAsEmpty`
+failed it, correctly and for a rule this project already had: *the deployable schema must create
+tables and nothing else* (NFR-5). It also would not have worked — migrations run **before**
+`Bootstrap` creates the family row, so `INSERT ... SELECT FROM families` matched zero rows and
+produced an empty list that looks exactly like a working one. A guard caught a design mistake and an
+ordering bug with one assertion.
+
+The curated set now lives in `store.DefaultBlockedPackages`, next in kind to
+`policy.DefaultCriticalPackages` and `policy.YouTubePackages` — curated package lists that ship in
+the binary and are unioned at read time. Three consequences, and the second is the one that mattered
+here:
+
+1. The schema plants nothing, so NFR-5 holds unchanged.
+2. **It reaches deployments that already exist.** A seed helps only installations created after it;
+   a constant reaches the family whose phone is already enrolled, which is the only family there is.
+3. It is reviewable as code, beside the reasoning about which packages are safe to hide.
+
+`ListFamilyBlockedPackages` and `FamilyBlockedPackageNames` are registered in the ratchet's
+`collectionsCoveredElsewhere` with that reasoning written out, rather than left to be re-derived.
+
+**What is on the list, and what was deliberately kept off it.** Seven entries: the four Meta packages
+(`com.facebook.katana` plus `system`, `appmanager`, `services`), OneDrive, Link to Windows and My
+Galaxy. Blocking `katana` alone does not hold — on a Samsung the app is delivered by a preinstalled
+installer with its own manager and service, so removing the visible half leaves the machinery that
+puts it back. All four, or it returns.
+
+Kept off, with the reason recorded in `blocklist.go` so nobody adds them back believing the category
+is safe:
+
+| package | why not |
+|---|---|
+| `com.wssyncmldm` | Samsung's OTA client. Hiding it stops security patches — worse than any app on the list. |
+| `com.osp.app.signin` | Samsung Account. Find My Mobile, backup and Smart Switch hang off it. |
+| `com.skms.android.agent`, `com.knox.vpn.proxyhandler` | Knox. Device-owner enrolment on Samsung hardware runs through it. |
+| `com.hiya.star` | Backs the dialer's caller ID, and the dialer is protected by FR-5.5. |
+| `com.touchtype.swiftkey` | A keyboard. FR-5.5 *would* catch it — the device reports every **enabled** input method as critical and the engine strips them last — but the guard is a backstop, not a licence. |
+
+Naming a package no phone has costs nothing: the DPC filters the desired set against what is
+actually installed before it touches anything, which is why a broader list is cheap and why the
+choices above are governed entirely by what happens when the app **is** present.
+
+### 14.3 — a deletion has to be a decision, and a list assembled from a constant forgets
+
+The cost of moving the curated set into code is that "delete this entry" has nothing to delete. A
+list reassembled from a constant on every request would put a removed entry back on the next page
+load — no error, no audit line, nothing for a parent to read. That is this project's characteristic
+defect in its purest form: a decision that reads as taken and was undone.
+
+`family_blocklist_dismissals` is the answer. Removing a curated entry records the removal; removing
+the family's own entry deletes the row; removing something that is neither returns 404 rather than
+reporting success for a server that did nothing. The effective list is
+`(curated − dismissed) ∪ own`, composed once in `blocklist.go` and reused by the console and the
+engine — two implementations of "what is on the list" is how a console and a phone end up
+disagreeing about why an app is missing.
+
+`TestDeletingACuratedEntryIsPermanent` **restarts the server**, and the restart is the entire test.
+It also asserts that the *rest* of the curated set is still there afterwards, so a "deletion" that
+emptied the table cannot pass.
+
+### 14.4 — precedence, and the three breaks that proved the vectors bind
+
+The engine gained four lines. `allowed` moved above `blocked` so the carve-out can be expressed:
+
+```go
+for _, p := range in.Settings.FamilyBlockedPackages {
+    if !allowed.has(p) { blocked.add(p) }
+}
+```
+
+A child-level ALLOW exempts that child from a family entry. It does **not** lift that child's own
+BLOCK, and the asymmetry is the point: a household default must never overrule a decision somebody
+made about one child.
+
+The Kotlin engine got the same lines, because the phone recomputes this offline (NFR-3) and a server
+that only sent the computed answer would have the whole list revealed the first time a phone lost
+the network. `Settings.familyBlockedPackages` defaults to empty so a phone running this build
+against an older server computes what that server would — the phone is the side that cannot be
+rolled back in a hurry.
+
+Three shared vectors, and each was **calibrated against a different broken engine**:
+
+| break | what went red |
+|---|---|
+| the union removed entirely | all three vectors |
+| the ALLOW carve-out ignored | the exemption vector alone |
+| the family list applied **after** the critical whitelist | the whitelist vector, and the exemption vector |
+
+Restored: green, run with `-count=1` so the pass is not a cache replay. The Kotlin side replayed all
+26 vectors and agreed on the three new ones without a single expectation being adjusted — which is
+what the shared file is for.
+
+Two guards failed on the first run and both were doing their job. `RequirementCitationsTest` refused
+`FR-18` before `REQUIREMENTS.md` defined it, then refused `FR-18.5` for being defined and claimed by
+nothing. `EnforcementEngineVectorsTest` pins the vector count, so 23 → 26 is a deliberate edit rather
+than a file that silently arrived truncated.
+
+### 14.5 — what a change of this shape does to the tests that were already there
+
+Three pre-existing e2e assertions read "a new child has nothing suspended". That is now false **by
+design**, and rewriting them to accept anything would have thrown away what they were for. They
+assert `suspendedBeyondTheBlocklist(...)` instead — nothing suspended that is not on the curated
+list — plus, in the baseline case, that the list is non-empty, so the new loop cannot be vacuously
+green over an empty slice.
+
+Tracking-only (FR-8) clears the blocklist along with every other suspension, and that needed no
+change: the requirement says *no app suspension is enforced*, and suspension is suspension whatever
+caused it.
+
+### 14.6 — reach
+
+Writes are admin-only: a per-child rule affects one phone and a guardian can reasonably set one,
+while an entry here changes every phone in the family at once. A guardian still **reads** it, because
+an app missing from a phone they are watching needs an explanation. Every write bumps every child's
+policy version inside the same transaction as the write — one statement, not a loop, so there is no
+window in which one phone enforces the new list and another does not.
+
+Reachable by API key, like everything else (FR-17), because the request that started FR-16/17 asked
+for exactly that.
+
+In the console, the list is its own card on the Apps tab rather than a fourth button on each app row:
+the row's Allow/Block/Default is about one child and this is about the household, and side by side
+the difference would be something a parent has to read a tooltip to learn. The add control offers a
+datalist of packages the family's own phones reported, which is the reason it lives on that tab —
+and free text still works, because an app that is not installed yet is exactly the one worth blocking
+before it arrives. Each entry says whether it is on this phone or not, since "not installed here" is
+not a defect: the entry is what stops a preinstall coming back. An app the list covers is annotated
+in the per-child list too, because otherwise it shows "Default" — true of the child's rule, false
+about the phone.
+
+### 14.7 — what is not measured
+
+- **None of this has run on a phone.** No enrolled handset has yet reported one of these packages
+  back as hidden. The chain server → policy → DPC is proven by e2e and by both engines agreeing on
+  the vectors; the last hop, `setApplicationHidden` on a *system* preinstall on Samsung hardware, is
+  not. Three of the four Meta packages are system apps, and that is the case with the least
+  precedent behind it.
+- **The API 29 floor**, still, and unchanged by this phase.
+- **Whether hiding `com.facebook.system` actually stops the reinstall.** The reasoning is sound and
+  the mechanism (a hidden package cannot run) is the platform's, but nothing here has watched a
+  preinstall fail to come back.
+
+## Phase 15 — the phone that could not come back (FR-1.7, FR-1.8, FR-12.6, FR-3.6)
+
+Phase 13 enrolled the first real phone. Within an hour it was disconnected, by a parent tapping a
+button labelled **"Setup QR"** on a working device, expecting to re-read the code they had just
+used. The audit trail is unambiguous: `DEVICE_ENROLLED 00:55:27`, `ENROLLMENT_ISSUED 02:01:18`,
+`RECOVERY_CODE_VIEWED 02:01:21`. Everything in this phase comes out of that hour, plus the two
+things the owner reported while looking at the same phone.
+
+### 15.1 — what the button actually did, and why no test had caught it
+
+`POST /devices/{id}/provisioning` mints. It cannot read — the plaintext enrollment token is never
+stored, only its hash — so there is no "show me that code again" that could ever have worked, and
+minting calls `ResetEnrollment`, which nulls `device_token_hash` and `enrolled_at`. The phone was
+revoked the instant the new QR rendered.
+
+The DPC could not notice. `Enroller.enroll` answers `AlreadyEnrolled` for as long as anything is in
+the credential store — deliberately, because `onProfileProvisioningComplete` is not an exactly-once
+delivery and a re-enrolment would spend a second token. So the phone held a credential nothing would
+accept, forever, and re-provisioning it was impossible too: Device Owner can only be established on
+an unprovisioned device, and there is no welcome screen left to tap six times.
+
+Every test passed throughout. `TestEnrollmentCredentialsAreSingleUse` had been re-provisioning an
+enrolled device for months and asserting that the *token* behaved; nothing asserted anything about
+the *phone*. The gap was not in the mechanism, it was that no requirement had ever said what the
+mechanism costs.
+
+**FR-1.7** is the guard: an enrolled device needs `{"replace_enrolled": true}` or the server answers
+409 and touches nothing. The console asks in its own sheet first. That confirmation is drawn by
+`confirmSheet` rather than `window.confirm` for three reasons that all bite on this one path — the
+browser draws its dialog at the top of the screen, which on a phone is the furthest point from a
+thumb; it cannot mark the destructive answer as destructive; and it blocks the page so completely
+that **headless Chrome sits on it forever**, so the mobile guard could not have measured a
+confirmation built that way at all. A confirmation no instrument can reach is a confirmation nobody
+has shown works.
+
+That change turned `TestEnrollmentCredentialsAreSingleUse` red, correctly. It was fixed by giving
+the harness a second helper — `reprovision`, which sends the acknowledgement — rather than by
+relaxing the guard. A test that needs a second code now says out loud that it means to replace the
+first one.
+
+### 15.2 — FR-1.8: a way back that does not need a factory reset
+
+FR-1.7 stops the next mis-tap. It does nothing for the phone already in that state, and the owner's
+question was the right one: *"so i have to setup the phone again? cant you recover it?"*
+
+`Enroller.relink(setupCode)` is the deliberate exception to the idempotence guard. Three properties
+make it safe to put on a screen anyone holding the phone can reach:
+
+- **The server address comes from the STORED credential, never from what was typed.** A setup code
+  is a bearer token and carries no address, so the worst a typed string can do is fail. Two
+  loopback servers in the test, because with one the assertion would hold however the URL was
+  chosen.
+- **It needs a code the server minted**, which means a parent with console access — the same
+  authority that revoked the phone. A device a parent deliberately cut off stays cut off.
+- **It replaces the credential as one unit**, recovery material included, because the server mints
+  new material on every enrollment. The old recovery code stops working the moment it succeeds, and
+  the console shows the new one.
+
+A refusal leaves the old credential in place. That looks like a detail and is not: the credential is
+the only record of *which server this phone belongs to*, so clearing it on a mistyped code would
+take away the one thing that makes the next attempt possible.
+
+The phone has to know it is unlinked, and `LinkRefused` is the record. It is set on a **401 and
+nothing else** — `ApiException.retryable` is false for 400, 403, 404, 409 and 422 as well, and each
+of those is a fault in one request rather than a statement about the credential. Raising "this
+phone is no longer linked" because one endpoint answered 404 is how the only notification this app
+will ever ask a parent to act on becomes one people swipe away. It is not re-stamped, for the same
+reason `RecoveryMode.activate` is not: the recorded instant is what the screen reports as *unlinked
+since*, and a revoked phone retries every few minutes.
+
+The console side is two lines of copy and one field. The confirmation now says what re-linking
+costs instead of claiming a factory reset is the only way; the provisioning sheet shows the minted
+code as **type-able text beside the QR**, because the QR is unreachable on exactly the device that
+needs it most. `setup_code` in the response is not a second secret — it is the identical token,
+already inside `payload`; surfacing it as its own field only means the console does not have to know
+the shape of the admin extras bundle to find it. `TestReplacingAPhoneOnPurposeRevokesTheOldOne`
+asserts the two are equal, because a second token would enroll a phone and leave the QR dead, and
+which one a parent used would decide whether their phone came back.
+
+### 15.3 — FR-12.6: the boot that quietly undid the recovery
+
+Working out the recovery procedure for the revoked phone found a defect that had been shipping since
+Phase 5, and it had no symptom.
+
+`BootReceiver` → `AdminReceiver.applyBaseline` is unconditional. `RecoveryMode` is documented to hold
+"until the device next reaches the control plane" and has no expiry, precisely because a release is
+only ever used when the control plane is *out of reach*. Those two statements cannot both be true: a
+released phone that rebooted came back with `no_install_unknown_sources`, `no_add_user`,
+`no_safe_boot`, `no_config_date_time`, `no_config_private_dns` and `no_uninstall_apps` back on — six
+of the eight — with nothing said, and the sync that would legitimately end the release is exactly
+the thing that is not coming.
+
+`HardeningManager.applyReleasedFloor()` is `applyBaseline` with an empty required set: it adds
+nothing and still clears the forbidden set, because FR-2.3's *a boot leaves the device wipeable*
+holds whatever state the phone booted into. It leaves the clock alone for the same reason a released
+state carries no restrictions — automatic network time is enforcement (FR-2.2), and this device is
+released. `HardeningOutcome.clock` stays null rather than reporting a success it did not perform.
+
+The read of the recovery flag is wrapped: a store that cannot be read assumes **NOT released** and
+logs it. Failing the other way would mean a phone that could not read its own preferences never
+hardening again.
+
+This is why the sideload half of the recovery procedure has to happen *before* the phone restarts on
+0.3.0, and does not on 0.4.0.
+
+### 15.4 — FR-3.6, and the "blinking" the owner asked for
+
+The second thing reported off the real phone: *"it says that PACKAGE_USAGE_STATS is not granted and
+it can not mesure screen time and quota -> thats a main feature"*. `usage_access` on the heartbeat
+is three-valued for the reason every other measurement here is — nil is a phone that has not said,
+`false` is one that measured it cannot see usage at all, and a bool would make those the same
+answer. A later heartbeat that omits the field does **not** clear a recorded `false`.
+
+Then: *"like the other apps open the correct page and make the property to set blinking"*. The
+notification's intent now carries a `package:` data URI plus AOSP's two highlight extras,
+`:settings:fragment_args_key` and `:settings:show_fragment_args`, so Settings opens Usage access
+**scrolled to FamilyGuard's row with it flashing** rather than dropping the parent into a list of two
+hundred apps. Both extras are hidden platform constants, so they are spelled as literals — the API
+29 floor has no symbol to reference. The intent is resolved before it is used and falls back to the
+plain action when a build does not accept it, logging which one it sent: an unresolvable intent from
+a notification is a tap that does nothing at all.
+
+Written with the platform `Bundle` rather than `androidx.core.os.bundleOf`, which is deprecated for
+losing type safety — and this build compiles with `-Werror`.
+
+### 15.5 — calibration
+
+Each break was made, the named test watched go red, and the source restored.
+
+| Break | Expected red | Result |
+|---|---|---|
+| `relink` returns `AlreadyEnrolled` instead of exchanging | the four `EnrollerTest` re-link cases | 4 red, and *re-linking does not loosen the guard that enroll still holds* stayed green — it binds to the half that was not broken |
+| `LinkRefused.recordRefusal` stops discriminating on status | `no other status marks the phone` | red |
+| `applyReleasedFloor` applies the full baseline | `a released device that reboots stays released`, `it leaves alone a restriction it did not set` | 2 red; `the ordinary boot path on the same device hardens all six` stayed green, which is the point of having it |
+| `setup_code` dropped from the provisioning response | `TestReplacingAPhoneOnPurposeRevokesTheOldOne`, `TestARevokedPhoneCanReLinkWithoutAFactoryReset` | 2 red, one naming the empty field and one naming the mismatch |
+| the "older build" sentence deleted from the confirmation | `TestConsoleRendersOnAPhone/replace_phone` | red, quoting the whole sheet back |
+
+`TestARevokedPhoneCanReLinkWithoutAFactoryReset` is the server-side half end to end: revoke, watch
+the old token answer 401, re-link with the new code, watch policy come back — **on the same device
+row**, which is the whole point, and with the old credential still dead afterwards.
+
+### 15.6 — what is not measured
+
+- **The re-link screen has not been used on a phone.** The exchange is proven server-side and the
+  decision layer is proven on the JVM; nobody has yet typed a code into a handset. That is the next
+  thing to do, and it is the recovery of the phone this phase exists for.
+- **The highlight extras have not been seen to flash anything.** They are AOSP's, and Samsung's
+  Settings is not AOSP. The fallback is what makes a build that ignores them harmless, and the log
+  line is what will say which happened.
+- **FR-12.6's fix cannot help the phone that needs it**, because that phone is running 0.3.0. The
+  released-then-reboot window is closed from 0.4.0 forward only.
+- **Nothing here changes the API 29 floor** or the absence of hardware coverage for FR-16 and FR-18.
+- **The instrumented layer could not run at all**, and the reason is new. A `-wipe-data` restart
+  fixed the offline AVD, the device booted, and `dpm set-device-owner` then failed five times with
+  *"Not allowed to set the device owner because there are already some accounts on the device"* —
+  while `dumpsys account` reports **`Accounts: 0`** for user 0 in the same second. The only system
+  image installed here is `android-37.0/google_apis`, whose GMS claims an account the accounts
+  dump does not show, and clearing `device_provisioned` / `user_setup_complete` does not move it.
+  The first of the five attempts failed differently — *"User must be running and unlocked"* — so
+  there is a window before GMS starts, and the harness loses it. `tests/run_all.sh` reported this
+  as **NOT MEASURED** rather than as a failure, which is the one thing that worked as designed.
+
 ## Traceability
 
 Each requirement maps to the phase that implements it and the test that proves it.
@@ -3661,6 +3993,7 @@ proven.
 | Requirement | Implemented in | Proven by |
 |---|---|---|
 | FR-1 enrollment / QR | 3.2, 3.4, 5.2, 5.3 | e2e `TestDeviceLifecycleJourney`, `TestEnrollmentCredentialsAreSingleUse`, `TestTheQRPointsAtAnAPKThisServerServes`; `TestQRHoldsTheRealPayload`, `TestPayloadCarriesTheExtrasAndroidActuallyReads`, `TestExtraNamesAreExactlyAndroidsSpelling`, `TestChecksumIsComputedFromRealBytes`, `TestAPKIsServedWithTheChecksumTheQRWouldCarry`; `EnrollerTest` |
+| FR-1.7 / FR-1.8 replacing and re-linking a phone | 15.1, 15.2 | e2e `TestANewSetupCodeDoesNotSilentlyRevokeAWorkingPhone` (the credential of a working phone survives a request that did not say it meant to replace it), `TestReplacingAPhoneOnPurposeRevokesTheOldOne` (the other half, without which the guard could be a permanent refusal), `TestAFirstSetupCodeNeedsNoAcknowledgement`, `TestARevokedPhoneCanReLinkWithoutAFactoryReset`; `TestConsoleRendersOnAPhone/replace_phone` for the confirmation as a parent meets it; `EnrollerTest`'s seven re-link cases and `LinkRefusedTest`'s seven. **Calibrated 5/5** ([15.5](#155--calibration)). **Not proven:** the re-link screen on a handset — nobody has typed a code into a phone yet |
 | FR-2 hardening | 5.2 | `HardeningManagerTest`, `EnforcementEngineHardeningTest`, `RestrictionKeysMatchThePlatformTest`; `TestNoRestrictionCanBlockCallingOrRecovery` |
 | FR-2.2 automatic network time | 5.11 | `ClockPolicyManagerTest` (8 cases over the pure manager) and `HardeningClockTest` (3) — the read-back that catches a device accepting `setAutoTimeEnabled` and staying off, an unreadable clock reported as a failure rather than assumed on, and the two facts about where it runs: a clock that will not be fixed makes the **whole baseline** not-ok even with every restriction in effect, and a sync reports `clock = null` rather than a success for something it never looked at. `ClockGatewayVersionSplitTest` reads `DpmClockGateway.kt` for the API 29/30 split, which no JVM test can execute and whose collapse is invisible — `setAutoTimeRequired` compiles everywhere and means *forbid changing it* on API 30+. **Calibrated 19/19.** Found by 5.10: the requirement was cited by nothing because nothing implemented it |
 | FR-3 screen time | 5.6, 3.3 | both halves. Server: `TestQuotaIsReadForTheLocalDay`, `TestDayKeyMatchesTheDayTheResolverReads`, `TestUnknownTimezoneIsAnErrorNotAFallback`. Device (5.6): `SpanFolderTest`, `DayAttributionTest`, `ScreenOnClockTest`, `UsageLedgerTest`, `UsageTrackerTest`, `UsageReporterTest` — the monotonic ceiling (FR-3.2), the screen-off pause (FR-3.3), the cut at local midnight, and `UsageTick.NotMeasured` rather than a zero when `PACKAGE_USAGE_STATS` was never granted, which is the failure that would otherwise show a parent a child who spent the day off their phone |
@@ -3673,14 +4006,17 @@ proven.
 | FR-10 telemetry | 3.5, 5.3 | `SynchronizerTest`, `EventStreamTest`, `SseParserTest`, `ApiClientTest`, `BackoffTest`; e2e `TestPushWakeUps`, `TestDeviceLifecycleJourney` |
 | FR-11 multi-parent/device | 3.3 | e2e `TestDeviceLifecycleJourney`, `TestOneDeviceCannotActOnAnother` |
 | FR-12 recovery | 5.8, 3.4 | both halves. Server: `TestRecoveryCodeRoundTrip`, `TestRecoveryCodesAreUniquePerDevice`, `TestHashTokenDiscriminates`, `TestRecoveryAlphabetIsAscii`. Device: 7 JVM suites / 63 tests over `recovery/` — `RecoveryVectorsTest` replays the 60 cases in `backend/internal/auth/recovery-vectors.json` — hand-written normalisations plus PBKDF2 digests from Python's `hashlib`, a third implementation neither half shares — so a normalisation or derivation divergence is red in CI rather than in a car park. **58 breaks, 58 red** (47 Kotlin, 11 Go); the one that stayed green on the first pass found a missing test rather than a missing guard, and is recorded under [5.8](#58-calibration--58-breaks-47-kotlin-11-go-58-red) |
+| FR-12.6 a boot does not undo a recovery | 15.3 | `HardeningManagerTest` — *a released device that reboots stays released*, *a released device is still left wipeable*, *it leaves alone a restriction it did not set*, *it does not touch the clock*, and the calibration partner *the ordinary boot path on the same device hardens all six*, which is what makes the first of those evidence rather than a tautology. **Not proven:** the branch in `AdminReceiver.applyBaseline` that chooses between them — that is Android code with no JVM test, and no phone has been rebooted while released |
 | FR-13 / FR-13.1 console | 4.x | e2e `TestConsoleIsServedAndMobileReady`, `TestBrowserSignInJourney`; `TestConsoleServesEveryRoute`, `TestConsoleDeclaresTheMobileViewport`, `TestConsoleReferencesOnlyMountedAssets`, `TestConsoleHasNoInlineScriptOrStyle`, `TestConsoleRevalidatesWithETag`, `TestConsoleDoesNotSwallowUnknownPaths` |
 | FR-13.2 mobile-first | 4.4, 6.5 | e2e `TestConsoleRendersOnAPhone` — the signed-out screen, the five views, the drawer and the provisioning sheet measured in a real browser at 360x800: no horizontal page scroll, no sideways-scrolling list, every touch target >= 44 px, no card wider than the viewport, 16 px inputs, the sign-in button above the fold, the header still at the top after scrolling to the end, the first card below it rather than behind it, permanent chrome under 15% of the screen, the drawer modal and closing on Escape and on navigation, the QR legible. Driven against a **seeded** family, because an empty console lays out perfectly and the overflow this catches comes from a long device name or a package id. `tests/e2e/calibrate-mobile.sh` is the executable calibration record: fourteen breaks, each required to go red *naming its own rule*, then green on restore — and it found a real defect in its subject the first time it ran (the pinned-navigation check measured the bar only at the end of a long page, where a `position: static` bar also sits at the bottom). Source-level companions: `TestConsoleDeclaresTheMobileViewport` — a missing viewport meta makes the whole mobile suite vacuous at 980 px. **Partial on one clause:** "navigation reachable one-handed" is no longer fully met — the menu opens from the top-left corner, the least reachable point on a large phone. Accepted on the owner's explicit preference for a top navigation (2026-09-03); the drawer's destinations are placed in its lower half, so only the opening tap is affected, and that placement is itself asserted (`#drawer-nav .tab` must start below 35% of the screen) and calibrated rather than left as prose |
 | FR-13.3 installable, no desktop-only input | 4.4, 6.7 | e2e `TestTheConsoleInstallsToAPhone` — Chrome's own verdict over CDP (`Page.getAppManifest`, `Page.getInstallabilityErrors`, `Page.getManifestIcons`), opened by a fail-closed negative control on `about:blank` so that an empty error list cannot mean "this browser computes nothing". `TestConsoleNeedsNoDesktopOnlyInput` covers the second half — no `:hover`, `contextmenu`, `dblclick`, `accesskey` or mouse-only pointer event in any served asset — with a byte-count floor so an empty 200 cannot read as clean. **Calibrated 8/8** (four each, including one harness break per side); the manifest-route checks that used to stand alone here read back our own bytes and are not a statement about installing anything. Not proven: behaviour on a real cellular connection, and installation on any engine other than Chrome |
 | FR-13.4 phone states its own condition | 5.9 | `DeviceStatusTest` — 25 cases over the pure composer, including the three the console cannot see: a policy received but never applied, a device out of contact, and a phone that cannot measure usage at all. The last is the one this row exists for: `NOT_MEASURED` is a third level, carried through `ForegroundReader.spans()` returning `null` rather than an empty list, and asserted to render as prominently as a fault rather than as a zero. `SynchronizerTest` (4 tests) pins the contact stamp to receipt and nowhere else, so the line cannot report a week-old phone as freshly synced. Three independent guards keep the device token off a screen anyone holding the phone can read — the composer's output, a source scan (`ManifestAndPlatformCallsTest` *the status block never reads the device token*), and the rendered view tree (`StatusScreenTest`). Instrumented `UsageAccessTest` revokes the real `GET_USAGE_STATS` appop, **reads the mode back from the system**, and asserts the screen says so — the appop cannot be granted by `setPermissionGrantState` and a revoked one makes `queryEvents` return nothing rather than throw, which is the silent zero this whole requirement is about. **Calibrated 38/38** (32 JVM, 6 on-device) — see the record above |
+| FR-3.6 the phone says it cannot measure | 15.4 | e2e `TestAPhoneThatCannotMeasureScreenTimeSaysSo` — three-valued on the heartbeat, a later omitting heartbeat does not clear a recorded `false`, and the **list** endpoint carries the field as well as the single-device one, which is where a console warning would otherwise be invisible. The deep link and its highlight extras have no automated coverage at all: an intent is resolved at run time against a Settings this project does not own |
 | FR-14 audit | 3.7 | e2e `TestEveryAuditedActionIsWritten` — all **21** audited actions driven over real HTTP (17 parent-side, 4 device-side), each asserted as a row naming actor type, actor id, action, target type and target *id*; nine detail keys checked so the row says *which* change was made; every row required to carry a `request_id`; and a source-scanning ratchet over `internal/httpapi/*.go` that fails when a 22nd action appears. **Calibrated 6/6** — see the record below. Also `TestRecoveryAndAudit`, which checks ten action names |
 | FR-15 keeping the DPC current | 9 | three layers, and only the third can see it. JVM: `AppUpdaterTest` drives the five checks with every dependency a function, so the whole decision runs off a device. Server + e2e: `TestAPKInfoDescribesTheFileThisServerWillHandOver`, `TestAPKInfoIsNotFoundWhenTheServerHostsNoDPC`, `TestAParentCanTellThePhoneToUpdateItself`, `TestTheHeartbeatReportsWhichDPCThePhoneIsRunning`, `TestAnAPKReplacedUnderTheRunningServerIsRefused`, and `apk_test.go`'s seven over the bytes themselves. Device: **`tests/android/self-update.sh` + `TestTheServerReplacesTheDPCOnARealDevice`**, which builds the DPC twice from one tree, enrols the lower build against a real server and watches the higher one arrive — passed 2026-09-05 in 176 s, with the phone's own log as the second witness (`wake:connected: commands done=1` → `PackageManager: installation completed` → `FamilyGuardUpdate: self-update installed`) on a device whose adb had been off since the first policy applied. Its negative control is the same command again, declined as "already running". `tests/android/calibrate-update.sh` breaks each of the five checks in turn and records the refusal. **Not proven anywhere:** the update path on a phone that is not an emulator, and the `MY_PACKAGE_REPLACED` restart on an OEM build that kills background starts more aggressively than AOSP |
 | FR-16 managed applications | 12 | four layers, and the one that decided the design is the device. Server: `TestAnUploadedAPKIsReadRatherThanDescribed`, `TestMultipartAndRawBodyAgree`, `TestTwoVersionsOfOneAppBothLive`, `TestTheSameFileTwiceIsNotAConflict`, `TestAPackageSignedByAnotherKeyIsRefused`, `TestWhatIsNotAnAPKIsRefusedAsSuch`, `TestTheDirectoryOnTheNodeIsAlsoASource`, `TestADeploymentWithoutAnAPKDirSaysSo`, `TestDeletingAnAppRemovesItsFileToo`, `TestAManagedAppDownloadNeedsADeviceCredential`, plus `internal/apk`'s parser tests. Policy: `TestDeclaringAnAppReachesThePhoneAsSomethingItCanFetch`, `TestAnUpgradeIsANewVersionInTheSamePolicy`, `TestWithdrawingAnAppRemovesItFromThePolicy`, `TestDeclaringSomethingTheCatalogDoesNotHaveIsRefused`, `TestTheConsoleSeesADeclarationWithNothingBehindIt`; the shared vectors carry three new cases so both engines normalise a declared set identically. JVM: `ManagedAppApplierTest` (12) and `AppUpdaterTest`'s four new cases. **Device: `ManagedInstallTest`** — the restriction matrix in [12.1](#121--which-restrictions-bind-the-device-owner-measured-on-a-phone-rather-than-argued-from-the-source), the install→upgrade→withdraw lifecycle against a real second application, and `getInstallSourceInfo` as a real filter. **Calibrated 11/11** ([12.2](#122--the-jvm-calibration-including-one-break-that-proved-a-test-binds-to-nothing)), and the record includes one assertion that binds to nothing at the JVM layer and says so. **Not proven:** any of it on hardware rather than an emulator, and the API 29 floor |
 | FR-17 API keys | 12 | e2e `TestAnAPIKeyIsTheSameParent`, `TestTheTokenIsShownOnceAndNeverAgain`, `TestRevokingAKeyEndsItImmediately`, `TestAKeyCannotMintACredential`, `TestAKeyThatWasNeverIssuedIsNotDistinguishable`, `TestOnlyThePrimaryAdminMintsKeys`, `TestAKeyNeedsAName`, `TestTheAuditTrailTellsAScriptFromAPerson` — the last two of those are the ones that matter most: a key must not be able to mint a credential that outlives its own revocation, and an audit row must say a script acted rather than a person |
+| FR-18 family blocklist | 14 | e2e `TestTheCuratedBlocklistIsSeededAndReachesAPhone`, `TestTheBlocklistCoversAChildAddedAfterIt`, `TestAChildAllowExemptsOnlyThatChild`, `TestTheCriticalWhitelistOutranksTheBlocklist`, `TestDeletingACuratedEntryIsPermanent`, `TestABlocklistChangeBumpsEveryChildsPolicyVersion`, `TestTheBlocklistIsReachableByAPIKeyAndGuardedByRole`, `TestTheBlocklistRefusesWhatCanNeverMatchAnApp`, `TestTheBlocklistIsAudited`; three shared vectors replayed by **both** engines. The four that carry the requirement rather than the plumbing: the phone is told to hide packages **no inventory reported** (an implementation that blocks only what it can see leaves the installer stub that puts Facebook back); a child created *after* the entry is covered by it; one child's ALLOW exempts that child and a **second child is the control** that the entry did not simply vanish; and the device's own dialer, put on the list deliberately, is neither hidden nor suspended — with a non-critical package blocked in the same call, so an implementation that ignored the list entirely could not pass by doing nothing. `TestDeletingACuratedEntryIsPermanent` restarts the server, which is the only thing that separates "seeded once" from "re-applied on boot". **Calibrated 3/3 on the engine** (drop the union / drop the ALLOW carve-out / apply the list after the critical whitelist), each break red in the vector that owns the property and green on restore. **Not proven:** any of it on hardware — no phone has yet reported one of these packages back as hidden |
 | NFR-1/2 auth | 2.4, 3.x | e2e `TestBrowserSignInJourney`, `TestBrowserSignInFailureModes`, `TestIDTokenIsVerifiedNotTrusted`, `TestSessionTokensAreForgeryResistant`, `TestOneDeviceCannotActOnAnother`; `TestVerifyRejects`, `TestVerifyAcceptsGenuineToken`, `TestVerifyDoesNotFetchJWKSPerToken`, `TestUnknownKidRefreshIsRateLimited`, `TestRefreshKeepsCacheOnBadDocument`, `TestSessionRejects`, `TestSessionRoundTrip`, `TestSessionIssuerRefusesWeakKey`, `TestBearerToken` |
 | NFR-3 no fabricated success | 3.6, 5.3, 5.5 | `TestEveryReadFailureIsReported`; and the mutation sweeps — 5.3's 39 breaks and 5.5's 39, each one a place the code could have believed a return code instead of reading state back |
 | NFR-4 persistence | 2.2 | e2e `TestStateSurvivesRestart` |

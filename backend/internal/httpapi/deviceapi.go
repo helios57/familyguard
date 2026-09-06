@@ -123,6 +123,11 @@ type heartbeatRequest struct {
 	// heartbeat from a phone that has not been updated erase the version of one that has.
 	AppVersionName string `json:"app_version_name"`
 	AppVersionCode int64  `json:"app_version_code"`
+
+	// UsageAccess is whether the phone may read usage stats (FR-3.6). A pointer, and absence is
+	// carried through as absence: an older DPC omits it, and recording that as "no access" would
+	// put a false warning on every phone that has not been updated.
+	UsageAccess *bool `json:"usage_access"`
 }
 
 // heartbeat records liveness and tells the device whether it is behind.
@@ -150,6 +155,7 @@ func (s *Server) heartbeat(c *gin.Context) {
 
 		AppVersionName: strings.TrimSpace(req.AppVersionName),
 		AppVersionCode: req.AppVersionCode,
+		UsageAccess:    req.UsageAccess,
 	}); err != nil {
 		s.fail(c, err)
 		return
@@ -230,6 +236,11 @@ type inventoryApp struct {
 	PackageName string `json:"package_name"`
 	Label       string `json:"label"`
 	SystemApp   bool   `json:"system_app"`
+	// What the device says it is enforcing right now (FR-18.6). Absent from an older DPC's report,
+	// which decodes as false — "nothing known to be restrained", which is the honest reading of a
+	// phone that does not send the field.
+	Hidden    bool `json:"hidden"`
+	Suspended bool `json:"suspended"`
 }
 
 func (s *Server) deviceInventory(c *gin.Context) {
@@ -245,6 +256,7 @@ func (s *Server) deviceInventory(c *gin.Context) {
 		}
 		apps = append(apps, store.InstalledApp{
 			PackageName: a.PackageName, Label: a.Label, SystemApp: a.SystemApp,
+			Hidden: a.Hidden, Suspended: a.Suspended,
 		})
 	}
 	if err := s.store.ReplaceInstalledApps(c.Request.Context(), dev.ID, apps); err != nil {

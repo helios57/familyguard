@@ -118,6 +118,11 @@ type DeviceState struct {
 	LastSeenAt    *time.Time `json:"last_seen_at,omitempty"`
 	Online        bool       `json:"online"`
 
+	// UsageAccess is whether the phone may read usage stats (FR-3.6). Nil means it has not said —
+	// an older DPC does not send it — and nil, false and true are three different things here:
+	// only false is "this phone is reporting zero minutes because it can see nothing".
+	UsageAccess *bool `json:"usage_access,omitempty"`
+
 	// AppVersionName and AppVersionCode are the DPC build actually running on the phone, as the
 	// phone reports it. They exist because the APK this server hosts is installed out of band —
 	// it is a file on the node, not part of the image — so before this, nothing anywhere could
@@ -151,12 +156,36 @@ type AppRule struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// FamilyBlockedPackage is one entry on the family-wide blocklist (FR-18): a package no child in
+// this family may use, on any phone, now or after the next child is added.
+//
+// It carries no child id on purpose. The whole point of the table is that the decision outlives the
+// set of children it was made for — an entry that had to name them would be `app_rules` again.
+type FamilyBlockedPackage struct {
+	PackageName string    `json:"package_name"`
+	Label       string    `json:"label"`
+	Reason      string    `json:"reason"`
+	Source      string    `json:"source"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// Provenance of a blocklist entry. Both block identically; the distinction is whether a person
+// chose it or the curated set in migration 0005 seeded it.
+const (
+	BlocklistSourceBuiltin = "BUILTIN"
+	BlocklistSourceParent  = "PARENT"
+)
+
 type InstalledApp struct {
-	DeviceID    uuid.UUID  `json:"device_id"`
-	PackageName string     `json:"package_name"`
-	Label       string     `json:"label"`
-	SystemApp   bool       `json:"system_app"`
-	Baseline    bool       `json:"baseline"`
+	DeviceID    uuid.UUID `json:"device_id"`
+	PackageName string    `json:"package_name"`
+	Label       string    `json:"label"`
+	SystemApp   bool      `json:"system_app"`
+	Baseline    bool      `json:"baseline"`
+	// Hidden and Suspended are what the DEVICE reports it is doing, not what the policy asked for
+	// (FR-18.6). They are the only evidence the console has that a block took effect.
+	Hidden      bool       `json:"hidden"`
+	Suspended   bool       `json:"suspended"`
 	FirstSeenAt time.Time  `json:"first_seen_at"`
 	LastSeenAt  time.Time  `json:"last_seen_at"`
 	RemovedAt   *time.Time `json:"removed_at,omitempty"`

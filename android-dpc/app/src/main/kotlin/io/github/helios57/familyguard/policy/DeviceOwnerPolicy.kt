@@ -4,7 +4,9 @@ import android.app.KeyguardManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import io.github.helios57.familyguard.device.CriticalPackages
 import io.github.helios57.familyguard.enforce.EnforcementEngine
@@ -82,10 +84,30 @@ class DpmAppGateway(
      * in a `QUERY_ALL_PACKAGES` request — and because "is exempt" is a claim about a platform
      * behaviour rather than something this code can enforce, [AppSuspensionManager] checks that this
      * app's own package is in the result before it believes any of it.
+     *
+     * Two reads, unioned by [InstalledPackages]: the narrow one does not return a package this DPC
+     * has hidden, and a hidden package that cannot be enumerated can never be revealed. The rule
+     * lives in that object so it can be tested without a phone; what is untestable here — that the
+     * narrow read omits hidden packages — is a platform behaviour, and the union is correct either
+     * way, because on a platform that does not omit them the second read finds nothing new.
      */
-    @Suppress("DEPRECATION") // the flags overload is the one that exists across minSdk 29..34
-    override fun installed(): Set<String> =
-        packages.getInstalledApplications(0).mapTo(mutableSetOf()) { it.packageName }
+    override fun installed(): Set<String> = InstalledPackages.union(
+        present = applications(0).map { it.packageName },
+        known = applications(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong()).map { it.packageName },
+        isHidden = { runCatching { dpm.isApplicationHidden(admin, it) }.getOrDefault(false) },
+    )
+
+    /**
+     * The same call twice: the flags overload is deprecated from API 33 and its replacement does not
+     * exist below it, so nothing compiles warning-free across minSdk 29 to current in one expression.
+     */
+    private fun applications(flags: Long): List<ApplicationInfo> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packages.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(flags))
+        } else {
+            @Suppress("DEPRECATION")
+            packages.getInstalledApplications(flags.toInt())
+        }
 
     /**
      * `isPackageSuspended` throws for a package that is not installed, which is a normal state here

@@ -15,12 +15,15 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Bundle
 import android.os.IBinder
 import android.os.PersistableBundle
 import android.os.PowerManager
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -43,12 +46,13 @@ import io.github.helios57.familyguard.enforce.AlarmDecision
 import io.github.helios57.familyguard.enforce.DesiredState
 import io.github.helios57.familyguard.enforce.EnforcementAlarm
 import io.github.helios57.familyguard.enforce.Input
-import io.github.helios57.familyguard.enroll.Credentials
 import io.github.helios57.familyguard.enroll.CredentialStore
+import io.github.helios57.familyguard.enroll.Credentials
 import io.github.helios57.familyguard.enroll.DeviceFacts
 import io.github.helios57.familyguard.enroll.EncryptedCredentialStore
 import io.github.helios57.familyguard.enroll.EnrollResult
 import io.github.helios57.familyguard.enroll.Enroller
+import io.github.helios57.familyguard.enroll.androidDeviceFacts
 import io.github.helios57.familyguard.net.AckRequest
 import io.github.helios57.familyguard.net.ApiClient
 import io.github.helios57.familyguard.net.Backoff
@@ -59,6 +63,7 @@ import io.github.helios57.familyguard.net.RecoveryEventRequest
 import io.github.helios57.familyguard.net.UsageRequest
 import io.github.helios57.familyguard.policy.DeviceOwnerPolicy
 import io.github.helios57.familyguard.recovery.AndroidRecoveryStore
+import io.github.helios57.familyguard.recovery.LinkRefused
 import io.github.helios57.familyguard.recovery.RecoveryActivity
 import io.github.helios57.familyguard.recovery.RecoveryJournal
 import io.github.helios57.familyguard.recovery.RecoveryMode
@@ -69,6 +74,7 @@ import io.github.helios57.familyguard.update.AppUpdater
 import io.github.helios57.familyguard.usage.DayAttribution
 import io.github.helios57.familyguard.usage.EncryptedUsageStore
 import io.github.helios57.familyguard.usage.ScreenOnClock
+import io.github.helios57.familyguard.usage.UsageAccess
 import io.github.helios57.familyguard.usage.UsageLedger
 import io.github.helios57.familyguard.usage.UsageStatsForegroundReader
 import io.github.helios57.familyguard.usage.UsageTick
@@ -258,11 +264,11 @@ class ConnectionService : Service() {
         }
 
         val api = ApiClient(credentials.serverUrl, token = { store.load()?.deviceToken })
-        val reports = reporting(api)
-        // Resolved once and shared: the appliers and the command handlers reach the same managers,
-        // and two resolutions would be two answers to "is this app the device owner" that could
-        // disagree across a `connect()` that outlives an ownership change.
+        // Resolved once and shared: the appliers, the command handlers and the inventory reader
+        // reach the same managers, and two resolutions would be two answers to "is this app the
+        // device owner" that could disagree across a `connect()` that outlives an ownership change.
         val policy = DeviceOwnerPolicy.of(this)
+        val reports = reporting(api, policy)
         // Built from the same stores the recovery screen uses, and deliberately not a second set:
         // the screen writes the flag from its own process, and a synchronizer reading a different
         // file would keep enforcing bedtime on a phone somebody had just recovered.
@@ -283,7 +289,14 @@ class ConnectionService : Service() {
             cache = EncryptedPolicyCache(this),
             applier = deviceApplier(policy, credentials.serverUrl, managedAppApplier(api, policy)),
             recovery = RecoveryMode(recoveryStore.mode),
-            telemetry = { telemetry() },
+            telemetry = {
+                val t = telemetry()
+                // Posted from here because this is the one call that happens on every sync and
+                // already holds the answer, so the notice follows the appop in both directions
+                // without a second poll of its own.
+                usageAccessNotice(missing = t.usageAccess == false)
+                t
+            },
             // The quota has to bite on a phone with no signal, and the only number that is current
             // there is the one this device measured itself. See Synchronizer.localUsedMinutes.
             localUsedMinutes = { input -> reports.usedMinutesToday(input) },
@@ -324,6 +337,7 @@ class ConnectionService : Service() {
         }
         stream.lastFatal?.let {
             Log.e(TAG, "the server refused this device's credential; stopping: $it")
+            runCatching { linkRefusedNotice(refused = true, status = it.status) }
         }
         stopSelf()
     }
@@ -511,6 +525,10 @@ class ConnectionService : Service() {
                 // cumulative and stay pending until they land.
                 if (result.source == PolicySource.SERVER) {
                     withContext(Dispatchers.IO) {
+                        // The server answered, so whatever this phone was told about being unlinked
+                        // is over (FR-1.8). Cleared here and nowhere else: only the server can end
+                        // a condition that is entirely about what the server thinks.
+                        linkRefusedNotice(refused = false)
                         report(reports, why)
                         // Only here, and for the same reason: this is the one moment the device
                         // knows the control plane answered. A recovery entered offline is delivered
@@ -533,6 +551,7 @@ class ConnectionService : Service() {
             }
             is SyncResult.Refused -> {
                 Log.e(TAG, "$why: the server refused this device's credential: ${result.cause}")
+                withContext(Dispatchers.IO) { linkRefusedNotice(refused = true, status = result.cause.status) }
                 return null
             }
             // Both remaining cases mean nothing was enforced and nothing here learned whether a
@@ -614,7 +633,7 @@ class ConnectionService : Service() {
      * service is started at boot and after a kill, and assuming the screen is on would credit the
      * whole of the first window to whatever the child had open before the phone was put down.
      */
-    private fun reporting(api: ApiClient): Reporting {
+    private fun reporting(api: ApiClient, policy: DeviceOwnerPolicy?): Reporting {
         val ledger = UsageLedger(EncryptedUsageStore(this))
         val power = getSystemService(PowerManager::class.java)
         val zone = PolicyZone()
@@ -638,11 +657,15 @@ class ConnectionService : Service() {
                 api.reportUsage(UsageRequest(day, samples))
             },
             inventory = InventoryReporter(
-                reader = PlatformInstalledAppReader(this),
+                reader = PlatformInstalledAppReader(this, restraint = policy?.apps?.gateway),
                 send = { apps ->
                     api.reportInventory(
                         InventoryRequest(
-                            apps.map { InventoryApp(it.packageName, it.label, it.systemApp) }
+                            apps.map {
+                                InventoryApp(
+                                    it.packageName, it.label, it.systemApp, it.hidden, it.suspended,
+                                )
+                            }
                         )
                     )
                 },
@@ -753,11 +776,7 @@ class ConnectionService : Service() {
      * list in the engine cannot know an OEM's dialer — and the one thing bedtime must never suspend
      * is the child's ability to call for help (FR-5.5).
      */
-    private fun deviceFacts(): DeviceFacts = DeviceFacts(
-        model = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
-        osVersion = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
-        criticalPackages = CriticalPackages.onThisDevice(this),
-    )
+    private fun deviceFacts(): DeviceFacts = androidDeviceFacts(this)
 
     /**
      * The command queue, wired to this device (FR-9).
@@ -916,6 +935,9 @@ class ConnectionService : Service() {
             screenOn = power?.isInteractive,
             appVersionName = selfVersion.first,
             appVersionCode = selfVersion.second,
+            // Read on every heartbeat, not once at start: the appop is granted by hand in Settings
+            // and can be revoked the same way, and the console must follow it in both directions.
+            usageAccess = UsageAccess.granted(this),
             connectivity = when {
                 capabilities == null -> "none"
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
@@ -998,6 +1020,156 @@ class ConnectionService : Service() {
         }
     }
 
+    /**
+     * The one setup step no code on this phone can perform (FR-3.6).
+     *
+     * `PACKAGE_USAGE_STATS` is an appop, not a runtime permission: `setPermissionGrantState`
+     * returns false for it and no device-owner API can grant it, so it is turned on by hand in
+     * Settings → Apps → Special app access → Usage access. Until it is, every usage query returns
+     * nothing, every package reads zero minutes and no daily limit is ever reached — and a parent
+     * looking at the console cannot tell that from a child who was off their phone.
+     *
+     * So the phone says so, and says it where a person will see it, with the Settings screen one
+     * tap away. Not ongoing and not auto-cancelling: dismissing it must be possible, and the next
+     * sync puts it back while the grant is still missing. It is cancelled the moment the grant
+     * arrives, which is what makes it a signal rather than furniture.
+     */
+    private fun usageAccessNotice(missing: Boolean) {
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        if (!missing) {
+            manager.cancel(SETUP_NOTIFICATION_ID)
+            return
+        }
+        manager.createNotificationChannel(
+            NotificationChannel(
+                SETUP_CHANNEL,
+                getString(R.string.setup_channel),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            )
+        )
+        val text = getString(R.string.usage_access_text)
+        val builder = NotificationCompat.Builder(this, SETUP_CHANNEL)
+            .setContentTitle(getString(R.string.usage_access_title))
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+        val settings = usageAccessIntent()
+        if (settings != null) {
+            builder.setContentIntent(
+                PendingIntent.getActivity(this, 1, settings, PendingIntent.FLAG_IMMUTABLE)
+            )
+        } else {
+            Log.w(TAG, "this build has no usage-access settings screen to link to")
+        }
+        manager.notify(SETUP_NOTIFICATION_ID, builder.build())
+    }
+
+    /**
+     * Records that the server has stopped accepting this phone's credential, and tells the parent
+     * where the way back is (FR-1.8).
+     *
+     * The notification is the entire point of the flag. Before this existed the phone went quiet:
+     * `ConnectionService` logged the refusal and stopped, the console showed a device that was
+     * simply offline, and nothing on the handset said anything at all. The first real phone this
+     * project enrolled sat in exactly that state, and the only remedy anybody could find was a
+     * factory reset.
+     *
+     * Not `IMPORTANCE_HIGH`: it is already the only notification this app raises that a person must
+     * act on, and heads-up on a child's phone every time it is drawn is a notification a child
+     * turns off. `setOngoing` for the same reason the state is persisted — this does not resolve on
+     * its own, and a swipe should not be mistaken for a fix.
+     *
+     * @param status the HTTP status the server answered, when there is one. Only 401 sets the flag;
+     *   see [LinkRefused.recordRefusal]. Any other refusal still stops the loop and is still
+     *   logged, it just does not claim the credential is the problem.
+     */
+    private fun linkRefusedNotice(refused: Boolean, status: Int = 0) {
+        val link = LinkRefused(AndroidRecoveryStore(this).link)
+        if (refused) link.recordRefusal(status) else link.clear()
+
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        if (!link.refused()) {
+            manager.cancel(UNLINKED_NOTIFICATION_ID)
+            return
+        }
+        manager.createNotificationChannel(
+            NotificationChannel(
+                SETUP_CHANNEL,
+                getString(R.string.setup_channel),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            )
+        )
+        val text = getString(R.string.unlinked_text)
+        manager.notify(
+            UNLINKED_NOTIFICATION_ID,
+            NotificationCompat.Builder(this, SETUP_CHANNEL)
+                .setContentTitle(getString(R.string.unlinked_title))
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setOngoing(true)
+                // The same screen the launcher entry opens, and for the same reason it is a
+                // launcher entry at all: this notification exists only while the service has just
+                // run, and the situation it announces is one where the service stops.
+                .setContentIntent(
+                    PendingIntent.getActivity(
+                        this,
+                        2,
+                        Intent(this, RecoveryActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        PendingIntent.FLAG_IMMUTABLE,
+                    )
+                )
+                .build(),
+        )
+    }
+
+    /**
+     * The deepest link to Usage access that this phone will actually accept, or null if it offers
+     * none.
+     *
+     * The plain `ACTION_USAGE_ACCESS_SETTINGS` drops a parent at the top of a list that on a Samsung
+     * runs to several hundred apps, sorted in a way nobody can predict, with FamilyGuard somewhere in
+     * it. Two extras change that, and they are what every app that asks for an appop uses:
+     *
+     *  - `:settings:fragment_args_key` names the preference row to scroll to and **flash** — the
+     *    highlight animation AOSP's `SettingsActivity` plays on arrival, which is the whole point.
+     *    The row is keyed by package name on this screen.
+     *  - `:settings:show_fragment_args` carries the same key in the bundle the fragment is handed,
+     *    because the two are read at different points and builds differ in which one they honour.
+     *    Sending both is the documented-by-practice way to hit both.
+     *
+     * They are string literals rather than `Settings.EXTRA_FRAGMENT_ARG_KEY` because that constant
+     * is hidden: it is not on the API-29 floor this app builds against, and referencing it would not
+     * compile. The literals are the stable half of that contract.
+     *
+     * The `package:` data URI is the third hint, and on several OEM builds it is the one that opens
+     * the per-app screen outright rather than the list.
+     *
+     * **Resolved rather than assumed, and in two stages.** Adding data to an intent narrows which
+     * filters match, so the decorated intent can resolve to nothing on a build whose usage-access
+     * filter declares no data scheme — and an unresolvable content intent is a tap that throws in
+     * the system UI, which reads to a parent as an app that is broken rather than as a phone that
+     * cannot offer the setting. So: try the specific one, fall back to the bare one, and say in the
+     * log which was used, because "the highlight did not flash" and "the deep link was not taken"
+     * are otherwise the same observation.
+     */
+    private fun usageAccessIntent(): Intent? {
+        val bare = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val highlighted = Intent(bare)
+            .setData(Uri.fromParts("package", packageName, null))
+            .putExtra(SETTINGS_FRAGMENT_ARG_KEY, packageName)
+            .putExtra(
+                SETTINGS_SHOW_FRAGMENT_ARGS,
+                // The platform Bundle rather than the androidx helper, which is deprecated for
+                // losing type safety -- and this build treats a warning as an error.
+                Bundle().apply { putString(SETTINGS_FRAGMENT_ARG_KEY, packageName) },
+            )
+        if (highlighted.resolveActivity(packageManager) != null) return highlighted
+        Log.i(TAG, "this build does not accept the highlighted usage-access link; using the plain one")
+        return bare.takeIf { it.resolveActivity(packageManager) != null }
+    }
+
     private fun notification(): Notification {
         val manager = getSystemService(NotificationManager::class.java)
         // Low importance: it must be visible — the platform requires a foreground service to say so
@@ -1042,6 +1214,21 @@ class ConnectionService : Service() {
         private const val TAG = "FamilyGuard/Connection"
         private const val CHANNEL = "family-guard-connection"
         private const val NOTIFICATION_ID = 1
+
+        /** A separate channel so a parent can silence the running notice and still be told this. */
+        /**
+         * The two extras AOSP's Settings reads to scroll to a preference row and flash it. Hidden
+         * platform constants (`Settings.EXTRA_FRAGMENT_ARG_KEY` and
+         * `SettingsActivity.EXTRA_SHOW_FRAGMENT_ARGUMENTS`), so the literals are written out — they
+         * are not on the API-29 floor and would not compile by name. An unknown extra is ignored,
+         * so a build that reads neither is no worse off than one that was never sent them.
+         */
+        private const val SETTINGS_FRAGMENT_ARG_KEY = ":settings:fragment_args_key"
+        private const val SETTINGS_SHOW_FRAGMENT_ARGS = ":settings:show_fragment_args"
+
+        private const val SETUP_CHANNEL = "family-guard-setup"
+        private const val UNLINKED_NOTIFICATION_ID = 3
+        private const val SETUP_NOTIFICATION_ID = 2
 
         /**
          * The inventory digest lives in its own preferences file, so that clearing the policy cache

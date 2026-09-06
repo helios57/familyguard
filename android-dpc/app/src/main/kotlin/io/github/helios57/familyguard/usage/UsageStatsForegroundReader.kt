@@ -25,7 +25,7 @@ import android.util.Log
 class UsageStatsForegroundReader(private val context: Context) : ForegroundReader {
 
     override fun spans(fromMillis: Long, toMillis: Long): List<ForegroundSpan>? {
-        if (!hasUsageAccess()) return null
+        if (!UsageAccess.granted(context)) return null
         val manager = context.getSystemService(UsageStatsManager::class.java) ?: return null
         val events = try {
             collect(manager.queryEvents(fromMillis, toMillis))
@@ -39,46 +39,12 @@ class UsageStatsForegroundReader(private val context: Context) : ForegroundReade
     }
 
     override fun unavailableReason(): String =
-        if (hasUsageAccess()) {
+        if (UsageAccess.granted(context)) {
             "usage access is granted; the platform returned nothing"
         } else {
             "usage access (PACKAGE_USAGE_STATS) is not granted, so screen time cannot be measured " +
                 "and no quota can be enforced"
         }
-
-    /**
-     * Whether the appop is allowed for *this* uid and package.
-     *
-     * **`checkOpNoThrow`, and the platform reversed itself on which of the two names that is.** In
-     * API 29 `checkOpNoThrow(String, int, String)` was deprecated in favour of
-     * `unsafeCheckOpNoThrow`, so that is what this called. In API 37 the deprecation moved back the
-     * other way: measured against the platform stubs, `checkOpNoThrow(String, int, String)` carries
-     * no `Deprecated` attribute in `android-37.1/android.jar` and `unsafeCheckOpNoThrow` does — the
-     * exact opposite of `android-35/android.jar`, where the same two-line probe reports the reverse.
-     * Nothing about the semantics changed: both answer a mode instead of throwing, and both are
-     * being asked about this process's own uid and package.
-     *
-     * This is what `allWarningsAsErrors` is for. The rename is invisible at runtime and would have
-     * ridden along unnoticed for as long as the old name kept working.
-     *
-     * `runCatching` stays regardless of which name is current. A `SecurityException` here would mean
-     * the caller is not the package it is asking about, which cannot happen — and if the platform
-     * ever makes it happen, not-measured is the honest answer, not a crashed usage poll.
-     */
-    private fun hasUsageAccess(): Boolean {
-        val appOps = context.getSystemService(AppOpsManager::class.java) ?: return false
-        val mode = runCatching {
-            appOps.checkOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                Process.myUid(),
-                context.packageName,
-            )
-        }.getOrElse {
-            Log.w(TAG, "could not read the usage-access appop: ${it.message}")
-            return false
-        }
-        return mode == AppOpsManager.MODE_ALLOWED
-    }
 
     private fun collect(events: UsageEvents): List<ForegroundEvent> {
         val out = mutableListOf<ForegroundEvent>()
@@ -103,4 +69,50 @@ class UsageStatsForegroundReader(private val context: Context) : ForegroundReade
     private companion object {
         const val TAG = "FamilyGuard/Usage"
     }
+}
+
+/**
+ * The one place that answers "may this app read usage stats?".
+ *
+ * One implementation and not two, because the reader's answer decides whether screen time is
+ * measured and the heartbeat's answer decides whether the console SAYS it is measured. Two copies
+ * of this predicate that disagree is a console reporting a healthy phone that is measuring nothing.
+ */
+object UsageAccess {
+
+    /**
+     * Whether the appop is allowed for *this* uid and package.
+     *
+     * **`checkOpNoThrow`, and the platform reversed itself on which of the two names that is.** In
+     * API 29 `checkOpNoThrow(String, int, String)` was deprecated in favour of
+     * `unsafeCheckOpNoThrow`, so that is what this called. In API 37 the deprecation moved back the
+     * other way: measured against the platform stubs, `checkOpNoThrow(String, int, String)` carries
+     * no `Deprecated` attribute in `android-37.1/android.jar` and `unsafeCheckOpNoThrow` does — the
+     * exact opposite of `android-35/android.jar`, where the same two-line probe reports the reverse.
+     * Nothing about the semantics changed: both answer a mode instead of throwing, and both are
+     * being asked about this process's own uid and package.
+     *
+     * This is what `allWarningsAsErrors` is for. The rename is invisible at runtime and would have
+     * ridden along unnoticed for as long as the old name kept working.
+     *
+     * `runCatching` stays regardless of which name is current. A `SecurityException` here would mean
+     * the caller is not the package it is asking about, which cannot happen — and if the platform
+     * ever makes it happen, not-measured is the honest answer, not a crashed usage poll.
+     */
+    fun granted(context: Context): Boolean {
+        val appOps = context.getSystemService(AppOpsManager::class.java) ?: return false
+        val mode = runCatching {
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                context.packageName,
+            )
+        }.getOrElse {
+            Log.w(TAG, "could not read the usage-access appop: ${it.message}")
+            return false
+        }
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    private const val TAG = "FamilyGuard/UsageAccess"
 }

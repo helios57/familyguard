@@ -61,6 +61,10 @@ type deviceStateDTO struct {
 
 	AppVersionName string `json:"app_version_name"`
 	AppVersionCode int64  `json:"app_version_code"`
+
+	// Three-valued (FR-3.6): nil is a phone that has not said, false is one that measured that it
+	// cannot see usage at all. A bool here would make those the same answer.
+	UsageAccess *bool `json:"usage_access"`
 }
 
 type deviceViewDTO struct {
@@ -135,6 +139,10 @@ type policyInputDTO struct {
 		BlockedPackages    []string `json:"blocked_packages"`
 		AllowedPackages    []string `json:"allowed_packages"`
 		BlockedDomains     []string `json:"blocked_domains"`
+		// FR-18, and it is in the INPUT rather than only the output because the phone recomputes
+		// this offline. A device given only the computed answer reveals the whole list the first
+		// time it loses the network.
+		FamilyBlockedPackages []string `json:"family_blocked_packages"`
 	} `json:"settings"`
 	Installed []struct {
 		Package            string `json:"package"`
@@ -178,10 +186,13 @@ type enrollmentDTO struct {
 }
 
 type provisioningDTO struct {
-	Device    deviceDTO      `json:"device"`
-	Payload   map[string]any `json:"payload"`
-	SVG       string         `json:"svg"`
-	ExpiresAt time.Time      `json:"expires_at"`
+	Device  deviceDTO      `json:"device"`
+	Payload map[string]any `json:"payload"`
+	SVG     string         `json:"svg"`
+	// The enrollment token in type-able form (FR-1.8), for the phone that is already a device
+	// owner and therefore has no welcome screen left to scan the QR with.
+	SetupCode string    `json:"setup_code"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 type auditEntryDTO struct {
@@ -259,9 +270,25 @@ func (h *harness) newDevice(token, childID, name string) deviceDTO {
 // the only channel a real device has for it — reading it from anywhere else would test a path no
 // phone uses.
 func (h *harness) provision(token, deviceID string) (provisioningDTO, string) {
+	return h.mintSetupCode(token, deviceID, false)
+}
+
+// reprovision is provision for a device that is ALREADY enrolled, and it is a separate helper
+// because the server refuses the plain call there (FR-1.7). The acknowledgement is not ceremony
+// the tests can route around: it is the thing that stops a mis-tap revoking a working phone, so a
+// test that needs a second code says out loud that it means to replace the first one.
+func (h *harness) reprovision(token, deviceID string) (provisioningDTO, string) {
+	return h.mintSetupCode(token, deviceID, true)
+}
+
+func (h *harness) mintSetupCode(token, deviceID string, replaceEnrolled bool) (provisioningDTO, string) {
 	h.t.Helper()
+	var body map[string]any
+	if replaceEnrolled {
+		body = map[string]any{"replace_enrolled": true}
+	}
 	var out provisioningDTO
-	h.call(http.MethodPost, "/devices/"+deviceID+"/provisioning", token, nil).
+	h.call(http.MethodPost, "/devices/"+deviceID+"/provisioning", token, body).
 		expect(http.StatusOK).decode(&out)
 
 	admin, ok := out.Payload[extraAdminExtras].(map[string]any)
@@ -887,9 +914,23 @@ func TestPolicyEnforcementJourney(t *testing.T) {
 	}).expect(http.StatusOK)
 
 	// The defaults, before a parent touches anything.
+	//
+	// "Nothing suspended" stopped being the right baseline when FR-18 landed: a new child starts
+	// out with the curated family blocklist in effect, which is the whole point of it. So the
+	// assertion is that nothing beyond that list is restrained — an off-by-one in the engine would
+	// still show up here as an app of this child's that should not be suspended.
 	base := h.desiredState(f.parent.Token, f.device.ID, "")
-	if base.Desired.SuspendReason != "" || len(base.Desired.SuspendedPackages) != 0 {
+	if base.Desired.SuspendReason != "" {
 		t.Fatalf("a new child starts out restrained: %+v", base.Desired)
+	}
+	if extra := suspendedBeyondTheBlocklist(base.Desired); len(extra) != 0 {
+		t.Fatalf("a new child starts out with %v suspended, which is not on the curated "+
+			"blocklist: %+v", extra, base.Desired)
+	}
+	// And the curated list is actually there, so the loop above is not vacuously green over an
+	// empty slice.
+	if len(base.Desired.SuspendedPackages) == 0 {
+		t.Fatal("a new child has an empty suspended set; the curated blocklist (FR-18) is not reaching the device")
 	}
 	if base.Desired.PrivateDNSHost == "" {
 		t.Fatal("filtering is off by default; FR-6.1 says it is enforced by the Device Owner")
@@ -1041,7 +1082,10 @@ func TestPolicyEnforcementJourney(t *testing.T) {
 		t.Fatalf("06:30 is on the far side of midnight and reads as %q (FR-4.1)", s.SuspendReason)
 	}
 	day := h.desiredState(f.parent.Token, f.device.ID, "2026-01-16T14:00:00%2B01:00")
-	if day.Desired.SuspendReason != "" || len(day.Desired.SuspendedPackages) != 0 {
+	// The curated family blocklist (FR-18) is a floor that bedtime is not what put there, so
+	// leaving the window releases everything except it. Asserting "nothing suspended" would now be
+	// asserting that FR-18 does not work.
+	if day.Desired.SuspendReason != "" || len(suspendedBeyondTheBlocklist(day.Desired)) != 0 {
 		t.Fatalf("leaving the window did not un-suspend (FR-4.2): %+v", day.Desired)
 	}
 

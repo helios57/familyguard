@@ -56,6 +56,25 @@ or remove parents; the others differ only in that.
   scanning the QR. The DPC answers `GET_PROVISIONING_MODE` with `FULLY_MANAGED_DEVICE` and applies
   the baseline policy during `ADMIN_POLICY_COMPLIANCE`.
 - FR-1.6 The APK the QR points at must be downloadable, unauthenticated, over TLS.
+- FR-1.7 Issuing a new provisioning QR for a device that is **already enrolled** revokes that
+  phone the instant the code exists: it stops reporting, and nothing done from the console brings
+  it back — the way back is FR-1.8, which needs the phone in someone's hand, and on a build without
+  that screen it is still a factory reset. The request must therefore carry an explicit
+  acknowledgement that the phone is being replaced; without one the server refuses and leaves the
+  credential intact. Asking for a QR must never be a way to lose a working phone by accident. The
+  console states the cost in the parent's own words before it sends the acknowledgement, and shows
+  the minted code in type-able form next to the QR, because a phone that is already a device owner
+  has no welcome screen left to scan one with.
+- FR-1.8 A phone whose credential the server no longer accepts must be able to re-link **on the
+  phone**, with a setup code the parent generates in the console, without a factory reset. The
+  phone learns it has been unlinked from a `401` — and only from a `401`, because every other
+  non-retryable status is a fault in one request rather than a statement about the credential —
+  and says so in an ongoing notification and on the recovery screen. Re-linking is the deliberate
+  exception to FR-1.4's once-only exchange, and it is bounded by three things: the server address
+  comes from the stored credential and never from what was typed, so a code cannot move the phone
+  to another control plane; it needs a code the server minted, so a phone a parent deliberately
+  cut off stays cut off; and it replaces the credential and the recovery material as one unit, so
+  the recovery code the console shows afterwards is the one that works.
 
 ### FR-2 Device Owner hardening
 Applied at provisioning and re-applied on every boot:
@@ -93,6 +112,12 @@ Applied at provisioning and re-applied on every boot:
 - FR-3.4 A per-child global daily limit (minutes) is enforced. Reaching it suspends non-exempt apps
   for the rest of the day; the day boundary is the device's local midnight.
 - FR-3.5 The console shows today's usage per child and per app.
+- FR-3.6 Screen time depends on an access grant no code on the device can give itself
+  (`PACKAGE_USAGE_STATS` is an appop, not a runtime permission). Where it is missing, every query
+  returns nothing and every app reads zero minutes — which is indistinguishable from a child who
+  did not use their phone. The device reports whether it holds the grant, the console says so
+  wherever it shows a number that depends on it, and the phone offers the setting in one tap.
+  Unmeasurable is never presented as measured.
 
 ### FR-4 Bedtime
 - FR-4.1 Per-child bedtime window with start and end time; the window may cross midnight.
@@ -175,6 +200,11 @@ a device offline when it stops reporting.
 - FR-12.4 Recovery attempts are rate-limited with escalating lockout.
 - FR-12.5 Every recovery attempt, successful or not, is reported to the control plane when the
   device next connects.
+- FR-12.6 A boot must not undo a recovery. The boot-time baseline of FR-2 is a floor for a *managed*
+  device; on a released one it is applied with an empty required set, so it adds nothing and still
+  clears the forbidden set FR-2.3 names. Without this the release ends at the next reboot with
+  nothing said — and it ends precisely when the sync that would legitimately end it is the thing
+  that cannot happen, because a release is only ever used when the control plane is out of reach.
 
 ### FR-13 Parent console, and what the phone says for itself
 - FR-13.1 A web UI, authenticated with Google Sign-In, covering: overview and live telemetry per
@@ -268,6 +298,34 @@ checks, reading and writing the same records, and appearing in the audit trail a
   records when it was last used, because that is what tells a parent which key to revoke.
 - FR-17.4 The audit trail distinguishes a key from a person: every entry names the actor type, so
   "who changed this" is answerable without inferring it from the hour of the day.
+
+### FR-18 Applications nobody in the family should have (the blocklist)
+A phone arrives with software on it that the family did not choose — a social network, a vendor's
+promotional service, an installer whose job is to put those back. Deciding to be rid of one of those
+is not a decision about a child; it is a decision about the household, and having to repeat it per
+child, and again for every child added later, makes it a decision that decays.
+
+So the family has one blocklist, and it is the same instrument as an app rule pointed at a wider
+scope. It does not uninstall: entries are hidden and suspended, which is reversible from the console
+and survives a reinstall, and which never removes an app that a factory reset would not restore.
+
+- FR-18.1 The list belongs to the family. Every child is subject to it, including a child added
+  after an entry was written, and a change to it reaches every enrolled device.
+- FR-18.2 An entry covers a package whether or not it is installed now. Blocking a preinstall whose
+  installer stub is still resident, and blocking only what is on the phone today, are the two ways
+  this fails; both are the same omission.
+- FR-18.3 A child-level ALLOW rule exempts that child from a family entry. It does not lift that
+  child's own BLOCK: a household default must never overrule a decision made about one child.
+- FR-18.4 FR-5.5 outranks the list. A package the device reports as critical — its dialer, launcher,
+  settings, SMS app or any enabled keyboard — is not hidden however it got onto the list.
+- FR-18.5 The list ships with a curated set of entries, seeded once. A parent may delete any of
+  them, and a deletion is permanent: nothing re-applies the curated set on restart.
+- FR-18.6 The console reports what the **phone** says, not what the rule asked for. Each device
+  reports, per package, whether it currently has it hidden or suspended, and the blocklist shows
+  that back: hidden, on the phone but not hidden yet, or not installed here. A package the device
+  has hidden stays in the inventory — hiding clears the installed-for-this-user flag, and a phone
+  that dropped it from the list would report the blocked app as absent, answering "is it gone?"
+  with the one word that is both wrong and reassuring.
 
 ---
 

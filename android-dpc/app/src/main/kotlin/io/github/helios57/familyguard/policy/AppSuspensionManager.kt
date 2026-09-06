@@ -1,5 +1,7 @@
 package io.github.helios57.familyguard.policy
 
+import io.github.helios57.familyguard.device.AppRestraint
+
 /**
  * The platform calls app suspension needs, named so the decisions can be tested without a phone.
  *
@@ -8,22 +10,27 @@ package io.github.helios57.familyguard.policy
  * failure — but neither says anything about a package that was suspended by an earlier policy and
  * must now be released, which is the half a bedtime that never ends is made of.
  */
-interface AppGateway {
+interface AppGateway : AppRestraint {
     /**
-     * Every package installed for this user, system ones included.
+     * Every package this DPC can act on for this user: installed, system ones included, **plus the
+     * ones it has hidden**.
      *
      * Used to decide what can be acted on at all: a blocked package that is not installed is a
      * parent blocking something ahead of time, not a failure. The DPC's own package must appear
      * here — [AppSuspensionManager] checks that, because package-visibility filtering would
      * otherwise turn a short list into a silent "nothing to suspend".
+     *
+     * Hidden packages are part of the contract rather than an implementation detail of one
+     * gateway, because reversibility rests on it: everything downstream is filtered by this set,
+     * so an implementation that drops what it has hidden can never reveal it again.
      */
     fun installed(): Set<String>
 
-    /** Packages currently suspended, read back from the platform. */
-    fun suspended(): Set<String>
+    /** Packages currently suspended, read back from the platform. A subset of [installed]. */
+    override fun suspended(): Set<String>
 
-    /** Packages currently hidden, read back from the platform. */
-    fun hidden(): Set<String>
+    /** Packages currently hidden, read back from the platform. A subset of [installed]. */
+    override fun hidden(): Set<String>
 
     /**
      * @return the packages the platform refused, with a reason. An empty map means it took them all.
@@ -76,6 +83,44 @@ data class AppPlan(
 )
 
 /**
+ * The set an [AppGateway] must report from two platform reads, one narrow and one wide.
+ *
+ * Pure, and separate from the gateway for the reason [AppSuspensionPlanner] is separate from the
+ * manager: the decision is testable in milliseconds and the binder calls around it are not.
+ */
+object InstalledPackages {
+
+    /**
+     * Everything this DPC can still act on: what is installed, plus what it has hidden.
+     *
+     * Hiding clears a package's installed-for-this-user flag, so the narrow read stops returning
+     * it. Since every downstream decision is filtered by this set, a result built from the narrow
+     * read alone can never reveal what it hid — the app is gone for good, silently, because the
+     * sync that should have brought it back reports clean.
+     *
+     * @param present the narrow read: installed for this user.
+     * @param known the wide read: the above plus packages the platform merely remembers. Treated
+     * as a candidate list, never as an answer — it also returns apps that are genuinely gone with
+     * only their data retained, and asking the platform to hide one of those is a refusal that
+     * would then be reported as a failure.
+     * @param isHidden asked only about the difference between the two reads, which is the only
+     * place the answer can change the result.
+     */
+    fun union(
+        present: Collection<String>,
+        known: Collection<String>,
+        isHidden: (String) -> Boolean,
+    ): Set<String> {
+        val out = present.toMutableSet()
+        for (pkg in known) {
+            if (pkg in out) continue
+            if (isHidden(pkg)) out += pkg
+        }
+        return out
+    }
+}
+
+/**
  * Turns a desired suspension/hiding set into the smallest set of platform calls that converges on it.
  *
  * Pure, and separate from the manager for the same reason [RestrictionPlanner] is: this is where the
@@ -110,7 +155,16 @@ object AppSuspensionPlanner {
         absent += wantSuspended.filter { it !in installed }
         absent += wantHidden.filter { it !in installed }
 
-        val suspendable = wantSuspended.filterTo(sortedSetOf()) { it in installed }
+        // Hiding subsumes suspension, so a package on both lists is only hidden.
+        //
+        // Not an optimisation. `setApplicationHidden` clears the package's installed-for-this-user
+        // flag, after which the platform answers `isPackageSuspended` for it with
+        // `NameNotFoundException` — read here as "not suspended". Asking for both would therefore
+        // re-request the suspension on every sync for the rest of the phone's life, have it
+        // refused, and record a failure each time: red forever, for every app the family blocks,
+        // which is the state that teaches a parent to skip the whole report. A hidden app cannot
+        // be launched; there is nothing left for suspension to add.
+        val suspendable = wantSuspended.filterTo(sortedSetOf()) { it in installed && it !in wantHidden }
         val hideable = wantHidden.filterTo(sortedSetOf()) { it in installed }
 
         return AppPlan(
@@ -135,7 +189,12 @@ object AppSuspensionPlanner {
  * own package. Passed in rather than read here so the manager stays free of Android imports.
  */
 class AppSuspensionManager(
-    private val gateway: AppGateway,
+    /**
+     * Public because the inventory reader needs the same answers this manager acts on. Two readers
+     * would be two opinions about what is hidden, and the console's copy would drift from the one
+     * the phone is enforcing.
+     */
+    val gateway: AppGateway,
     private val protectedPackages: Set<String>,
     private val ownPackage: String,
 ) {
@@ -178,19 +237,25 @@ class AppSuspensionManager(
         val effectiveSuspended = gateway.suspended()
         val effectiveHidden = gateway.hidden()
 
+        // Checked against what was actually asked of the platform, which is the planner's rule
+        // mirrored: a package on both lists is only hidden, so charging it with a missing
+        // suspension would report a failure for a call this code deliberately never made — and
+        // would do it on every sync, for every app the family blocks. Still one line per package:
+        // two reasons for one app is one problem.
+        val actionable = { pkg: String -> pkg.isNotEmpty() && pkg !in protectedPackages && pkg in installed }
+        val wantHidden = desiredHidden.filterTo(sortedSetOf(), actionable)
+        val wantSuspended = desiredSuspended.filterTo(sortedSetOf(), actionable)
+
         val missing = LinkedHashMap<String, String>()
-        desiredSuspended
-            .filter { it.isNotEmpty() && it !in protectedPackages && it in installed }
-            .sorted()
-            .filter { it !in effectiveSuspended }
-            .forEach { missing[it] = "suspension requested, accepted, and not in effect" }
-        desiredHidden
-            .filter { it.isNotEmpty() && it !in protectedPackages && it in installed }
-            .sorted()
-            .filter { it !in effectiveHidden }
-            // Two reasons for one package is one line, and the specific half is the suspension: a
-            // hidden-but-running app is a cosmetic failure, a visible-and-usable one is not.
-            .forEach { missing.putIfAbsent(it, "hiding requested, accepted, and not in effect") }
+        for (pkg in wantHidden) {
+            if (pkg !in effectiveHidden) missing[pkg] = "hiding requested, accepted, and not in effect"
+        }
+        for (pkg in wantSuspended) {
+            if (pkg in wantHidden) continue
+            if (pkg !in effectiveSuspended) {
+                missing[pkg] = "suspension requested, accepted, and not in effect"
+            }
+        }
 
         return AppOutcome(
             suspended = plan.suspend,

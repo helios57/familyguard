@@ -43,6 +43,7 @@ type Source interface {
 	ListInstalledApps(ctx context.Context, deviceID uuid.UUID, includeSystem bool) ([]store.InstalledApp, error)
 	UsageMinutesForDay(ctx context.Context, deviceID uuid.UUID, day string) (int, error)
 	ManagedAppsForChild(ctx context.Context, childID uuid.UUID) ([]store.App, error)
+	FamilyBlockedPackageNames(ctx context.Context) ([]string, error)
 }
 
 // Resolver computes a device's desired state from stored policy and telemetry.
@@ -156,24 +157,33 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 	if err != nil {
 		return nil, nil, fmt.Errorf("managed apps: %w", err)
 	}
+	// Read, never defaulted. An error here returns rather than falling back to an empty list: an
+	// empty family blocklist is a valid state that means "block nothing", so a silent fallback
+	// would unhide every preinstall on the next sync and look exactly like a parent having emptied
+	// the list on purpose.
+	familyBlocked, err := r.src.FamilyBlockedPackageNames(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("family blocklist: %w", err)
+	}
 
 	blocked, allowed := splitRules(rules)
 	in := policy.Input{
 		Settings: policy.Settings{
-			TrackingOnly:       pol.TrackingOnly,
-			AllowChildInstalls: pol.AllowChildInstalls,
-			YouTubeBlocked:     pol.YouTubeBlocked,
-			DailyLimitMinutes:  pol.DailyLimitMinutes,
-			BedtimeEnabled:     pol.BedtimeEnabled,
-			BedtimeStart:       pol.BedtimeStart,
-			BedtimeEnd:         pol.BedtimeEnd,
-			DNSHost:            pol.DNSHost,
-			Timezone:           pol.Timezone,
-			Version:            pol.Version,
-			BlockedPackages:    blocked,
-			AllowedPackages:    allowed,
-			BlockedDomains:     domains,
-			ManagedApps:        r.managedApps(managed),
+			TrackingOnly:          pol.TrackingOnly,
+			AllowChildInstalls:    pol.AllowChildInstalls,
+			YouTubeBlocked:        pol.YouTubeBlocked,
+			DailyLimitMinutes:     pol.DailyLimitMinutes,
+			BedtimeEnabled:        pol.BedtimeEnabled,
+			BedtimeStart:          pol.BedtimeStart,
+			BedtimeEnd:            pol.BedtimeEnd,
+			DNSHost:               pol.DNSHost,
+			Timezone:              pol.Timezone,
+			Version:               pol.Version,
+			BlockedPackages:       blocked,
+			FamilyBlockedPackages: familyBlocked,
+			AllowedPackages:       allowed,
+			BlockedDomains:        domains,
+			ManagedApps:           r.managedApps(managed),
 		},
 		Installed:        installedApps(apps),
 		UsedMinutesToday: used,

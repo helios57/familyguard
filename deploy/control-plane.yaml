@@ -63,7 +63,7 @@ spec:
           #   kubectl get pod -n familyguard -o jsonpath='{..imageID}'
           # — and never against the tag it says it was pulled by, which is a label a registry can be
           # made to move.
-          image: ghcr.io/helios57/familyguard-control-plane:0.3.0
+          image: ghcr.io/helios57/familyguard-control-plane:0.4.0
           securityContext:
             allowPrivilegeEscalation: false
             # Proven, not assumed: tests/image/smoke.sh runs this image with --read-only,

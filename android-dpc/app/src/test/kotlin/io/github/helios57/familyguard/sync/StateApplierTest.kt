@@ -232,7 +232,10 @@ class AppApplierTest {
         )
 
         assertTrue(outcome.toString(), outcome.ok)
-        assertEquals(setOf("com.game", "com.chat"), gateway.suspended())
+        // `com.game` is on both lists, so the planner hides it and does not also suspend it —
+        // hiding is the stronger of the two and the platform stops reporting suspension once it
+        // lands. See AppSuspensionPlannerTest, "a package that is hidden is not also suspended".
+        assertEquals(setOf("com.chat"), gateway.suspended())
         assertEquals(setOf("com.game"), gateway.hidden())
     }
 

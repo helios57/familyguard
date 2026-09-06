@@ -219,6 +219,127 @@ class EnrollerTest {
         assertTrue(result.toString(), result is EnrollResult.Deferred)
     }
 
+
+    // ---- re-linking a phone the server has revoked (FR-1.8) ---------------------------------
+
+    @Test
+    fun `a revoked phone re-links with a fresh setup code and keeps its enrollment`() {
+        // The case this whole method exists for. Issuing a new setup code in the console nulls the
+        // device's token hash server-side; the phone still holds a credential, so `enroll` answers
+        // `AlreadyEnrolled` forever and the only way back used to be a factory reset.
+        val revoked = Credentials(server.baseUrl, "dt-revoked", "dev-1", "child-1")
+        val store = InMemoryCredentialStore(revoked)
+
+        val result = enroller(store).relink("  et-1  ", DeviceFacts(model = "Pixel 4a"))
+
+        val enrolled = result as EnrollResult.Enrolled
+        assertEquals("dt", enrolled.credentials.deviceToken)
+        assertEquals(enrolled.credentials, store.load())
+        assertEquals(1, store.writes)
+        // The recovery material is replaced as part of the same write: the server mints new material
+        // on every enrollment, so the code the console now shows is the only one that works.
+        assertEquals(600_000, store.load()!!.recovery.iterations)
+        assertTrue(server.last!!.body, server.last!!.body.contains("\"enrollment_token\":\"et-1\""))
+    }
+
+    @Test
+    fun `the code cannot move the phone to a different control plane`() {
+        // A setup code is a bearer token and carries no address. The server URL is read back out of
+        // the stored credential, so a code typed by anyone at all reaches the family's own server or
+        // nothing. Two servers, because with one this assertion would hold however the URL was
+        // chosen.
+        val elsewhere = LoopbackServer { HttpResponse(200, body = SUCCESS) }
+        try {
+            val store = InMemoryCredentialStore(
+                Credentials(server.baseUrl, "dt-revoked", "dev-1", "child-1")
+            )
+
+            val result = enroller(store).relink("et-1")
+
+            assertTrue(result.toString(), result is EnrollResult.Enrolled)
+            assertEquals(server.baseUrl, store.load()!!.serverUrl)
+            assertEquals(1, server.requests.size)
+            assertTrue("the other server was contacted", elsewhere.requests.isEmpty())
+        } finally {
+            elsewhere.close()
+        }
+    }
+
+    @Test
+    fun `a refused code leaves the phone exactly as it was`() {
+        // The credential is the only record of which server this phone belongs to. Clearing it on a
+        // mistyped code would take away the one thing that makes the next attempt possible.
+        status = 401
+        body = """{"error":"unauthorized","message":"unknown token","request_id":"r"}"""
+        val revoked = Credentials(server.baseUrl, "dt-revoked", "dev-1", "child-1")
+        val store = InMemoryCredentialStore(revoked)
+
+        val result = enroller(store).relink("wrong")
+
+        assertEquals(401, (result as EnrollResult.Refused).cause.status)
+        assertEquals(revoked, store.load())
+        assertEquals(0, store.writes)
+    }
+
+    @Test
+    fun `a re-link attempted with no server is deferred, not refused`() {
+        // A parent stands in the kitchen with the setup code and the phone on mobile data that has
+        // not come up. Telling them the code is wrong would send them to generate another one, which
+        // invalidates the one they are holding.
+        server.stopAnswering()
+        val store = InMemoryCredentialStore(
+            Credentials(server.baseUrl, "dt-revoked", "dev-1", "child-1")
+        )
+
+        val result = enroller(store).relink("et-1")
+
+        assertTrue(result.toString(), result is EnrollResult.Deferred)
+        assertEquals("dt-revoked", store.load()!!.deviceToken)
+    }
+
+    @Test
+    fun `an empty code is not sent anywhere`() {
+        val store = InMemoryCredentialStore(
+            Credentials(server.baseUrl, "dt-revoked", "dev-1", "child-1")
+        )
+
+        val blank = enroller(store).relink("   ")
+
+        assertTrue((blank as EnrollResult.Misprovisioned).reason, blank.reason.contains("setup code"))
+        assertTrue(server.requests.isEmpty())
+        assertEquals(0, store.writes)
+    }
+
+    @Test
+    fun `a phone that never enrolled has nothing to re-link`() {
+        // There is no server URL to send it to. The setup screen, not this button, is the way in.
+        val store = InMemoryCredentialStore()
+
+        val result = enroller(store).relink("et-1")
+
+        assertTrue(
+            (result as EnrollResult.Misprovisioned).reason,
+            result.reason.contains("never enrolled"),
+        )
+        assertTrue(server.requests.isEmpty())
+    }
+
+    @Test
+    fun `re-linking does not loosen the guard that enroll still holds`() {
+        // The negative control for the whole group above. `relink` is an exception to the
+        // idempotence guard, and the risk of adding it is that the guard stops holding for the path
+        // it was written for: a re-delivered `onProfileProvisioningComplete` must still spend no
+        // second token.
+        val existing = Credentials(server.baseUrl, "dt-old", "dev-old", "child-old")
+        val store = InMemoryCredentialStore(existing)
+
+        val result = enroller(store).enroll(extras())
+
+        assertEquals(existing, (result as EnrollResult.AlreadyEnrolled).credentials)
+        assertEquals(0, store.writes)
+        assertTrue(server.requests.isEmpty())
+    }
+
     private companion object {
         const val SUCCESS = """
             {"device_token":"dt","device_id":"dev-1","child_id":"child-1",

@@ -531,6 +531,42 @@ Things worth knowing before you rely on it:
 - Bedtime, the daily limit and app rules all still apply to a managed app. Installing something is
   not exempting it.
 
+## Getting the vendor's software off the phones
+
+**Family → Apps → "Blocked for everyone".** One list, applied to every child, including any added
+later. It ships populated: the four Meta packages a Samsung preinstalls, OneDrive, Link to Windows
+and My Galaxy. Nothing needs to be configured for that to take effect — the list applies at the next
+sync of every enrolled phone.
+
+What it does is **hide and suspend**, not uninstall. The app stays on the phone, cannot run and does
+not appear in the launcher, and removing the entry brings it back at the next sync. That is
+deliberate: nothing here can remove something a factory reset would not restore.
+
+- **The three Facebook stubs matter as much as the app.** `com.facebook.system` is a preinstalled
+  installer whose job is to put `com.facebook.katana` back. Blocking only the visible app does not
+  hold.
+- **An entry works on a package the phone does not have yet.** That is the point — it is what stops
+  a preinstall arriving later, and the list says "not installed here" beside such an entry rather
+  than hiding it.
+- **Exceptions are per child.** Set the app's rule to **Allow** on the child who needs it; the rest
+  of the family keeps the block. A per-child **Block** is never overruled by the family list.
+- **Some packages are refused whatever the list says.** The phone reports its own dialer, launcher,
+  settings app, SMS app and every enabled keyboard as critical, and those are stripped from the
+  computed policy last and unconditionally (FR-5.5). Putting one on the list has no effect rather
+  than a bad one.
+- **Removing a preinstalled entry is permanent.** It is recorded, not just absent, so a restart does
+  not bring it back.
+
+What is deliberately **not** on the shipped list, because hiding it breaks the phone: Samsung's
+software-update client (`com.wssyncmldm` — hiding it stops security patches), Samsung Account, the
+two Knox packages that device-owner enrolment runs through, and the caller-ID service the dialer
+depends on. Add packages by all means; check first that nothing you rely on is built on them.
+
+The same list is at `GET/PUT/DELETE /api/v1/family/blocked-packages` for a script or an MCP server.
+Reading it needs any parent; changing it needs an admin.
+
+---
+
 ## API keys, for scripts and MCP servers
 
 Everything a parent can do in the console can be done with an API key instead of a browser session —
@@ -580,7 +616,7 @@ a one-time step per phone. Skipping them fails in opposite ways, and only one of
 
 | Appop | If it is missing |
 |---|---|
-| `GET_USAGE_STATS` (`PACKAGE_USAGE_STATS`) | **Screen time cannot be measured at all.** Every query returns nothing. The DPC reports *not measured* rather than zero, so the console says so instead of showing a child who spent the day off their phone — but the daily limit (FR-3) can never be reached until this is granted. |
+| `GET_USAGE_STATS` (`PACKAGE_USAGE_STATS`) | **Screen time cannot be measured at all.** Every query returns nothing. The DPC reports *not measured* rather than zero, so the console says so instead of showing a child who spent the day off their phone — but the daily limit (FR-3) can never be reached until this is granted. The phone raises an ongoing notification for it; tapping that opens Usage access **scrolled to FamilyGuard's own row, flashing**, so nobody has to find one entry in a list of two hundred. On a build whose Settings does not accept the highlight the phone falls back to the plain list and logs that it did. |
 | `SCHEDULE_EXACT_ALARM` | Bedtime still starts, late. The DPC falls back to a wake-up the platform may delay and logs it as `INEXACT`; it does not fall back to no alarm. |
 
 From the phone: **Settings → Apps → Special app access → Usage access → FamilyGuard**, and the same
@@ -645,6 +681,54 @@ It survives the DPC re-applying its whole policy, and it survives an app update.
 **Device Owner can only be established on an unprovisioned device.** Once the phone has an account
 on it, the only route back is a factory reset.
 
+### When a phone stops reporting: re-link it, do not reset it
+
+Asking for a setup code on a phone that is **already enrolled** revokes it. The console spells that
+out and makes you confirm it, but if it has happened — or if the credential is broken some other way
+— the phone comes back without a factory reset, and without losing its enrollment, its name or its
+history. It is the same device row afterwards.
+
+The phone knows: a `401` from the control plane raises an ongoing **"This phone is no longer
+linked"** notification, and the recovery screen grows a *Re-link this phone* field. Only a `401`
+does that. A `404` or a `409` is a fault in one request, not a statement about the credential, and
+raising the alarm for those is how the one notification that matters gets swiped away.
+
+1. **In the console:** the device's card → **Replace phone** → confirm. The sheet shows the QR *and*
+   the same code as type-able text underneath. Take the text: a phone that is already Device Owner
+   has no welcome screen left to scan a QR with.
+2. **On the phone:** open FamilyGuard → **Recovery** → **Re-link this phone**, type the code,
+   **Re-link**. Case matters — the code is base64url.
+3. The phone exchanges it, stores the new credential and starts syncing. The console shows it
+   enrolled again within a heartbeat.
+
+The code is single-use and expires with the same window as any setup code. If the phone cannot reach
+the server yet it says *not now* rather than *wrong code*; the code is still good, so do not generate
+another one.
+
+**Two things this cannot do**, and both are deliberate:
+
+- **It cannot move the phone to a different control plane.** The server address comes from the
+  credential already on the phone, never from what was typed, so a code is only ever a bearer token.
+- **It cannot bring back a phone you meant to cut off.** Re-linking needs a code the server minted,
+  which means a parent with console access. A lost phone stays lost.
+
+**A phone running 0.3.0 or older has no re-link screen**, because the DPC never re-enrolled while it
+still held a credential. For those the way back really is a factory reset — or the recovery code
+first, then a sideload of the current APK, then re-link:
+
+```bash
+# On a phone that has been released by its recovery code, DISALLOW_INSTALL_UNKNOWN_SOURCES and
+# DISALLOW_DEBUGGING_FEATURES are both cleared, so adb and a sideload become possible again.
+adb install -r familyguard-<version>.apk    # same signing key, so it installs OVER the old one:
+                                            # Device Owner and app data both survive
+```
+
+A release survives a reboot from 0.4.0 onward (FR-12.6). On 0.3.0 it does not — the boot receiver
+re-applied the baseline over a released device — so on an older build do the sideload before the
+phone restarts.
+
+---
+
 **And it can only be removed by one.** `adb shell dpm remove-active-admin` refuses the shipping DPC
 — *`SecurityException: Attempt to remove non-test admin`*, measured, because the release build is
 not `testOnly`. There is no adb route out of Device Owner and no in-app one either: the DPC calls no
@@ -660,6 +744,7 @@ the reset is not one way out among several, it is the way out.
 | A bad image version | Edit the tag in `deploy/control-plane.yaml` back, commit, push, let the sync run. Never `kubectl set image` — a GitOps controller reverts it within minutes, so the rollback appears to work and then undoes itself. |
 | A bad policy on a phone | Fix it in the console. The device re-syncs on the next event or within the heartbeat interval; clears run before adds, so a partial apply leaves the phone *less* restrained, never more. |
 | The control plane is down and a phone must be freed | The DPC's offline recovery code, shown once in the console per device. |
+| A phone was revoked by a mis-tapped setup code | Re-link it — console → Replace phone → type the code into the phone's recovery screen. No factory reset, same device row. See *When a phone stops reporting*, above. |
 | Everything is wrong | Factory-reset the phone. This always works — `no_factory_reset` is in `FORBIDDEN_RESTRICTIONS`, never set, and cleared on every sync **and every boot** if anything else set it. Measured on a device, not argued: `FactoryResetRecoveryTest` sets the restriction on purpose, watches the platform report it, and watches the DPC take it back off (§11.12). |
 
 The last row is the reason the third and second exist rather than being the only options. It is the

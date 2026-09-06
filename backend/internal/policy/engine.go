@@ -203,6 +203,15 @@ type Settings struct {
 	AllowedPackages []string `json:"allowed_packages"`
 	BlockedDomains  []string `json:"blocked_domains"`
 
+	// FamilyBlockedPackages is the blocklist that applies to every child in the family (FR-18) —
+	// vendor preinstalls a parent decided nobody should have, most of which arrived on the phone
+	// without anyone choosing them.
+	//
+	// It is a separate field from BlockedPackages, rather than merged into it by the caller, so
+	// that the precedence below can be written and tested. Merging upstream would make the two
+	// indistinguishable here and the ALLOW carve-out impossible to express.
+	FamilyBlockedPackages []string `json:"family_blocked_packages"`
+
 	// ManagedApps is the set of applications a parent has declared this child's phone should have
 	// (FR-16). It is a declared SET, not a queue of install commands: the device converges on it at
 	// every sync, so an install that failed retries by itself and an app a child managed to remove
@@ -406,11 +415,25 @@ func Compute(in Input) (DesiredState, error) {
 	hidden := newSet(nil)
 	pending := newSet(nil)
 
+	allowed := newSet(in.Settings.AllowedPackages)
+
 	blocked := newSet(in.Settings.BlockedPackages)
 	if in.Settings.YouTubeBlocked {
 		blocked.addAll(YouTubePackages)
 	}
-	allowed := newSet(in.Settings.AllowedPackages)
+	// The family list is a default for every child, and a child-level ALLOW is the exemption from
+	// it (FR-18). One child needing an app the family generally does not want is a real situation,
+	// and the alternative — deleting the family entry — would unblock it for everybody.
+	//
+	// The carve-out is deliberately one-directional: an ALLOW does not lift a BLOCK from this
+	// child's own app_rules, and that asymmetry is the point. A family entry is a default somebody
+	// set for the household; a child's own BLOCK is a decision somebody made about this child, and
+	// a default must never be able to overrule it.
+	for _, p := range in.Settings.FamilyBlockedPackages {
+		if !allowed.has(p) {
+			blocked.add(p)
+		}
+	}
 
 	// A blocked app is suspended and hidden (FR-5.2), whether or not it is currently installed:
 	// the DPC applies the list, and an app that is installed later must already be covered.

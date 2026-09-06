@@ -128,6 +128,12 @@ func (s *Server) deleteDevice(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// provisioningRequest is the body of the provisioning POST. It is optional, and its one field is
+// an acknowledgement rather than an option: see mintProvisioning.
+type provisioningRequest struct {
+	ReplaceEnrolled bool `json:"replace_enrolled"`
+}
+
 // provisioningPayload mints a fresh enrollment token and returns the QR that carries it.
 //
 // It is a POST, and it mints rather than reads, for one reason: the plaintext enrollment token is
@@ -156,9 +162,19 @@ func (s *Server) provisioningPayload(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"device":     dev,
-		"payload":    payload,
-		"svg":        string(svg),
+		"device":  dev,
+		"payload": payload,
+		"svg":     string(svg),
+		// The same token the QR carries, spelled out so it can be read aloud and typed (FR-1.8).
+		// A phone that is already a device owner cannot be provisioned again — there is no welcome
+		// screen to tap six times without a factory reset — so the QR is unreachable on exactly the
+		// device that needs a new credential most. The console shows this next to the QR, and it is
+		// what a parent types into the phone's "Re-link this phone" field.
+		//
+		// It is not a second secret: it is the identical single-use token, and it is already inside
+		// `payload`. Surfacing it as its own field only means the console does not have to know the
+		// shape of the admin extras bundle to find it.
+		"setup_code": params.EnrollmentToken,
 		"expires_at": s.now().Add(enrollmentWindow),
 	})
 }
@@ -173,6 +189,31 @@ func (s *Server) mintProvisioning(c *gin.Context) (provisioning.Params, *store.D
 	dev, err := s.store.GetDevice(c.Request.Context(), id)
 	if err != nil {
 		s.fail(c, err)
+		return provisioning.Params{}, nil, false
+	}
+	var req provisioningRequest
+	if !bindOptionalJSON(c, &req) {
+		return provisioning.Params{}, nil, false
+	}
+	// Minting is DESTRUCTIVE on an enrolled device, and nothing about the request says so.
+	//
+	// ResetEnrollment clears device_token_hash, so the phone that is currently enrolled is revoked
+	// the instant a new QR exists. Measured on the first real phone on 2026-09-06, where "Setup QR"
+	// on a working device read as "show me that code again" and disconnected it (ENROLLMENT_ISSUED
+	// 02:01:18, an hour after DEVICE_ENROLLED 00:55:27). At the time there was no way back at all:
+	// the DPC never re-enrolled while it still held a credential, so the phone was a factory reset.
+	// FR-1.8 gives it one, but the cost is still that somebody has to physically pick the phone up
+	// and type a code into it, and a phone running an older build still cannot do even that.
+	//
+	// So the acknowledgement is required rather than the consequence being documented. A caller
+	// that has not said it means to replace the phone gets 409 and its credential intact; the cost
+	// of being wrong in this direction is a second click, and in the other direction it is a wipe.
+	if dev.EnrolledAt != nil && !req.ReplaceEnrolled {
+		failWith(c, http.StatusConflict, "already_enrolled",
+			"this device is already enrolled, and issuing a new setup code revokes it: the phone "+
+				"stops reporting at once, and getting it back means picking it up and typing the "+
+				"new code into it. Send "+
+				`{"replace_enrolled": true} if that is what you mean to do.`)
 		return provisioning.Params{}, nil, false
 	}
 	if s.cfg.APKURL == nil {
@@ -195,6 +236,9 @@ func (s *Server) mintProvisioning(c *gin.Context) (provisioning.Params, *store.D
 
 	s.auditParent(c, "ENROLLMENT_ISSUED", "device", id.String(), map[string]any{
 		"expires_at": s.now().Add(enrollmentWindow).Format(time.RFC3339),
+		// Recorded because the two cases are a first setup and a revocation, and the audit trail is
+		// where a second parent finds out which one happened.
+		"replaced_enrolled": dev.EnrolledAt != nil,
 	})
 	return provisioning.Params{
 		Component:         s.cfg.DPCComponent,

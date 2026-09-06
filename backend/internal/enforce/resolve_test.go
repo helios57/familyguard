@@ -21,15 +21,16 @@ import (
 // resolver that swallowed one read would compute a desired state from partial data — a child whose
 // usage query failed would silently get their quota back.
 type fakeSource struct {
-	device   store.Device
-	policy   store.Policy
-	rules    []store.AppRule
-	domains  []string
-	apps     []store.InstalledApp
-	usage    map[string]int
-	managed  []store.App
-	fail     map[string]error
-	usageDay string // the day key the resolver actually asked for
+	device    store.Device
+	policy    store.Policy
+	rules     []store.AppRule
+	domains   []string
+	apps      []store.InstalledApp
+	usage     map[string]int
+	managed   []store.App
+	blocklist []string
+	fail      map[string]error
+	usageDay  string // the day key the resolver actually asked for
 }
 
 func (f *fakeSource) GetDevice(context.Context, uuid.UUID) (*store.Device, error) {
@@ -74,6 +75,13 @@ func (f *fakeSource) ManagedAppsForChild(context.Context, uuid.UUID) ([]store.Ap
 		return nil, err
 	}
 	return f.managed, nil
+}
+
+func (f *fakeSource) FamilyBlockedPackageNames(context.Context) ([]string, error) {
+	if err := f.fail["blocklist"]; err != nil {
+		return nil, err
+	}
+	return f.blocklist, nil
 }
 
 func (f *fakeSource) UsageMinutesForDay(_ context.Context, _ uuid.UUID, day string) (int, error) {

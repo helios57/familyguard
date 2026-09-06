@@ -61,7 +61,9 @@ class InventoryReporter(
          * An app renamed by an update — or one that becomes a system app because the OEM shipped it
          * in an OTA — is a change the console should show. Hashing only the package names would make
          * those changes permanently invisible, and invisible in the direction where the console's
-         * copy silently stops matching the phone.
+         * copy silently stops matching the phone. The restraint flags are in for the same reason and
+         * one stronger: an app that has just been hidden appears in no other report, so leaving them
+         * out would mean the console never learns the family blocklist took effect (FR-18.6).
          *
          * Each field is **length-prefixed** rather than joined with a delimiter. An app label is
          * arbitrary user-visible text: it can contain a space, a newline, or whatever character
@@ -72,7 +74,14 @@ class InventoryReporter(
         fun digestOf(apps: List<InstalledApp>): String {
             val md = MessageDigest.getInstance("SHA-256")
             for (app in apps.sortedBy { it.packageName }) {
-                for (field in listOf(app.packageName, app.label, app.systemApp.toString())) {
+                val fields = listOf(
+                    app.packageName,
+                    app.label,
+                    app.systemApp.toString(),
+                    app.hidden.toString(),
+                    app.suspended.toString(),
+                )
+                for (field in fields) {
                     val bytes = field.toByteArray(Charsets.UTF_8)
                     md.update("${bytes.size}:".toByteArray(Charsets.UTF_8))
                     md.update(bytes)

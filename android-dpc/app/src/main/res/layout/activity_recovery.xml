@@ -83,6 +83,75 @@
             android:textIsSelectable="true" />
 
         <!--
+          FR-1.8: re-linking, hidden until the server has actually refused this device's credential.
+
+          Below the recovery field, and gone entirely the rest of the time. Two text boxes on the
+          one screen a person can start is one too many for the situation the screen exists for —
+          somebody standing over a locked phone — and a parent who mistakes the setup-code field for
+          the recovery-code field learns nothing from either rejection. It appears only in the state
+          where the recovery code alone cannot help, which is also the only state where a setup code
+          means anything.
+        -->
+        <LinearLayout
+            android:id="@+id/relink_group"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/relink_heading"
+                android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+            <TextView
+                android:id="@+id/relink_explain"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/unlinked_text"
+                android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+            <!--
+              Not `textCapCharacters`, unlike the recovery field above it: a setup code is
+              base64url and its case is load bearing, so a keyboard that helpfully upper-cased it
+              would turn every paste into a rejection. `textNoSuggestions|textVisiblePassword` for
+              the same two reasons as above — out of the learned dictionary, and visible, because
+              somebody is typing 43 characters they cannot see.
+            -->
+            <EditText
+                android:id="@+id/relink_code"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:minHeight="48dp"
+                android:hint="@string/relink_hint"
+                android:importantForAutofill="no"
+                android:imeOptions="actionDone"
+                android:inputType="textNoSuggestions|textVisiblePassword"
+                android:maxLines="1"
+                android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+            <Button
+                android:id="@+id/relink_submit"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:minHeight="48dp"
+                android:text="@string/relink_submit" />
+
+            <TextView
+                android:id="@+id/relink_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textIsSelectable="true" />
+        </LinearLayout>
+
+        <!--
           What this phone knows about itself (FR-13.4).
 
           Below the code field on purpose. The screen's reason for existing is the escape hatch, and

@@ -3,6 +3,7 @@ package io.github.helios57.familyguard.policy
 import io.github.helios57.familyguard.enforce.EnforcementEngine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -186,5 +187,85 @@ class HardeningManagerTest {
         assertEquals(listOf(factoryReset), outcome.cleared)
         assertFalse(factoryReset in gateway.current())
         assertTrue("it cleared more than the forbidden one", debugging in gateway.current())
+    }
+
+    // ---- a device a recovery code has released (FR-12.6) ------------------------------------
+
+    /**
+     * The defect this method was written for. `BootReceiver` applies the baseline unconditionally,
+     * so a released phone that reboots came back with six of the eight restrictions back on —
+     * silently, and precisely when the sync that would legitimately end the release is the thing
+     * that cannot happen, because a release is only ever used when the control plane is out of
+     * reach.
+     */
+    @Test
+    fun `a released device that reboots stays released`() {
+        val gateway = FakeGateway()
+
+        val outcome = HardeningManager(gateway, compliantClock()).applyReleasedFloor()
+
+        assertTrue(outcome.toString(), outcome.ok)
+        assertEquals(emptyList<String>(), outcome.added)
+        assertTrue("it hardened a released device", gateway.current().isEmpty())
+        assertTrue("it called the platform at all", gateway.calls.isEmpty())
+    }
+
+    /**
+     * The calibration for the test above, and the reason it is evidence rather than a tautology: on
+     * the identical starting state the ordinary boot path sets the whole baseline. Delete the
+     * `released` branch in `AdminReceiver.applyBaseline` and the two outcomes become the same one.
+     */
+    @Test
+    fun `the ordinary boot path on the same device hardens all six`() {
+        val gateway = FakeGateway()
+
+        val outcome = HardeningManager(gateway, compliantClock()).applyBaseline()
+
+        assertTrue(outcome.toString(), outcome.ok)
+        assertEquals(EnforcementEngine.BASELINE_RESTRICTIONS.sorted(), outcome.added.sorted())
+        assertEquals(EnforcementEngine.BASELINE_RESTRICTIONS.toSet(), gateway.current())
+    }
+
+    @Test
+    fun `a released device is still left wipeable`() {
+        // FR-2.3 does not have an exception for a released phone, and this is the half of the floor
+        // that gives an escape hatch back rather than taking one away.
+        val gateway = FakeGateway(initial = setOf(factoryReset, safeBoot))
+
+        val outcome = HardeningManager(gateway, compliantClock()).applyReleasedFloor()
+
+        assertTrue(outcome.toString(), outcome.ok)
+        assertEquals(listOf(factoryReset), outcome.cleared)
+        assertFalse(factoryReset in gateway.current())
+    }
+
+    @Test
+    fun `it leaves alone a restriction it did not set`() {
+        // A floor, not a plan: `applyReleasedFloor` must not become a second authoritative path that
+        // clears whatever it finds. The device may have restrictions from an OEM or from a previous
+        // policy generation, and unsetting those is a change nobody asked for.
+        val gateway = FakeGateway(initial = setOf(safeBoot, installApps))
+
+        HardeningManager(gateway, compliantClock()).applyReleasedFloor()
+
+        assertEquals(setOf(safeBoot, installApps), gateway.current())
+    }
+
+    @Test
+    fun `it does not touch the clock`() {
+        // Automatic network time is enforcement (FR-2.2). A released phone enforces nothing, and
+        // `HardeningOutcome.clock` is null rather than a success so that a later baseline's genuine
+        // clock failure cannot be overwritten by this path's clean outcome.
+        val clockGateway = FakeClockGateway(enabled = false)
+
+        val outcome = HardeningManager(FakeGateway(), ClockPolicyManager(clockGateway))
+            .applyReleasedFloor()
+
+        assertNull(outcome.clock)
+        assertEquals(emptyList<String>(), clockGateway.calls)
+
+        // The positive control: the same fake does get called on the path that is meant to.
+        HardeningManager(FakeGateway(), ClockPolicyManager(clockGateway)).applyBaseline()
+        assertTrue(clockGateway.calls.isNotEmpty())
     }
 }

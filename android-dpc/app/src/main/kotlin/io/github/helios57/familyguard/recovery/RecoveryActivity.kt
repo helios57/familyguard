@@ -11,12 +11,18 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import io.github.helios57.familyguard.BuildConfig
 import io.github.helios57.familyguard.R
+import io.github.helios57.familyguard.enroll.EncryptedCredentialStore
+import io.github.helios57.familyguard.enroll.EnrollResult
+import io.github.helios57.familyguard.enroll.Enroller
+import io.github.helios57.familyguard.enroll.androidDeviceFacts
 import io.github.helios57.familyguard.status.DeviceStatus
 import io.github.helios57.familyguard.status.StatusLevel
 import io.github.helios57.familyguard.status.StatusLine
 import io.github.helios57.familyguard.status.deviceStatus
 import io.github.helios57.familyguard.status.deviceStatusFacts
+import io.github.helios57.familyguard.sync.ConnectionService
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +77,12 @@ class RecoveryActivity : AppCompatActivity() {
     private lateinit var statusLoading: TextView
     private lateinit var statusLines: LinearLayout
 
+    // FR-1.8. Gone from the screen unless the server has refused this device's credential.
+    private lateinit var relinkGroup: LinearLayout
+    private lateinit var relinkCode: EditText
+    private lateinit var relinkSubmit: Button
+    private lateinit var relinkStatus: TextView
+
     /**
      * Built once, off the main thread, and only when the screen is actually shown.
      *
@@ -89,7 +101,13 @@ class RecoveryActivity : AppCompatActivity() {
         statusLoading = findViewById(R.id.status_loading)
         statusLines = findViewById(R.id.status_lines)
 
+        relinkGroup = findViewById(R.id.relink_group)
+        relinkCode = findViewById(R.id.relink_code)
+        relinkSubmit = findViewById(R.id.relink_submit)
+        relinkStatus = findViewById(R.id.relink_status)
+
         submit.setOnClickListener { onSubmit() }
+        relinkSubmit.setOnClickListener { onRelink() }
     }
 
     override fun onStart() {
@@ -104,6 +122,11 @@ class RecoveryActivity : AppCompatActivity() {
                     available = current.available(),
                     released = current.released(),
                     lockout = current.status(),
+                    // Read on the same IO hop, from the same encrypted file the rest of this comes
+                    // from. Re-asked on every start for the reason above it: a sync can succeed
+                    // while this screen sits in the background, and the section must go away when
+                    // it does rather than invite a parent to spend a code that is not needed.
+                    unlinked = LinkRefused(AndroidRecoveryStore(this@RecoveryActivity).link).refused(),
                 )
             }
             render(state)
@@ -139,14 +162,81 @@ class RecoveryActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Spends a setup code the parent read off the console, and links this phone again (FR-1.8).
+     *
+     * Deliberately NOT rate-limited the way the recovery code is. A setup code is a 256-bit random
+     * token that the server mints, expires in thirty minutes and accepts once; there is nothing for
+     * a lockout to defend, and one here would only ever punish a parent fixing a phone under time
+     * pressure. The recovery code is short enough to guess, which is why that one is counted.
+     *
+     * On success the service is started, because unlike a recovery — where syncing would end the
+     * release the parent just asked for — syncing IS the thing being asked for here.
+     */
+    private fun onRelink() {
+        val entered = relinkCode.text?.toString().orEmpty()
+        if (entered.isBlank()) {
+            relinkStatus.text = getString(R.string.relink_hint)
+            return
+        }
+        relinkSubmit.isEnabled = false
+        relinkStatus.text = getString(R.string.relink_working)
+        hideKeyboard()
+
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                Enroller(
+                    store = EncryptedCredentialStore(this@RecoveryActivity),
+                    cleartextAllowed = BuildConfig.DEBUG,
+                ).relink(entered, androidDeviceFacts(this@RecoveryActivity))
+            }
+            when (result) {
+                is EnrollResult.Enrolled -> {
+                    withContext(Dispatchers.IO) {
+                        LinkRefused(AndroidRecoveryStore(this@RecoveryActivity).link).clear()
+                    }
+                    relinkStatus.text = getString(R.string.relink_done)
+                    relinkCode.text = null
+                    relinkGroup.visibility = View.GONE
+                    // The credential is new, so anything still running is holding a rejected one.
+                    // Restarted rather than left to the next alarm: the parent is standing here and
+                    // the console is the only place they can see that this worked.
+                    ConnectionService.start(this@RecoveryActivity, null)
+                }
+                // Cannot happen — relink does not consult the idempotence guard — but a `when` that
+                // silently swallows it would hide the day somebody changes that.
+                is EnrollResult.AlreadyEnrolled -> {
+                    relinkStatus.text = getString(R.string.relink_done)
+                    relinkSubmit.isEnabled = true
+                }
+                is EnrollResult.Refused -> {
+                    relinkStatus.text = getString(R.string.relink_refused)
+                    relinkSubmit.isEnabled = true
+                }
+                is EnrollResult.Deferred -> {
+                    relinkStatus.text = getString(R.string.relink_deferred)
+                    relinkSubmit.isEnabled = true
+                }
+                // The reason names a broken stored credential, never the code that was typed, so it
+                // is shown rather than folded into "not accepted" — the two need different actions.
+                is EnrollResult.Misprovisioned -> {
+                    relinkStatus.text = result.reason
+                    relinkSubmit.isEnabled = true
+                }
+            }
+        }
+    }
+
     /** What the screen knows before anything has been typed. */
     private data class Opening(
         val available: Boolean,
         val released: Boolean,
         val lockout: LockoutStatus,
+        val unlinked: Boolean,
     )
 
     private fun render(state: Opening) {
+        relinkGroup.visibility = if (state.unlinked) View.VISIBLE else View.GONE
         when {
             !state.available -> {
                 // The reason belongs to the controller, so the screen and a submitted code give the

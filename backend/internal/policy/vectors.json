@@ -1273,6 +1273,178 @@
           }
         ]
       }
+    },
+    {
+      "name": "family blocklist: one list covers the family, including a package no phone reported",
+      "requirements": [
+        "FR-18.1",
+        "FR-18.2"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 11,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "family_blocked_packages": [
+            "com.facebook.katana",
+            "com.facebook.system"
+          ]
+        },
+        "installed": [
+          {
+            "package": "com.facebook.katana",
+            "system": true,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-09-06T10:00:00+02:00"
+      },
+      "expect": {
+        "suspended_packages": [
+          "com.facebook.katana",
+          "com.facebook.system"
+        ],
+        "hidden_packages": [
+          "com.facebook.katana",
+          "com.facebook.system"
+        ],
+        "pending_approval": []
+      }
+    },
+    {
+      "name": "family blocklist: a child ALLOW is the exemption, and it does not reach that child's own BLOCK",
+      "requirements": [
+        "FR-18.3"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 11,
+          "blocked_packages": [
+            "com.example.chat"
+          ],
+          "allowed_packages": [
+            "com.microsoft.skydrive",
+            "com.example.chat"
+          ],
+          "blocked_domains": [],
+          "family_blocked_packages": [
+            "com.facebook.katana",
+            "com.microsoft.skydrive"
+          ]
+        },
+        "installed": [
+          {
+            "package": "com.facebook.katana",
+            "system": true,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.microsoft.skydrive",
+            "system": true,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.example.chat",
+            "system": false,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-09-06T10:00:00+02:00"
+      },
+      "expect": {
+        "suspended_packages": [
+          "com.example.chat",
+          "com.facebook.katana"
+        ],
+        "hidden_packages": [
+          "com.example.chat",
+          "com.facebook.katana"
+        ]
+      }
+    },
+    {
+      "name": "family blocklist: the critical whitelist outranks it — a keyboard on the list is still not hidden",
+      "requirements": [
+        "FR-18.4",
+        "FR-5.5"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "family.adguard-dns.com",
+          "timezone": "Europe/Zurich",
+          "version": 11,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "family_blocked_packages": [
+            "com.facebook.katana",
+            "com.samsung.android.honeyboard"
+          ]
+        },
+        "installed": [
+          {
+            "package": "com.facebook.katana",
+            "system": true,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.samsung.android.honeyboard",
+            "system": true,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [
+          "com.samsung.android.honeyboard"
+        ],
+        "now": "2026-09-06T10:00:00+02:00"
+      },
+      "expect": {
+        "suspended_packages": [
+          "com.facebook.katana"
+        ],
+        "hidden_packages": [
+          "com.facebook.katana"
+        ]
+      }
     }
   ]
 }

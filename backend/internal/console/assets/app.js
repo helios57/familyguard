@@ -582,9 +582,26 @@ function deviceCard(dev, desired) {
     // device that has never reported one is running a DPC from before this field existed; showing
     // "app 0" there would be a version no build ever had.
     dev.enrolled && st.app_version_name
-      && el('span', { class: 'badge', text: 'app ' + st.app_version_name }));
+      && el('span', { class: 'badge', text: 'app ' + st.app_version_name }),
+    // Only on a measured false. `undefined` is a phone that has not said — an older DPC does not
+    // report the field — and a warning there would be an alarm about a device nothing is wrong
+    // with, which is the kind that teaches you to ignore the badge.
+    st.usage_access === false
+      && el('span', { class: 'badge warn', text: 'screen time not measured' }));
 
   const body = [head, facts];
+
+  if (st.usage_access === false) {
+    // Spelled out, because the number it invalidates is shown two lines below it. Without the
+    // grant every app reads zero minutes, so "0m of 60m" is not a child who stayed off their
+    // phone — it is a measurement that never happened.
+    body.push(el('p', { class: 'warn' },
+      el('strong', { text: 'Screen time is not being measured on this phone. ' }),
+      'On the phone, open Settings \u2192 Apps \u2192 Special app access \u2192 Usage access and turn '
+      + 'FamilyGuard on. Until then every app reads zero minutes and daily limits never apply. '
+      + 'FamilyGuard cannot grant this itself \u2014 Android does not let any app, even a device '
+      + 'owner, turn it on.'));
+  }
 
   if (desired) {
     const used = desired.used_minutes || 0;
@@ -624,7 +641,14 @@ function deviceCard(dev, desired) {
     cmd('SYNC_POLICY', 'Sync now')));
 
   body.push(el('div', { class: 'btn-grid' },
-    el('button', { class: 'btn btn-quiet', type: 'button', text: 'Setup QR', onclick: () => showProvisioning(dev) }),
+    // Two labels, because the button does two different things. On a phone that has never enrolled
+    // it shows the code that sets it up; on one that is working it REVOKES it — and "Setup QR"
+    // reads like "show me that code again", which is how the first real phone was disconnected.
+    el('button', {
+      class: 'btn btn-quiet', type: 'button',
+      text: dev.enrolled ? 'Replace phone' : 'Setup QR',
+      onclick: () => showProvisioning(dev),
+    }),
     el('button', { class: 'btn btn-quiet', type: 'button', text: 'Recovery code', onclick: () => showRecovery(dev) }),
     // Always offered, never conditioned on a comparison this page could make: the server does not
     // parse the APK it hosts, so it does not know its version name, and a button that appeared only
@@ -654,8 +678,70 @@ async function addChild() {
   selectChild(child.id);
 }
 
+/* A confirmation the parent has to read, drawn in the console's own sheet.
+ *
+ * Deliberately not window.confirm, for three reasons that all bite on the one path that needs it.
+ * The browser draws it at the TOP of the screen, which on a phone is the furthest point from the
+ * thumb and the easiest thing to dismiss by reflex. It cannot mark the destructive answer as
+ * destructive, so "give up this phone" and "cancel" are the same grey. And it blocks the page's
+ * JavaScript entirely: headless Chrome sits on it forever, so the guard that measures this console
+ * on a phone could not open the sheet behind it, and neither could anything else. A confirmation
+ * no instrument can reach is a confirmation nobody has shown works.
+ *
+ * Resolves false for every way out that is not the button — Esc, the backdrop, the sheet's own X.
+ * The default for a destructive question is no. */
+function confirmSheet({ title, lines, confirmLabel, cancelLabel }) {
+  return new Promise((resolve) => {
+    const dlg = document.getElementById('sheet');
+    const x = document.getElementById('sheet-close');
+    let answered = false;
+    const finish = (ok) => {
+      if (answered) return;
+      answered = true;
+      dlg.removeEventListener('close', dismissed);
+      x.removeEventListener('click', dismissed);
+      resolve(ok);
+    };
+    // `close` covers Esc and the backdrop on a real <dialog>; the click covers the attribute
+    // fallback in openSheet, where closing fires no event at all and the promise would otherwise
+    // never settle — leaving the parent looking at a closed sheet and a console that has stopped.
+    const dismissed = () => finish(false);
+    dlg.addEventListener('close', dismissed);
+    x.addEventListener('click', dismissed);
+
+    openSheet(title, el('div', { class: 'stack' },
+      lines.map((line) => el('p', { text: line })),
+      el('button', {
+        class: 'btn btn-danger btn-block', type: 'button', text: confirmLabel,
+        onclick: () => { finish(true); closeSheet(); },
+      }),
+      el('button', {
+        class: 'btn btn-block', type: 'button', text: cancelLabel || 'Cancel',
+        onclick: () => { finish(false); closeSheet(); },
+      })));
+  });
+}
+
 async function showProvisioning(dev) {
-  const out = await act('QR ready', () => api('/devices/' + dev.id + '/provisioning', { method: 'POST' }));
+  // The server refuses this with 409 unless the acknowledgement is sent, so this sheet is the
+  // second lock and not the only one: a script, an API key or a stale page cannot get past the
+  // first one, and this one exists so the parent reads the consequence in their own words.
+  if (dev.enrolled && !await confirmSheet({
+    title: 'Give up ' + dev.name + '?',
+    lines: [
+      'A new setup code revokes the phone that is enrolled now. It stops reporting immediately.',
+      'To get it working again you have to pick that phone up and type the new code into it: '
+      + 'FamilyGuard \u203a Recovery \u203a Re-link this phone. Nothing you can do from here will '
+      + 'bring it back.',
+      'A phone running an older build of the app cannot re-link at all, and needs a factory reset.',
+      'Only do this for a phone you are replacing, or one you have lost.',
+    ],
+    confirmLabel: 'Replace ' + dev.name,
+    cancelLabel: 'Keep it as it is',
+  })) return;
+  const out = await act('QR ready', () => api('/devices/' + dev.id + '/provisioning', {
+    method: 'POST', body: { replace_enrolled: dev.enrolled === true },
+  }));
   if (!out) return;
   const holder = el('div', { class: 'stack' });
   // The SVG comes from our own server and is inserted as markup because that is what it is. It is
@@ -666,6 +752,16 @@ async function showProvisioning(dev) {
     el('p', { class: 'muted', text: 'On a factory-reset phone, tap the welcome screen six times and scan this code. It expires ' + fmtTime(out.expires_at).replace(' ago', ' from now') + '.' }),
     wrap,
     el('p', { class: 'muted', text: 'Scanning it again later needs a new code — this one can only be used once.' }));
+  // The same code in type-able form, because a phone that is ALREADY a device owner cannot be
+  // provisioned again: there is no welcome screen to tap six times short of a factory reset, so on
+  // the one device that most needs a new credential the QR above is unreachable. This is what goes
+  // into the phone's own Re-link field. Shown only when the server sent it, so an older backend
+  // renders the sheet it always did rather than an empty box captioned as a code.
+  if (out.setup_code) {
+    holder.append(
+      el('p', { class: 'muted', text: 'Already set up, and you are re-linking it? Type this on the phone instead: FamilyGuard \u203a Recovery \u203a Re-link this phone.' }),
+      el('div', { class: 'code', text: out.setup_code }));
+  }
   openSheet('Set up ' + dev.name, holder);
 }
 
@@ -785,16 +881,52 @@ async function loadApps() {
     api('/apps').catch(() => ({ apps: [], configured: false })),
     api('/children/' + state.childId + '/managed-apps').catch(() => ({ managed_apps: [] })),
   ]);
+  // Family-wide, so it is fetched once and not per child. Tolerated as empty on failure for the
+  // same reason as the catalog above: one endpoint being unavailable must not blank the whole tab.
+  const blocklist = await api('/family/blocked-packages').catch(() => ({ packages: [] }));
   const list = devices.devices || [];
+  // include_system=1 is load bearing, and its absence made the whole blocklist blind. Preinstalled
+  // bloatware IS a system app — that is exactly why it cannot be uninstalled and has to be hidden
+  // instead — so a request without this flag returns an inventory with com.facebook.katana filtered
+  // out of it. The blocklist card then reported the household's headline entry as "not installed on
+  // any phone here", the datalist could never offer it, and the "Show system apps" switch below
+  // filtered a list that had never contained one. Three controls, none of them evaluating anything.
+  // The switch still defaults to off: 500 rows is not a list a parent reads.
   const perDevice = await Promise.all(list.map((d) =>
-    d.enrolled ? api('/devices/' + d.id + '/apps').catch(() => ({ apps: [] })) : Promise.resolve({ apps: [] })));
+    d.enrolled
+      ? api('/devices/' + d.id + '/apps?include_system=1').catch(() => ({ apps: [] }))
+      : Promise.resolve({ apps: [] })));
 
   // One row per package, not per install: a family with two phones should not see Chrome twice, and
   // the rule is a property of the child anyway.
+  // Counted, not first-wins: with two phones "hidden" is not one fact, and a card that showed the
+  // first device's answer would report a block as done while the second child still has the app.
+  // An app the phone has stopped reporting keeps its row (the server stamps removed_at rather than
+  // deleting, so uninstalling to dodge a block stays visible) but is counted apart: folding it into
+  // `devices` makes an app nobody has read "on the phone and not hidden yet" forever, and a state
+  // that can never be reached is a state a parent learns to ignore.
   const byPackage = new Map();
   perDevice.forEach((res) => {
     for (const app of res.apps || []) {
-      if (!byPackage.has(app.package_name)) byPackage.set(app.package_name, app);
+      const gone = !!app.removed_at;
+      const seen = byPackage.get(app.package_name);
+      if (!seen) {
+        byPackage.set(app.package_name, {
+          ...app,
+          devices: gone ? 0 : 1,
+          hiddenOn: gone || !app.hidden ? 0 : 1,
+          removedOn: gone ? 1 : 0,
+          hidden: !gone && !!app.hidden,
+          suspended: !gone && !!app.suspended,
+        });
+      } else if (gone) {
+        seen.removedOn += 1;
+      } else {
+        seen.devices += 1;
+        if (app.hidden) { seen.hiddenOn += 1; seen.hidden = true; }
+        if (app.suspended) seen.suspended = true;
+        if (app.label && !seen.label) seen.label = app.label;
+      }
     }
   });
   const ruleFor = new Map((rules.rules || []).map((r) => [r.package_name, r.action]));
@@ -805,6 +937,7 @@ async function loadApps() {
     catalog: catalog.apps || [],
     catalogConfigured: catalog.configured === true,
     managed: managed.managed_apps || [],
+    blocklist: blocklist.packages || [],
   };
 }
 
@@ -996,6 +1129,112 @@ function openCatalogSheet(data) {
   openSheet('App catalog', body);
 }
 
+/* ---- the family blocklist (FR-18) ---------------------------------------
+ *
+ * Its own card rather than a fourth button on each app row. The row's Allow/Block/Default is about
+ * one child; this is about the household, and putting the two controls side by side would make the
+ * difference something a parent has to read a tooltip to learn.
+ *
+ * Nothing here uninstalls. Entries are hidden and suspended, which survives a reinstall and is
+ * undone by removing the entry — so the worst outcome of a wrong guess is an app that comes back at
+ * the next sync.
+ */
+/* What the phones say about one blocked package. `seen` is the merged inventory row, or undefined.
+ *
+ * Three states and not two. "Not installed here" is a working entry, not a failure. "Hidden" is the
+ * phone confirming. "Not hidden yet" is the only one that needs a parent, and it is normal for the
+ * minute between blocking an app and the phone's next sync — so it says what it is waiting for
+ * rather than announcing a fault. */
+function blocklistState(seen) {
+  if (!seen || (!seen.devices && !seen.removedOn)) return 'Not installed on any phone here.';
+  // Present on nothing, but a phone did report it once. Naming it as removed rather than as never
+  // installed is the difference a parent needs: the entry is what stops it coming back.
+  if (!seen.devices) return 'Uninstalled — the entry keeps it from coming back.';
+  if (seen.hiddenOn >= seen.devices) {
+    return seen.devices > 1
+      ? 'Hidden on all ' + seen.devices + ' phones.'
+      : 'Hidden on the phone.';
+  }
+  if (seen.hiddenOn === 0) return 'On the phone and not hidden yet — waiting for it to sync.';
+  return 'Hidden on ' + seen.hiddenOn + ' of ' + seen.devices + ' phones.';
+}
+
+function familyBlocklistCard(data) {
+  const canEdit = state.parent && (state.parent.role === 'PRIMARY_ADMIN' || state.parent.role === 'ADMIN');
+  const card = el('div', { class: 'card full' },
+    el('div', { class: 'card-head' }, el('h2', { text: 'Blocked for everyone' })),
+    el('p', { class: 'muted', text: canEdit
+      ? 'Applies to every child, including any added later. These apps are hidden and cannot run; they are not uninstalled, and removing an entry brings the app back.'
+      : 'Applies to every child. Ask an admin to change it.' }));
+
+  const remove = async (pkg) => {
+    await act('Unblocked for everyone', () =>
+      api('/family/blocked-packages?package_name=' + encodeURIComponent(pkg), { method: 'DELETE' }));
+    refresh();
+  };
+
+  const reported = new Map(data.apps.map((a) => [a.package_name, a]));
+
+  card.append(el('ul', { class: 'list' }, data.blocklist.map((e) => {
+    const seen = reported.get(e.package_name);
+    return el('li', {},
+      el('span', { class: 'label' },
+        el('b', { text: e.label || (seen && seen.label) || e.package_name }),
+        el('small', { text: e.package_name + (e.source === 'BUILTIN' ? ' · suggested' : '') }),
+        // Read back from the phone, never from the rule (FR-18.6). The rule is what was asked for;
+        // this is what the device says it is doing, and a parent asking "is the bloatware gone?"
+        // is asking the second question. Saying which packages are present at all separates "this
+        // is doing something" from "this is covering a package no phone here has" — and the second
+        // is not a defect: an entry is what stops a preinstall coming back.
+        el('small', { class: seen && seen.hiddenOn === 0 ? 'warn' : 'muted', text: blocklistState(seen) }),
+        e.reason ? el('small', { class: 'muted', text: e.reason }) : null),
+      canEdit
+        ? el('button', { class: 'btn', type: 'button', text: 'Unblock', onclick: () => remove(e.package_name) })
+        : null);
+  })));
+
+  if (!data.blocklist.length) {
+    card.append(el('p', { class: 'muted', text: 'Nothing is blocked for the whole family.' }));
+  }
+
+  if (!canEdit) return card;
+
+  /* The datalist is the point of putting this on the Apps tab: a parent picks from what their own
+     phones reported rather than typing a package name from memory. Free text still works, because
+     an app that is not installed yet is exactly the one worth blocking before it arrives. */
+  const blocked = new Set(data.blocklist.map((e) => e.package_name));
+  const options = data.apps.filter((a) => !blocked.has(a.package_name));
+  const listID = 'blocklist-candidates';
+  const input = el('input', {
+    type: 'text', placeholder: 'Package name, e.g. com.facebook.katana', list: listID,
+    'aria-label': 'Package to block for the whole family',
+    autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false',
+  });
+  const datalist = el('datalist', { id: listID },
+    options.map((a) => el('option', {
+      value: a.package_name,
+      label: a.label && a.label !== a.package_name ? a.label : '',
+    })));
+
+  const submit = async () => {
+    const pkg = input.value.trim();
+    if (!pkg) return;
+    const seen = reported.get(pkg);
+    const ok = await act('Blocked for everyone', () => api('/family/blocked-packages', {
+      method: 'PUT',
+      body: { package_name: pkg, label: seen ? seen.label || '' : '', reason: '' },
+    }));
+    if (ok) { input.value = ''; refresh(); }
+  };
+
+  card.append(el('form', {
+    class: 'toolbar',
+    onsubmit: (e) => { e.preventDefault(); submit(); },
+  }, input, datalist, el('button', { class: 'btn btn-primary', type: 'submit', text: 'Block' })));
+
+  return card;
+}
+
 function renderApps(data) {
   const managed = managedAppsCard(data);
 
@@ -1005,7 +1244,9 @@ function renderApps(data) {
     // already did is the empty state telling them to redo work they have done.
     // The managed card stays: choosing what a phone should have does not depend on the phone
     // having reported yet, and a parent setting one up wants to pick the apps before it arrives.
-    return [managed, data.enrolled
+    // The blocklist card stays even with no inventory: it is family-wide and pre-populated, so a
+    // parent can see and edit it before any phone has reported.
+    return [managed, familyBlocklistCard(data), data.enrolled
       ? emptyCard('▦', 'No apps reported yet',
         'The phone is enrolled but has not sent its list of installed apps. It does that shortly after setup and then once a day.')
       : emptyCard('▦', 'No apps reported yet',
@@ -1026,6 +1267,8 @@ function renderApps(data) {
   /* Three states, named. The previous control was two buttons where tapping the lit one again
      cleared the rule — a hidden third state whose only documentation was a line of prose above the
      list, and which is indistinguishable from a mis-tap. */
+  const familyBlocked = new Set(data.blocklist.map((e) => e.package_name));
+
   const row = (app) => {
     const rule = data.ruleFor.get(app.package_name) || null;
     const choice = (label, value) => el('button', {
@@ -1033,10 +1276,32 @@ function renderApps(data) {
       'aria-pressed': String(rule === value),
       onclick: () => setRule(app.package_name, value),
     });
+    /* An app the family blocklist covers shows "Default" here, which is true of this child's rule
+       and false about the phone — the app is hidden. Saying so is the difference between a parent
+       understanding why it is missing and concluding the block did not work. Allow is the documented
+       exemption, so the note names it. */
+    const family = familyBlocked.has(app.package_name)
+      ? el('small', { class: 'muted', text: rule === 'ALLOW'
+        ? 'Blocked for the family — allowed for this child'
+        : 'Blocked for the whole family. Allow to make an exception for this child.' })
+      : null;
+    // Reported for every app, not only blocked ones: a bedtime hides nothing but suspends
+    // everything, and "why is this greyed out" is the same question. A row the phone has stopped
+    // reporting says so first — its Allow/Block buttons still work, and a rule set against an app
+    // that is no longer there is worth knowing about before it is set, not after.
+    const restrained = !app.devices
+      ? el('small', { class: 'muted', text: 'Not on the phone any more.' })
+      : app.hidden
+        ? el('small', { class: 'muted', text: 'Hidden on the phone right now.' })
+        : app.suspended
+          ? el('small', { class: 'muted', text: 'Paused on the phone right now.' })
+          : null;
     return el('li', {},
       el('span', { class: 'label' },
         el('b', { text: app.label || app.package_name }),
-        el('small', { text: app.package_name + (app.system_app ? ' · system' : '') })),
+        el('small', { text: app.package_name + (app.system_app ? ' · system' : '') }),
+        family,
+        restrained),
       el('div', { class: 'seg' },
         choice('Allow', 'ALLOW'), choice('Block', 'BLOCK'), choice('Default', null)));
   };
@@ -1096,7 +1361,7 @@ function renderApps(data) {
 
   paint();
 
-  return [managed, el('div', { class: 'card full' },
+  return [managed, familyBlocklistCard(data), el('div', { class: 'card full' },
     el('div', { class: 'card-head' }, el('h2', { text: 'Apps on the phone' })),
     el('p', { class: 'muted', text: 'What the phone reports it has. Allowing or blocking one here does not install or remove it.' }),
     el('div', { class: 'toolbar' }, search, filter, system),
@@ -1141,6 +1406,14 @@ function renderActivity(data) {
           title: h.day + ': ' + fmtMinutes(h.minutes),
         }))),
         el('p', { class: 'muted', text: 'Last ' + history.length + ' days, ' + usage.timezone + '.' }),
+        // The chart above is drawn from the same rows either way, so without this line a phone that
+        // can measure nothing renders as a flat week of zeros — a picture of a child who did not
+        // touch their phone. Only on a measured false; `undefined` is a phone that has not said.
+        ((dev.state || {}).usage_access === false)
+          ? el('p', { class: 'warn', text: 'These numbers are not measured. Usage access is off on '
+              + dev.name + ', so every app reports zero. Turn it on in the phone\u2019s Settings '
+              + '\u2192 Apps \u2192 Special app access \u2192 Usage access.' })
+          : null,
         (usage.packages || []).length
           ? el('ul', { class: 'list' }, usage.packages.slice(0, 5).map((s) => el('li', {},
             el('span', { class: 'label' }, el('b', { text: s.package_name })),

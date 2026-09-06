@@ -128,14 +128,16 @@ func (s *Store) ReplaceInstalledApps(ctx context.Context, deviceID uuid.UUID, ap
 			}
 			seen = append(seen, a.PackageName)
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO installed_apps (device_id, package_name, label, system_app, baseline)
-				 VALUES ($1, $2, $3, $4, $5)
+				`INSERT INTO installed_apps (device_id, package_name, label, system_app, baseline, hidden, suspended)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7)
 				 ON CONFLICT (device_id, package_name) DO UPDATE
 				   SET label        = COALESCE(NULLIF(EXCLUDED.label, ''), installed_apps.label),
 				       system_app   = EXCLUDED.system_app,
+				       hidden       = EXCLUDED.hidden,
+				       suspended    = EXCLUDED.suspended,
 				       last_seen_at = NOW(),
 				       removed_at   = NULL`,
-				deviceID, a.PackageName, a.Label, a.SystemApp, baseline); err != nil {
+				deviceID, a.PackageName, a.Label, a.SystemApp, baseline, a.Hidden, a.Suspended); err != nil {
 				return err
 			}
 		}
@@ -150,7 +152,8 @@ func (s *Store) ReplaceInstalledApps(ctx context.Context, deviceID uuid.UUID, ap
 // ListInstalledApps returns the inventory for a device.
 func (s *Store) ListInstalledApps(ctx context.Context, deviceID uuid.UUID, includeSystem bool) ([]InstalledApp, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT device_id, package_name, label, system_app, baseline, first_seen_at, last_seen_at, removed_at
+		`SELECT device_id, package_name, label, system_app, baseline, hidden, suspended,
+		        first_seen_at, last_seen_at, removed_at
 		   FROM installed_apps
 		  WHERE device_id = $1 AND ($2::bool OR NOT system_app)
 		  ORDER BY system_app, lower(COALESCE(NULLIF(label, ''), package_name))`,
@@ -163,7 +166,7 @@ func (s *Store) ListInstalledApps(ctx context.Context, deviceID uuid.UUID, inclu
 	for rows.Next() {
 		var a InstalledApp
 		if err := rows.Scan(&a.DeviceID, &a.PackageName, &a.Label, &a.SystemApp, &a.Baseline,
-			&a.FirstSeenAt, &a.LastSeenAt, &a.RemovedAt); err != nil {
+			&a.Hidden, &a.Suspended, &a.FirstSeenAt, &a.LastSeenAt, &a.RemovedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

@@ -83,6 +83,27 @@ class HardeningManager(
     )
 
     /**
+     * The boot floor for a device a recovery code has released (FR-12.6).
+     *
+     * The same shape as [applyBaseline] with an EMPTY required list: it adds nothing, and it still
+     * clears the forbidden set, because FR-2.3's "a boot leaves the device wipeable" holds whatever
+     * state the phone booted into.
+     *
+     * It exists because [applyBaseline] is unconditional, and that quietly contradicted the
+     * guarantee [io.github.helios57.familyguard.recovery.RecoveryMode] is documented to make. A
+     * released phone that reboots came back with `no_install_unknown_sources`, `no_add_user`,
+     * `no_safe_boot`, `no_config_date_time`, `no_config_private_dns` and `no_uninstall_apps` back
+     * on — six of the eight — with nothing said and no way for the parent to tell. That is the
+     * whole failure mode the release exists to prevent: it is used when the control plane cannot be
+     * reached, so the sync that would legitimately end it is exactly the thing that is not coming.
+     *
+     * The clock is left alone for the same reason a released state carries no restrictions:
+     * automatic network time is enforcement (FR-2.2), and this device is released.
+     */
+    fun applyReleasedFloor(): HardeningOutcome =
+        carryOut(RestrictionPlanner.floor(gateway.current(), emptyList()), emptyList())
+
+    /**
      * @param desired the `user_restrictions` of a desired state the server sent.
      *
      * Authoritative, unlike [applyBaseline]: a managed restriction the server did not ask for is
