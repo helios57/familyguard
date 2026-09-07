@@ -4943,6 +4943,37 @@ explanation makes and the alternatives do not: a slow network, a flaky server or
 would delay the two independently. Same caveat as 19.1 — both timestamps were read live from the
 one log stream that the 17:53Z pod replacement then discarded.
 
+**It replicated, on a fresh pod and durable evidence.** The 0.6.4 rollout started a new log, and one
+`kubectl logs --since=6h` over it (rc=0, 578 lines, 351 `readyz` rows as the positive control — an
+empty grep and a search that never ran are the same shape) was written to disk before anything could
+discard it. The phone was still on 0.6.3, so nothing about its behaviour had changed:
+
+```
+update check   18:12:32Z → 18:33:50Z   1278.8 s   scheduled 900   (+6m19s)
+               18:33:50Z → 18:51:23Z   1053.0 s   scheduled 900   (+2m33s)
+reconnect gap  18:08:15Z close → 18:15:22Z open   427.0 s
+               18:30:22Z close → 18:33:52Z open   210.2 s
+```
+
+The second co-occurrence is sharper than the first. The update check was due **18:27:32Z**
+(18:12:32Z + 900 s) and the reconnect due **~18:30:23Z** (18:30:22Z close + ~1 s) — **171 s apart** —
+and they were delivered at 18:33:50Z and 18:33:52Z, **2 s apart**. The spread between two independent
+deadlines collapsed from 171 s to 2 s. Nothing that merely slows things down does that; only
+something that holds both and releases them in one window does.
+
+**The obvious rebuttal was checked in the code, not assumed away.** If the DPC did both jobs from a
+single wake-up, the co-occurrence would be an artifact of its own design. It does not: the two are
+distinct `AlarmManagerPlatform` instances with distinct actions and distinct `PendingIntent` request
+codes (`ACTION_UPDATE_CHECK`/`REQUEST_UPDATE_CHECK` against `ACTION_RECONNECT`/`REQUEST_RECONNECT`),
+dispatched by `ConnectionService.onStartCommand` to `onUpdateAlarm()` and `onReconnectAlarm()`, and
+neither handler names the other's action or calls the other's function. When they arrive together,
+nothing in this app put them there.
+
+**And it is not universal, which is the honest half.** The 18:15:22Z reconnect coincided with no
+`apk-info` at all. That is what the model predicts rather than a hole in it — two alarms merge only
+if both are already pending when a maintenance window opens — but it does mean co-occurrence is
+evidence when it appears, not a test that runs on demand.
+
 Every alarm this app books is being deferred, and the update check was drifting *before* Phase 18
 existed. §17.11 proved that check **runs**, against a previous state where it never ran at all;
 it never proved it runs **on time**, and the distinction was never measured until now.
@@ -5015,4 +5046,6 @@ different SQL, the console reads the first, and a field carried by only one of t
   the live pod's file, so every deploy discards the history — this one lost the rows behind gaps 6
   and 7 within minutes of their being taken. What 0.6.4 makes durable is the *cause*
   (`power_exempt` / `exact_alarms` on the device row), not the *symptom*. Re-running the A/B means
-  re-collecting the timings live; do not expect to find them afterwards.
+  re-collecting the timings live; do not expect to find them afterwards. The 19.2 replication window
+  was captured to disk for exactly this reason, and that is the pattern to repeat: pull the rows out
+  of the pod and store them **before** the next deploy, not after.
