@@ -5036,16 +5036,60 @@ different SQL, the console reads the first, and a field carried by only one of t
   which finishes immediately and sits on the provisioning path — the one failure in this system
   that cannot be debugged from the server side. A system dialog there is not worth the risk on the
   evidence available; it is a separate change.
-- **`exact_alarms` on this phone is unknown.** It has never been read on hardware. If it comes back
-  `true` while `power_exempt` is `false`, that is the interesting case and it is the one the model
-  above predicts.
-- **None of the timing evidence is durable, and 0.6.4 does not change that.** Both series were read
-  from the control plane's container log, which is the only place either exists: a successful update
+- ~~**`exact_alarms` on this phone is unknown.**~~ **Answered — see 19.6.** It came back `false`,
+  and so did `power_exempt`. The case this bullet called interesting (exact `true`, power `false`)
+  is not the case; both switches are off.
+- **Neither of these two series is durable, and 0.6.4 does not change that.** Both were read from
+  the control plane's container log, which is the only place either exists: a successful update
   check writes no row (migration `0009` added `update_error` / `update_error_at` to `device_state`,
-  so only a *failure* persists), and a stream open/close writes none either. `kubectl logs` reads
+  so only a *failure* persists), and a stream open/close writes none either. **`commands` is the
+  exception and it is the good one** — `created_at` / `delivered_at` / `acked_at` persist per row,
+  so end-to-end command latency survives any number of deploys and can be re-read at will. Reach
+  for it first; it is the only timing authority here that does not evaporate. `kubectl logs` reads
   the live pod's file, so every deploy discards the history — this one lost the rows behind gaps 6
   and 7 within minutes of their being taken. What 0.6.4 makes durable is the *cause*
   (`power_exempt` / `exact_alarms` on the device row), not the *symptom*. Re-running the A/B means
   re-collecting the timings live; do not expect to find them afterwards. The 19.2 replication window
   was captured to disk for exactly this reason, and that is the pattern to repeat: pull the rows out
   of the pod and store them **before** the next deploy, not after.
+
+### 19.6 What the phone actually said
+
+The pilot phone took 0.6.4 at 19:00:02Z on 2026-09-07 and reported, on its first heartbeat as
+build 13:
+
+```
+Aurelia  v0.6.4 build13  power_exempt=false  exact_alarms=false  usage_access=true
+```
+
+**Both switches are off.** The diagnosis in 19.2 was an inference from timing; this is the phone
+saying it directly, and the two agree. `power_exempt=false` is Doze batching the alarms, which is
+what the co-occurrences showed. `exact_alarms=false` is a *second*, independent restriction that
+the timing could not have distinguished: `SCHEDULE_EXACT_ALARM` is declared in the manifest
+(checked — line 104, among 16 `uses-permission` entries) but not granted, which is the Android 14+
+default for an app that is not a clock or calendar, so `AlarmManagerPlatform` has been taking its
+`setAndAllowWhileIdle` fallback branch all along. Every wake-up this app booked was inexact *and*
+deferred.
+
+**End-to-end latency, from `commands` rather than from a log** — the durable authority, and it
+reaches back past every deploy:
+
+| command | created | delivered | `delivered − created` | phone |
+|---|---|---|---|---|
+| `TRIGGER_ALARM` | 15:22:46.1Z | 15:24:57.7Z | **131.6 s** | asleep — *this is the Ring the owner reported* |
+| `TRIGGER_ALARM` | 15:22:52.5Z | 15:24:57.7Z | **125.2 s** | asleep |
+| `UPDATE_APP` | 18:59:41.7Z | 18:59:53.0Z | **11.3 s** | idle, restricted |
+| `UPDATE_APP` | 18:59:46.4Z | 18:59:53.0Z | **6.6 s** | idle, restricted |
+| `SYNC_POLICY` | 15:29:39.9Z | 15:29:41.0Z | **1.1 s** | awake |
+| `UPDATE_APP` | 15:29:41.8Z | 15:29:42.8Z | **1.0 s** | awake |
+
+So the owner's "two minutes" was 131.6 s, and it is now a number rather than an impression. Note the
+two `TRIGGER_ALARM` rows delivered at the *same instant* despite being created 6 s apart, and the
+two `UPDATE_APP` rows likewise 16 ms apart despite 4.8 s between them — but neither is evidence of
+batching. Both pairs were collected by one `GET /api/v1/device/commands`, so the poll coalesces them
+by construction. **A co-occurrence is only evidence when the two things were scheduled independently**
+(19.2); here they were not, and reading these rows the same way would be a mistake.
+
+**What is still not measured:** any of it with the switches ON. That is the A/B, it needs one tap on
+the phone for each switch, and until it is taken "battery optimisation is the cause" remains a
+well-supported reading rather than a demonstrated one.
