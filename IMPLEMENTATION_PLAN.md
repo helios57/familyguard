@@ -5109,3 +5109,47 @@ latency, exact alarms may not matter, and designing a remedy before the measurem
 what Phase 18 did. Measure first, then decide whether this question is worth answering. Note also
 that `USE_EXACT_ALARM` — the auto-granted alternative — would foreclose Play distribution, which is
 one of the two remedies for the Play Protect problem in 17.12; it is not a free swap.
+
+### 19.7 The full before-series, and a correction to how it was characterised
+
+Recovered 2026-09-08 00:30Z from the running pod's log, which still held 5½ hours back to its
+17:53Z start (rc=0, 3448 lines, 2010 `readyz` rows as the positive control). Every reconnect gap
+while **both switches were off**, in order:
+
+```
+opened     gap (s)      opened     gap (s)      opened     gap (s)
+17:53:15        —       19:54:40    208.1       21:39:24     38.9
+18:15:22    427.0       20:13:02    201.8       21:58:24    239.1
+18:33:52    210.2       20:33:08    306.0       22:13:26      2.5
+18:51:25    153.6       20:51:56    228.1       22:31:56    210.2
+19:00:01      1.7       21:07:29     33.6       22:48:29     92.6
+19:17:37    156.1       21:23:46     76.3       23:07:21    232.2
+19:36:12    214.4
+                              n=18   min 1.7   max 427.0   median 205.0   mean 168.5
+```
+
+**The correction.** Earlier passages here describe this as "83–495 s asleep against 1.5 s awake",
+and 19.1 called the awake and asleep cases two non-overlapping populations. On eleven samples that
+looked true. On eighteen it is not: **four gaps are under 60 s** (1.7, 2.5, 33.6, 38.9) and one is
+92.6 s, so the distribution is continuous rather than bimodal, and a fast reconnect plainly happens
+sometimes *while the switches are off*.
+
+**Three of those four cannot be classified, and that is an instrument fault, not a mystery.**
+`device_state.screen_on` is a current-value column that every heartbeat overwrites, so there is no
+history to say whether the phone was awake at 21:07, 21:39 or 22:13 — an evening during which its
+owner plausibly picked it up. Only the 19:00:01Z sample is known-awake, because a heartbeat happened
+to be captured a second later. The watcher now appends every poll to a state series so the same
+question is answerable next time; the three samples already taken stay unclassifiable forever.
+
+The Doze model predicts exactly this shape, which is why the spread is not evidence against it:
+light doze runs short maintenance windows and deep doze long ones, and any interaction resets the
+device to the shallow end. Interspersed short and long deferrals over an evening is what that looks
+like. But *predicted by* is not *evidence for* — the observation is equally consistent with a phone
+being picked up now and then, and nothing here separates the two.
+
+**What this changes about the A/B.** Comparing single samples is now known to be worthless: a fast
+reconnect after flipping the switches would prove nothing, because fast reconnects already occur
+with them off. The measurement has to be a *distribution* over a comparable idle stretch — this
+18-sample series is the control — and ideally with each sample classified awake or asleep from the
+state series. That is a stricter test than the one this phase has been assuming, and it is the one
+that will actually settle it.
