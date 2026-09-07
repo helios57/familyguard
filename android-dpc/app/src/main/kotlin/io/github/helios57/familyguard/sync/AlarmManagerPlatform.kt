@@ -50,9 +50,7 @@ class AlarmManagerPlatform(
             return AlarmBooking.REFUSED
         }
 
-        val exactAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-            manager.canScheduleExactAlarms()
-        if (exactAllowed) {
+        if (exactAllowed(manager)) {
             // A SecurityException is still possible: the appop can be revoked between the check and
             // the call. Catching it turns a killed service into a delayed bedtime.
             val booked = runCatching {
@@ -135,5 +133,24 @@ class AlarmManagerPlatform(
          */
         fun reconnect(context: Context): AlarmManagerPlatform =
             AlarmManagerPlatform(context, ConnectionService.ACTION_RECONNECT, REQUEST_RECONNECT)
+
+        /**
+         * Whether this app may book an EXACT alarm right now, or null when the phone cannot say.
+         *
+         * The same expression [schedule] branches on, deliberately called from one place rather
+         * than written twice: a reported capability that is computed differently from the one
+         * actually used is a claim about a different program. `true` below API 31 is not an
+         * assumption — `SCHEDULE_EXACT_ALARM` does not exist there, and every alarm is exact.
+         *
+         * This is only half of "may this app keep its own schedule". The other half is battery
+         * optimisation, which has no AlarmManager expression at all and is read from
+         * `PowerManager.isIgnoringBatteryOptimizations`; an app can hold exact alarms and still
+         * have every one of them deferred by Doze. Both are reported, separately, on the heartbeat.
+         */
+        fun exactAlarmsAllowed(context: Context): Boolean? =
+            context.getSystemService(AlarmManager::class.java)?.let { exactAllowed(it) }
+
+        private fun exactAllowed(manager: AlarmManager): Boolean =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.S || manager.canScheduleExactAlarms()
     }
 }

@@ -523,6 +523,27 @@ as acknowledged.
 > **Before 0.6.3 there was no way to stop it at all.** `STOP_ALARM` was in the API and on the phone,
 > but no button anywhere sent it. On a phone running an older DPC, wait the five minutes.
 
+**If Ring takes minutes to arrive, look at the badges on the device card first.** A phone Android is
+battery-optimising defers everything FamilyGuard schedules — the push channel's reconnect and the
+automatic update check alike — and it does so without an error anywhere: the work is late, never
+lost, and from the server a restricted phone looks exactly like one with no signal. From 0.6.4 the
+phone reports the two switches that decide this and the console shows **battery restricted** or
+**alarms not exact** when either is off. Measured on the pilot phone while restricted: a 15-minute
+update check firing 6m51s and then 21m44s late, and a one-second stream reconnect taking 204 s,
+83 s and 116 s asleep against 1.5 s awake.
+
+The fix is on the phone and takes one tap; FamilyGuard cannot grant it, and there is no device-owner
+API that can — `DevicePolicyManager` has no power-management method at all:
+
+> Settings → Apps → **FamilyGuard** → Battery → **Unrestricted**
+>
+> On Samsung, also Settings → Battery → *Background usage limits*, and remove FamilyGuard from
+> **Sleeping apps** and **Deep sleeping apps**. It is put there automatically.
+
+A phone with no badge has told the server it is unrestricted. A phone with *no report at all* is
+running a DPC older than 0.6.4, which is not the same thing and is why the badge appears only on a
+measured `false`.
+
 **Update app** is still there and still works: it is the shortcut for "now" rather than the
 mechanism. It is an ordinary instant command, so it queues while the phone is off and runs when it
 comes back.

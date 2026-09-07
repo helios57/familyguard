@@ -262,6 +262,8 @@ class Synchronizer(
                 appVersionCode = t.appVersionCode,
                 usageAccess = t.usageAccess,
                 updateError = t.updateError,
+                powerExempt = t.powerExempt,
+                exactAlarms = t.exactAlarms,
             )
         ).pendingCommands
     }
@@ -312,4 +314,20 @@ data class DeviceTelemetry(
      * than an event: the process that would have sent the "it worked" is the one the install kills.
      */
     val updateError: String? = null,
+    /**
+     * Whether this app is exempt from battery optimisation, and whether it may book exact alarms.
+     * Null when not measured.
+     *
+     * Reported for the same reason as [usageAccess]: the failure they describe is invisible from
+     * every other signal. A battery-restricted app gets no error — its alarms simply fire later,
+     * and from the server that is indistinguishable from a phone with no signal. Measured on the
+     * pilot phone 2026-09-07, while restricted: a 15-minute update check fired 6m51s and then
+     * 21m44s late, and the event stream's one-second reconnect took 204 s, 83 s and 116 s asleep
+     * against 1.5 s awake — which is why FR-9's Ring took two minutes to reach a phone in a pocket.
+     *
+     * Two fields and not one, because they have two different remedies and only one of them exists
+     * at the API 29 floor — see the `0010_power_management` migration.
+     */
+    val powerExempt: Boolean? = null,
+    val exactAlarms: Boolean? = null,
 )

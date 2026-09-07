@@ -618,7 +618,17 @@ function deviceCard(dev, desired) {
     // report the field — and a warning there would be an alarm about a device nothing is wrong
     // with, which is the kind that teaches you to ignore the badge.
     st.usage_access === false
-      && el('span', { class: 'badge warn', text: 'screen time not measured' }));
+      && el('span', { class: 'badge warn', text: 'screen time not measured' }),
+    // Same rule as the badge above it: only a measured false. An older DPC does not report the
+    // field, and a phone that has not said is not a phone that is restricted.
+    st.power_exempt === false
+      && el('span', { class: 'badge warn', text: 'battery restricted' }),
+    // Separate badge, because it is a separate switch with a separate remedy. Shown only when the
+    // battery one is NOT the story — an app that is battery-restricted has its alarms deferred
+    // whether or not they were booked as exact, so leading with the exact-alarm switch there would
+    // send a parent to the setting that changes less.
+    st.exact_alarms === false && st.power_exempt !== false
+      && el('span', { class: 'badge warn', text: 'alarms not exact' }));
 
   const body = [head, facts];
 
@@ -634,6 +644,26 @@ function deviceCard(dev, desired) {
         ? ' The server is offering ' + behind.hosted + '. FamilyGuard retries by itself; if it keeps'
           + ' failing, the phone has to be set up again from its QR code.'
         : ''));
+  }
+
+  // Before the screen-time notice, because this one explains lateness in everything the phone
+  // does, including the measurement that notice is about.
+  if (st.power_exempt === false || st.exact_alarms === false) {
+    // Named for what a parent sees rather than for the API: nobody presses Ring and thinks "my
+    // alarms are being coalesced". Measured on the pilot phone 2026-09-07 while restricted — a
+    // 15-minute update check firing 6m51s and then 21m44s late, and a one-second stream
+    // reconnect taking 204 s, 83 s and 116 s asleep against 1.5 s awake.
+    body.push(el('p', { class: 'warn' },
+      el('strong', { text: 'This phone is delaying FamilyGuard in the background. ' }),
+      'Ring, Lock and Locate can take minutes to arrive while the phone is asleep, and nothing '
+      + 'reports an error when they do \u2014 the work is not lost, only late. ',
+      st.power_exempt === false
+        ? 'On the phone, open Settings \u2192 Apps \u2192 FamilyGuard \u2192 Battery and choose '
+          + 'Unrestricted. On Samsung, also check Settings \u2192 Battery \u2192 Background usage '
+          + 'limits and remove FamilyGuard from Sleeping apps and Deep sleeping apps. '
+        : 'On the phone, open Settings \u2192 Apps \u2192 FamilyGuard \u2192 Alarms and reminders '
+          + 'and allow it. ',
+      'FamilyGuard cannot grant this itself \u2014 there is no device-owner API for it.'));
   }
 
   if (st.usage_access === false) {

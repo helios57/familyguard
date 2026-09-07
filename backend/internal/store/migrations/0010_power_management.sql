@@ -1,0 +1,25 @@
+-- Whether Android is letting this phone's DPC keep its own schedule.
+--
+-- Measured 2026-09-07 on the pilot phone, and it is the reason FR-9's Ring took minutes to arrive.
+-- Every alarm the DPC books was being deferred while the phone slept: the 15-minute update check
+-- fired 6m51s and then 21m44s late, and the event stream's 1-second reconnect took 204 s, 83 s
+-- and 116 s across three consecutive cycles. Awake, the same reconnect took 1.5 s. Nothing was
+-- red — a deferred alarm has no error, it simply happens later, and from the server the phone is
+-- indistinguishable from one that is merely offline.
+--
+-- Two separate facts, because they have two separate remedies and conflating them would hide one:
+--
+--   power_exempt   PowerManager.isIgnoringBatteryOptimizations. FALSE means Doze may batch this
+--                  app's alarms and defer its network. No device-owner API grants this — checked
+--                  against the android-37.1 SDK, DevicePolicyManager has no power, doze or
+--                  exemption method at all — so it is the ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+--                  dialog, one tap, on every API from 23 up.
+--   exact_alarms   AlarmManager.canScheduleExactAlarms, API 31+. FALSE means every wake-up this app
+--                  books is inexact and lands when the platform feels like it. Always TRUE below 31,
+--                  where the permission does not exist.
+--
+-- NULLABLE, and NULL means the phone has not said — an older DPC does not send the fields, and
+-- recording that as "restricted" would put a warning on every device the day this ships. Same rule
+-- as usage_access above it.
+ALTER TABLE device_state ADD COLUMN power_exempt BOOLEAN;
+ALTER TABLE device_state ADD COLUMN exact_alarms BOOLEAN;

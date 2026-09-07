@@ -4871,3 +4871,117 @@ Also unmeasured, and for the same reason as everything in §17.8: the notificati
 on any layer above the controller. `SirenControllerTest` proves the controller calls it on every
 path; that the notification is posted, is heads-up, and that its button reaches `onStopSiren` is
 proven by nothing but reading the code, and needs the handset.
+
+---
+
+## Phase 19 — the alarm the platform never delivered (FR-9.2, FR-15.6)
+
+Phase 18 fixed the reconnect by replacing a coroutine `delay` with an `RTC_WAKEUP` alarm, shipped
+as 0.6.3, and it **did not work.** This phase is about why, and about the fact that the failure
+produced no error anywhere — which is the part worth keeping.
+
+### 19.1 The measurement that refuted the fix
+
+0.6.3 reached the phone at 16:17 UTC on 2026-09-07. The server logs one row per SSE stream at
+*close*, carrying `duration_ms`, so the moment each stream opened is arithmetic and the gap between
+one close and the next open is the thing Phase 18 claimed to have fixed:
+
+| stream | opened | closed | reconnect gap before it |
+|---|---|---|---|
+| 1 | 16:14:44Z | 16:17:29Z (164.9 s — the update killed it) | — |
+| 2 | 16:17:30Z | 16:32:30Z (900.0 s) | **1.5 s** — phone awake, owner tapping *Install* |
+| 3 | 16:35:55Z | 16:50:55Z (900.0 s) | **204.4 s** — phone asleep |
+| 4 | 16:52:18Z | 17:07:18Z (900.0 s) | **83.0 s** — phone asleep |
+| 5 | 17:09:14Z | 17:24:14Z (900.0 s) | **116.0 s** — phone asleep |
+
+83 s, 204 s and 116 s are the same family as the pre-fix gaps (83 s, 3m10s, 5m00s, 9m50s). The fix
+changed the awake case, which already worked, and nothing else.
+
+**What the log rules out.** The phone fetched `/api/v1/device/policy` at 16:32:31.03Z — 0.27 s
+after the close that began the 204 s gap. It had a working network and did not reconnect for
+another three and a half minutes. So this is not connectivity, not DNS, not the server, and not
+the phone being unreachable.
+
+### 19.2 It was never about the reconnect
+
+The deciding evidence was in a different alarm. The FR-15.6 update check is booked every 15 minutes
+through the *same* `AlarmManagerPlatform`, and `/api/v1/device/apk-info` is its footprint:
+
+```
+16:17:25Z → 16:27:51Z    626 s   confounded — see below, not evidence
+16:27:51Z → 16:49:42Z   1311 s   scheduled 900   (+ 6m51s)
+16:49:42Z → 17:26:26Z   2204 s   scheduled 900   (+21m44s)
+```
+
+`UpdateSchedule.checked()` books `INTERVAL_MILLIS`, 15 minutes, after every check that ran, so
+consecutive rows are 900 s apart by construction. **The first interval is not a sample**: the
+16:17:25Z `apk-info` was the `UPDATE_APP` command's own lookup — `/dpc.apk` follows it 230 ms later
+— and the process was replaced moments afterwards, so `arm()` decided that next instant, not
+`checked()`. It is listed only so the series is not quietly trimmed to the rows that agree. The two
+clean intervals carry the finding, and they are 46% and 145% over.
+
+Every alarm this app books is being deferred, and the update check was drifting *before* Phase 18
+existed. §17.11 proved that check **runs**, against a previous state where it never ran at all;
+it never proved it runs **on time**, and the distinction was never measured until now.
+
+One cause covers all of it: Android is battery-optimising the app, so its alarms are batched into
+whatever maintenance window comes along and its network is deferred with them. Booking a wake-up
+one second out, four times an hour, is precisely the pattern Doze's quota exists to refuse — so
+Phase 18 built the wait on a mechanism the platform is designed to deny.
+
+**A wrong turn worth recording.** The plan was `DevicePolicyManager.setApplicationExemptions` with
+`EXEMPT_FROM_POWER_RESTRICTIONS`, on the grounds that a device owner should be able to grant this
+silently. **That API does not exist.** `javap` over `android-37.1`'s `android.jar` finds no method
+on `DevicePolicyManager` matching `power|idle|battery|doze|standby|exempt` — calibrated by the same
+command printing 491 lines, so the search ran. The only route is
+`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, a one-tap system dialog, available from API 23 and
+therefore uniform across the API 29 floor. Recorded because the assumption was load-bearing and
+cost nothing to check.
+
+### 19.3 What this phase actually ships: the missing instrument
+
+Not another guess at the fix. The defect that made two releases necessary is that **a deferred
+alarm has no error** — from the server, a battery-restricted phone and a phone in a tunnel are the
+same shape. So the phone now reports whether the platform is letting it keep its own schedule, on
+every heartbeat, as two independent three-valued fields:
+
+| field | source | why separate |
+|---|---|---|
+| `power_exempt` | `PowerManager.isIgnoringBatteryOptimizations` | the switch that matters; Settings → Apps → FamilyGuard → Battery → Unrestricted |
+| `exact_alarms` | `AlarmManager.canScheduleExactAlarms` | API 31+ only; an app can hold exact alarms and still have every one deferred by Doze |
+
+Three-valued exactly as `usage_access` is (§16, `0007`): `null` is a phone that has not said, and
+an older DPC's silence must never clear a newer one's finding — the fleet this diagnoses is the
+same fleet that will be running builds too old to report. `AlarmManagerPlatform.exactAlarmsAllowed`
+is the *same expression* `schedule()` branches on, called from one place, because a reported
+capability computed differently from the one actually used is a claim about a different program.
+
+The console shows `battery restricted` as a badge and, above the screen-time notice, names the
+switch — because that notice is about a measurement this same restriction delays.
+
+### 19.4 Calibration
+
+`tests/e2e/power_management_test.go` was run against two deliberate breaks, and each named its own
+line rather than merely going red:
+
+- handler drops `PowerExempt: req.PowerExempt` →
+  `power_management_test.go:52: the phone reported battery restriction and the server holds <nil>`
+- list query selects `NULL::boolean` (the single-device query untouched) →
+  `power_management_test.go:99: the device list does not carry power_exempt: <nil>`
+
+The second is the `usage_access` trap made explicit: `ListDevices` and `GetDeviceState` are
+different SQL, the console reads the first, and a field carried by only one of them renders nowhere.
+
+### 19.5 What this does not claim
+
+- **It does not fix the latency.** It makes the cause visible. The remedy is a switch on the phone,
+  and until it is flipped and re-measured, "battery optimisation is the cause" is a well-supported
+  reading of five reconnect gaps and three update-check intervals — not a proven one. The A/B is
+  cheap and decisive: flip it, and read the same two series back.
+- **The DPC does not ask for the exemption.** The natural surface is `PolicyComplianceActivity`,
+  which finishes immediately and sits on the provisioning path — the one failure in this system
+  that cannot be debugged from the server side. A system dialog there is not worth the risk on the
+  evidence available; it is a separate change.
+- **`exact_alarms` on this phone is unknown.** It has never been read on hardware. If it comes back
+  `true` while `power_exempt` is `false`, that is the interesting case and it is the one the model
+  above predicts.

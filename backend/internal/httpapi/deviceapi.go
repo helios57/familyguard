@@ -135,6 +135,13 @@ type heartbeatRequest struct {
 	// update FAILED, and letting an older DPC's heartbeat clear it would hide exactly the failure
 	// it exists to surface.
 	UpdateError *string `json:"update_error"`
+
+	// PowerExempt and ExactAlarms are whether Android is letting this phone keep its own schedule
+	// — see store.DeviceState for the measurements that made them necessary. Pointers, absent from
+	// an older DPC, and absence is carried through as absence for the same reason as every field
+	// above it: a phone that has not been updated must not be able to clear a finding.
+	PowerExempt *bool `json:"power_exempt"`
+	ExactAlarms *bool `json:"exact_alarms"`
 }
 
 // maxUpdateErrorRunes bounds what one phone may write into the field a parent reads.
@@ -187,6 +194,8 @@ func (s *Server) heartbeat(c *gin.Context) {
 		AppVersionName: strings.TrimSpace(req.AppVersionName),
 		AppVersionCode: req.AppVersionCode,
 		UsageAccess:    req.UsageAccess,
+		PowerExempt:    req.PowerExempt,
+		ExactAlarms:    req.ExactAlarms,
 
 		ReportedUpdateError: clampUpdateError(req.UpdateError),
 	}); err != nil {

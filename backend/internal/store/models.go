@@ -123,6 +123,23 @@ type DeviceState struct {
 	// only false is "this phone is reporting zero minutes because it can see nothing".
 	UsageAccess *bool `json:"usage_access,omitempty"`
 
+	// PowerExempt and ExactAlarms are whether Android is letting this phone's DPC keep its own
+	// schedule. Nil in both means the phone has not said; only a measured false is a finding.
+	//
+	// They exist because a deferred alarm has no error. Measured on the pilot phone 2026-09-07: the
+	// DPC's 15-minute update check fired 6m51s and then 21m44s late, and the event stream's
+	// one-second reconnect took 204 s, 83 s and 116 s while the phone slept against 1.5 s while it
+	// was awake — so a parent pressing Ring waited minutes, and every log on both sides was clean.
+	// From the server a battery-restricted phone and an offline one are the same shape, and these
+	// two fields are the only thing that tells them apart.
+	//
+	// Separate rather than one "restricted" flag because the remedies differ: PowerExempt is the
+	// ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS dialog (API 23+, so it holds at the API 29 floor),
+	// while ExactAlarms is SCHEDULE_EXACT_ALARM and only exists from API 31. Reporting one number
+	// would tell a parent something is wrong without telling them which switch to find.
+	PowerExempt *bool `json:"power_exempt,omitempty"`
+	ExactAlarms *bool `json:"exact_alarms,omitempty"`
+
 	// AppVersionName and AppVersionCode are the DPC build actually running on the phone, as the
 	// phone reports it. They exist because the APK this server hosts is installed out of band —
 	// it is a file on the node, not part of the image — so before this, nothing anywhere could

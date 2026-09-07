@@ -108,6 +108,16 @@ data class HeartbeatRequest(
      * report.
      */
     @SerialName("update_error") val updateError: String? = null,
+    /**
+     * Whether Android is letting this app keep its own schedule. Null when unknown; a measured
+     * `false` is the explanation for work that arrives late with nothing in any log.
+     *
+     * See [io.github.helios57.familyguard.sync.DeviceTelemetry] for the measurements. Sent on every
+     * heartbeat rather than once, because both are settings a person changes in Settings at any
+     * time and the console has to follow them in both directions.
+     */
+    @SerialName("power_exempt") val powerExempt: Boolean? = null,
+    @SerialName("exact_alarms") val exactAlarms: Boolean? = null,
 )
 
 @Serializable

@@ -1369,6 +1369,12 @@ class ConnectionService : Service() {
             // Read on every heartbeat, not once at start: the appop is granted by hand in Settings
             // and can be revoked the same way, and the console must follow it in both directions.
             usageAccess = UsageAccess.granted(this),
+            // Read on every heartbeat for the same reason as the appop above: both are switches a
+            // person flips in Settings, and a stale "it was fine at boot" would be worse than not
+            // reporting at all. Null rather than false when the service is missing — an unmeasured
+            // restriction reported as a measured one is a fabricated finding.
+            powerExempt = power?.isIgnoringBatteryOptimizations(packageName),
+            exactAlarms = AlarmManagerPlatform.exactAlarmsAllowed(this),
             // "" is a phone with nothing to report and clears whatever the server was showing;
             // text is the last self-update that did not end with a new build running (FR-15.7).
             // Read here rather than pushed from the updater because the heartbeat is the only
