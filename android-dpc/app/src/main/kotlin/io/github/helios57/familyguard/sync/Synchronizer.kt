@@ -321,9 +321,10 @@ data class DeviceTelemetry(
      * Reported for the same reason as [usageAccess]: the failure they describe is invisible from
      * every other signal. A battery-restricted app gets no error — its alarms simply fire later,
      * and from the server that is indistinguishable from a phone with no signal. Measured on the
-     * pilot phone 2026-09-07, while restricted: a 15-minute update check fired 6m51s and then
-     * 21m44s late, and the event stream's one-second reconnect took 204 s, 83 s and 116 s asleep
-     * against 1.5 s awake — which is why FR-9's Ring took two minutes to reach a phone in a pocket.
+     * pilot phone 2026-09-07, while restricted: a 15-minute update check fired 6m51s, 21m44s and
+     * 8m20s late, and the event stream's one-second reconnect took 83 s to 495 s over five sleeping
+     * cycles against 1.5 s awake — which is why FR-9's Ring took two minutes to reach a phone in
+     * a pocket.
      *
      * Two fields and not one, because they have two different remedies and only one of them exists
      * at the API 29 floor — see the `0010_power_management` migration.

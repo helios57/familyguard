@@ -4893,9 +4893,20 @@ one close and the next open is the thing Phase 18 claimed to have fixed:
 | 3 | 16:35:55Z | 16:50:55Z (900.0 s) | **204.4 s** — phone asleep |
 | 4 | 16:52:18Z | 17:07:18Z (900.0 s) | **83.0 s** — phone asleep |
 | 5 | 17:09:14Z | 17:24:14Z (900.0 s) | **116.0 s** — phone asleep |
+| 6 | 17:26:32Z | 17:41:32Z (900.0 s) | **138.0 s** — phone asleep |
+| 7 | 17:49:46Z | 17:53:02Z (195.7 s — the 0.6.4 deploy killed it) | **494.7 s** — phone asleep |
 
-83 s, 204 s and 116 s are the same family as the pre-fix gaps (83 s, 3m10s, 5m00s, 9m50s). The fix
-changed the awake case, which already worked, and nothing else.
+Five asleep gaps: **83, 116, 138, 204 and 495 s**, against **1.5 s** awake. That is the same family
+as the pre-fix gaps (83 s, 3m10s, 5m00s, 9m50s), and the largest of them arrived *after* the fix.
+Phase 18 changed the awake case, which already worked, and nothing else.
+
+Stream 7's own 195.7 s hold is **not** a sample — the 0.6.4 rollout replaced the pod under it. Its
+*gap* is clean, because the close that began it (17:41:32Z) was 11 minutes before the deploy.
+
+**These rows are not re-derivable.** The container log is the only authority for them, and
+`kubectl logs` reads the current pod's file: replacing the pod at 17:53Z discarded the history that
+rows 6 and 7 were read from. They were taken live off that stream by the same script re-calibrated
+above, and the database keeps no equivalent — see 19.5.
 
 **What the log rules out.** The phone fetched `/api/v1/device/policy` at 16:32:31.03Z — 0.27 s
 after the close that began the 204 s gap. It had a working network and did not reconnect for
@@ -4911,14 +4922,26 @@ through the *same* `AlarmManagerPlatform`, and `/api/v1/device/apk-info` is its 
 16:17:25Z → 16:27:51Z    626 s   confounded — see below, not evidence
 16:27:51Z → 16:49:42Z   1311 s   scheduled 900   (+ 6m51s)
 16:49:42Z → 17:26:26Z   2204 s   scheduled 900   (+21m44s)
+17:26:26Z → 17:49:46Z   1400 s   scheduled 900   (+ 8m20s)
 ```
 
 `UpdateSchedule.checked()` books `INTERVAL_MILLIS`, 15 minutes, after every check that ran, so
 consecutive rows are 900 s apart by construction. **The first interval is not a sample**: the
 16:17:25Z `apk-info` was the `UPDATE_APP` command's own lookup — `/dpc.apk` follows it 230 ms later
 — and the process was replaced moments afterwards, so `arm()` decided that next instant, not
-`checked()`. It is listed only so the series is not quietly trimmed to the rows that agree. The two
-clean intervals carry the finding, and they are 46% and 145% over.
+`checked()`. It is listed only so the series is not quietly trimmed to the rows that agree. The three
+clean intervals carry the finding, and they are 46%, 145% and 56% over.
+
+**The last row is the strongest evidence in this phase, and it is not about lateness.** Two alarms
+booked by two unrelated code paths came due seven seconds apart — the update check at 17:41:26Z
+(17:26:26Z + 900 s, from `UpdateSchedule.checked()`) and the stream reconnect at ~17:41:33Z
+(17:41:32Z close + ~1 s, from `EventStream`) — and **both were delivered in the same instant,
+17:49:46Z**, roughly 500 s late. Independent timers do not agree to the second by chance; they
+agree because something downstream of both is holding them and releasing them together. That is
+alarm batching, which is what Doze does, and it is a prediction the battery-optimisation
+explanation makes and the alternatives do not: a slow network, a flaky server or a crashing app
+would delay the two independently. Same caveat as 19.1 — both timestamps were read live from the
+one log stream that the 17:53Z pod replacement then discarded.
 
 Every alarm this app books is being deferred, and the update check was drifting *before* Phase 18
 existed. §17.11 proved that check **runs**, against a previous state where it never ran at all;
@@ -4985,3 +5008,11 @@ different SQL, the console reads the first, and a field carried by only one of t
 - **`exact_alarms` on this phone is unknown.** It has never been read on hardware. If it comes back
   `true` while `power_exempt` is `false`, that is the interesting case and it is the one the model
   above predicts.
+- **None of the timing evidence is durable, and 0.6.4 does not change that.** Both series were read
+  from the control plane's container log, which is the only place either exists: a successful update
+  check writes no row (migration `0009` added `update_error` / `update_error_at` to `device_state`,
+  so only a *failure* persists), and a stream open/close writes none either. `kubectl logs` reads
+  the live pod's file, so every deploy discards the history — this one lost the rows behind gaps 6
+  and 7 within minutes of their being taken. What 0.6.4 makes durable is the *cause*
+  (`power_exempt` / `exact_alarms` on the device row), not the *symptom*. Re-running the A/B means
+  re-collecting the timings live; do not expect to find them afterwards.

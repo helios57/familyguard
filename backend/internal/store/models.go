@@ -127,9 +127,9 @@ type DeviceState struct {
 	// schedule. Nil in both means the phone has not said; only a measured false is a finding.
 	//
 	// They exist because a deferred alarm has no error. Measured on the pilot phone 2026-09-07: the
-	// DPC's 15-minute update check fired 6m51s and then 21m44s late, and the event stream's
-	// one-second reconnect took 204 s, 83 s and 116 s while the phone slept against 1.5 s while it
-	// was awake — so a parent pressing Ring waited minutes, and every log on both sides was clean.
+	// DPC's 15-minute update check fired 6m51s, 21m44s and 8m20s late, and the event stream's
+	// one-second reconnect took 83 s to 495 s over five sleeping cycles against 1.5 s while it was
+	// awake — so a parent pressing Ring waited minutes, and every log on both sides was clean.
 	// From the server a battery-restricted phone and an offline one are the same shape, and these
 	// two fields are the only thing that tells them apart.
 	//

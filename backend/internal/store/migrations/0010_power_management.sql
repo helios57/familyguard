@@ -2,10 +2,15 @@
 --
 -- Measured 2026-09-07 on the pilot phone, and it is the reason FR-9's Ring took minutes to arrive.
 -- Every alarm the DPC books was being deferred while the phone slept: the 15-minute update check
--- fired 6m51s and then 21m44s late, and the event stream's 1-second reconnect took 204 s, 83 s
--- and 116 s across three consecutive cycles. Awake, the same reconnect took 1.5 s. Nothing was
+-- fired 6m51s, 21m44s and 8m20s late, and the event stream's 1-second reconnect took 83 s to
+-- 495 s across five consecutive cycles. Awake, the same reconnect took 1.5 s. Nothing was
 -- red — a deferred alarm has no error, it simply happens later, and from the server the phone is
 -- indistinguishable from one that is merely offline.
+--
+-- What makes it batching rather than a slow network: on the last cycle the update check (due
+-- 17:41:26Z) and the stream reconnect (due ~17:41:33Z) were booked seconds apart by two unrelated
+-- code paths, and BOTH were delivered at 17:49:46Z, ~500 s late. Independent timers do not agree
+-- to the second unless something is holding and releasing them together.
 --
 -- Two separate facts, because they have two separate remedies and conflating them would hide one:
 --

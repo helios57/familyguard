@@ -529,8 +529,8 @@ automatic update check alike — and it does so without an error anywhere: the w
 lost, and from the server a restricted phone looks exactly like one with no signal. From 0.6.4 the
 phone reports the two switches that decide this and the console shows **battery restricted** or
 **alarms not exact** when either is off. Measured on the pilot phone while restricted: a 15-minute
-update check firing 6m51s and then 21m44s late, and a one-second stream reconnect taking 204 s,
-83 s and 116 s asleep against 1.5 s awake.
+update check firing 6m51s, 21m44s and 8m20s late, and a one-second stream reconnect taking
+83–495 s across five sleeping cycles against 1.5 s awake.
 
 The fix is on the phone and takes one tap; FamilyGuard cannot grant it, and there is no device-owner
 API that can — `DevicePolicyManager` has no power-management method at all:

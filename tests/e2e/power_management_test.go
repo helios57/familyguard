@@ -3,8 +3,8 @@ package e2e
 // Whether Android is letting a phone's DPC keep its own schedule, and whether the console can tell.
 //
 // This exists because of a failure with no error in it. Measured on the pilot phone 2026-09-07: the
-// DPC's 15-minute update check fired 6m51s and then 21m44s late; and the event stream's
-// one-second reconnect took 204 s, 83 s and 116 s while the phone slept, against 1.5 s while it was
+// DPC's 15-minute update check fired 6m51s, 21m44s and 8m20s late; and the event stream's
+// one-second reconnect took 83 s to 495 s over five sleeping cycles, against 1.5 s while it was
 // awake. A parent pressed Ring and waited two minutes. Nothing was red on either side — a deferred
 // alarm is not an error, it just happens later, and from the server a battery-restricted phone and
 // a phone with no signal are the same shape.
