@@ -43,6 +43,10 @@ private class StubSirenDevice : SirenDevice {
 
     override fun stopVibration() = Unit
 
+    override fun showStopControl() = Unit
+
+    override fun hideStopControl() = Unit
+
     override fun alarmVolume(): Int = 3
 
     override fun maxAlarmVolume(): Int = 7

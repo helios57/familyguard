@@ -20,6 +20,25 @@ interface SirenDevice {
     fun stopVibration()
 
     /**
+     * Puts a way to silence the siren in front of whoever is holding the phone, and takes it away
+     * again.
+     *
+     * `STOP_ALARM` travels over the network, and the person standing next to a screaming phone is
+     * not always the person with the console open — on 2026-09-07 they were the same person, and it
+     * still took the full five-minute cap, because there was no control anywhere: not on the
+     * handset, and not in the console either. The tone plays on the alarm stream at maximum, so the
+     * volume keys cannot help; and nothing at all reaches the vibrator, which repeats forever by
+     * construction. So the phone carries its own stop.
+     *
+     * That it can be pressed by a child is a decision, not an oversight. The siren already silences
+     * itself after [SirenController.DEFAULT_MAX_DURATION_MILLIS] whatever anyone does, so what this
+     * removes is at most five minutes of noise — and the failure it prevents is a parent holding a
+     * phone they cannot quiet, which is the one that actually happened.
+     */
+    fun showStopControl()
+    fun hideStopControl()
+
+    /**
      * The alarm stream's current level, or `null` when it cannot be read.
      *
      * Nullable because "the volume was not read" and "the volume is 0" are different facts, and
@@ -119,6 +138,16 @@ class SirenController(
             note = "the phone is not vibrating (${e.message ?: e.javaClass.simpleName}); the tone is playing"
         }
 
+        // After the tone, for the same reason the vibration is: the early return above must not
+        // leave a stop control for a siren that never started. A note rather than a failure — a
+        // ringing phone with no on-screen stop is still the feature, and the cap still ends it.
+        try {
+            device.showStopControl()
+        } catch (e: RuntimeException) {
+            note = "there is no stop control on the phone (${e.message ?: e.javaClass.simpleName}); " +
+                "STOP_ALARM and the ${maxDurationMillis / 1000}s cap are the only ways to end this"
+        }
+
         timer.arm(maxDurationMillis) { autoStop() }
         return SirenOutcome("ringing, auto-stop in ${maxDurationMillis / 1000}s", note = note)
     }
@@ -129,7 +158,14 @@ class SirenController(
      */
     fun stop(): SirenOutcome {
         timer.cancel()
-        if (!ringing) return SirenOutcome("not ringing")
+        if (!ringing) {
+            // A notification outlives the process that posted it, so a phone whose service was
+            // killed mid-siren comes back holding a stop control for a tone that is no longer
+            // playing. Clearing it on the not-ringing path is what makes STOP_ALARM the answer to
+            // that too, rather than a no-op that leaves the phone claiming to ring forever.
+            runCatching { device.hideStopControl() }
+            return SirenOutcome("not ringing")
+        }
 
         val failures = mutableListOf<String>()
         try {
@@ -144,6 +180,14 @@ class SirenController(
             device.stopVibration()
         } catch (e: RuntimeException) {
             failures += "the phone is still vibrating (${e.message ?: e.javaClass.simpleName})"
+        }
+        // Reported as a failure, not a note: a stop control left on screen for a siren that has
+        // stopped is a phone that looks like it is still ringing, and the next press does nothing
+        // visible — which is indistinguishable from the defect this control was added for.
+        try {
+            device.hideStopControl()
+        } catch (e: RuntimeException) {
+            failures += "the stop control is still on screen (${e.message ?: e.javaClass.simpleName})"
         }
         // Restored even when stopping the tone threw. The alternative leaves a phone whose alarm
         // stream is pinned at maximum for every notification from now on.

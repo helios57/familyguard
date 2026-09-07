@@ -32,11 +32,24 @@ import kotlinx.coroutines.withContext
  * it was still undelivered eleven minutes and two polls later (2026-09-05). Syncing on connect
  * closes that window for one extra fetch per connection — four an hour in steady state, since the
  * server closes every stream at fifteen minutes.
+ *
+ * **Which makes [wait] the thing that bounds how long that window is, and it is not a `delay`.**
+ * The server closes every stream at fifteen minutes by design, so this loop reconnects four times
+ * an hour whether anything is wrong or not; and by then the `connected` frame has reset [backoff],
+ * so the wait it computes is under a second. Measured on the pilot phone on 2026-09-07, the
+ * close-to-open gaps were 83 s, 3 min 10 s, 5 min 00 s and finally 9 min 50 s — during the last of
+ * which a parent pressed *Ring* twice and the phone heard neither for two minutes. A sub-second
+ * wait cannot produce those on a clock that is running: `kotlinx.coroutines.delay` is measured on
+ * one that stops while the device is suspended, exactly as
+ * [io.github.helios57.familyguard.update.UpdateSchedule] records for the update check. The caller
+ * supplies a wait that is backed by an `RTC_WAKEUP` alarm; the default is kept for the JVM tests,
+ * where there is no phone to suspend.
  */
 class EventStream(
     private val api: ApiClient,
     private val backoff: Backoff = Backoff(),
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val wait: suspend (Long) -> Unit = { delay(it) },
     private val onWake: suspend (SseEvent) -> Unit,
 ) {
     /** Set when the server has refused this device's credential; the caller must re-enroll. */
@@ -68,7 +81,7 @@ class EventStream(
                 // connection at fifteen minutes on purpose, and a phone changing networks closes
                 // them far more often than that.
             }
-            delay(backoff.nextDelayMillis())
+            wait(backoff.nextDelayMillis())
         }
     }
 

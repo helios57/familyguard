@@ -501,6 +501,28 @@ fleet follows within about a quarter of an hour, and nobody has to press anythin
 > `IMPLEMENTATION_PLAN.md` §17.11 has the measurement. **A phone on 0.6.0 or 0.6.1 cannot take 0.6.2
 > by itself** — press **Update app** once, and the fleet is automatic from the build that lands.
 
+> **The same stalled clock was also timing the reconnect, and that one delayed every command.** The
+> server closes each event stream at fifteen minutes on purpose, and the DPC waited out its
+> sub-second reconnect backoff with the same `delay`. On a sleeping phone that wait does not
+> advance, so the push channel could be gone for minutes: on 2026-09-07 it had been absent for
+> 9 min 50 s when a parent pressed **Ring**, and the phone heard nothing for two minutes. Nothing is
+> ever lost — the queue is the authority and a push is only a nudge — but the delay was unbounded.
+> 0.6.3 backs that wait with an `RTC_WAKEUP` alarm too; §18.3 has the measurement. Before 0.6.3,
+> a command reaching a phone late is expected behaviour, not a fault.
+
+**Ringing a phone, and stopping it.** **Ring** and **Stop ringing** are a pair on the device card.
+The siren plays on the alarm stream at maximum volume, so a silenced ringer does not silence it —
+and the volume keys will not stop it either, because nothing about volume reaches the vibration.
+From 0.6.3 the phone also shows its own *Stop ringing* notification, which anyone holding it can
+press, including the child; that is deliberate, because the alternative is a phone nobody present
+can quiet. Whatever happens, the siren silences itself after five minutes: it carries its own
+deadline so a stop that never arrives is an annoyance rather than something a child hides in a bag.
+A stop pressed on the handset is not reported back, so the console still shows the **Ring** it sent
+as acknowledged.
+
+> **Before 0.6.3 there was no way to stop it at all.** `STOP_ALARM` was in the API and on the phone,
+> but no button anywhere sent it. On a phone running an older DPC, wait the five minutes.
+
 **Update app** is still there and still works: it is the shortcut for "now" rather than the
 mechanism. It is an ordinary instant command, so it queues while the phone is off and runs when it
 comes back.

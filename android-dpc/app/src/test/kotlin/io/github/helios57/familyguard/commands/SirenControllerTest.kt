@@ -22,6 +22,12 @@ private class FakeSirenDevice(
         private set
     var toneStarts = 0
         private set
+
+    /** Whether a person holding this phone has a way to silence it. */
+    var stopControlShown = false
+        private set
+    var stopControlHides = 0
+        private set
     val volumesSet = mutableListOf<Int>()
 
     private fun maybeThrow(call: String) {
@@ -47,6 +53,17 @@ private class FakeSirenDevice(
     override fun stopVibration() {
         maybeThrow("stopVibration")
         vibrating = false
+    }
+
+    override fun showStopControl() {
+        maybeThrow("showStopControl")
+        stopControlShown = true
+    }
+
+    override fun hideStopControl() {
+        maybeThrow("hideStopControl")
+        stopControlShown = false
+        stopControlHides++
     }
 
     override fun alarmVolume(): Int? {
@@ -269,5 +286,126 @@ class SirenControllerTest {
 
         assertEquals(1, timer.cancels)
         assertNull(timer.pending)
+    }
+
+    /**
+     * The defect this control was added for, held as one test.
+     *
+     * On 2026-09-07 a parent rang the pilot phone and then could not stop it — the console had no
+     * STOP_ALARM button and the handset offered nothing at all — so it ran its full five-minute cap
+     * while they watched. Volume-down cannot help: the tone plays on the alarm stream at maximum,
+     * and nothing about volume reaches the vibrator, which repeats forever by construction.
+     */
+    @Test
+    fun `a ringing phone carries its own way to be silenced`() {
+        val device = FakeSirenDevice()
+        val controller = SirenController(device, FakeSirenTimer())
+
+        controller.start()
+        assertTrue("a phone that is ringing must offer a stop", device.stopControlShown)
+
+        controller.stop()
+        assertFalse("a phone that has stopped must not still offer one", device.stopControlShown)
+    }
+
+    /**
+     * The auto-stop path, which is the one no `STOP_ALARM` runs through.
+     *
+     * A control left on screen by the cap would be a phone that looks like it is still ringing and
+     * a button that does nothing — indistinguishable, to the person holding it, from the original
+     * defect.
+     */
+    @Test
+    fun `the five-minute cap takes the stop control away with the tone`() {
+        val device = FakeSirenDevice()
+        val timer = FakeSirenTimer()
+        val controller = SirenController(device, timer)
+
+        controller.start()
+        assertTrue(device.stopControlShown)
+
+        timer.fire()
+
+        assertFalse("the cap stopped the tone", device.tonePlaying)
+        assertFalse("but left the control behind", device.stopControlShown)
+    }
+
+    /**
+     * A notification outlives the process that posted it, so a service killed mid-siren comes back
+     * believing nothing is ringing while the phone still shows a stop control. `STOP_ALARM` has to
+     * be the answer to that too — the alternative is a control that survives every attempt to
+     * remove it.
+     */
+    @Test
+    fun `stopping a siren that is not ringing still clears a control left behind`() {
+        val device = FakeSirenDevice()
+        val controller = SirenController(device, FakeSirenTimer())
+
+        val outcome = controller.stop()
+
+        assertEquals("not ringing", outcome.summary)
+        assertTrue("the not-ringing path must still clear it", device.stopControlHides >= 1)
+        assertFalse(device.stopControlShown)
+    }
+
+    /**
+     * A siren nobody can see a stop for is still a siren, and it still ends by itself. Reported as
+     * a note so the parent is told which of the two they got — the same shape as a phone with no
+     * vibrator.
+     */
+    @Test
+    fun `a phone that cannot show the control still rings, and says so`() {
+        val device = FakeSirenDevice(throwOn = setOf("showStopControl"))
+        val controller = SirenController(device, FakeSirenTimer())
+
+        val outcome = controller.start()
+
+        assertTrue("the tone is the feature; the control is not", device.tonePlaying)
+        assertTrue("this is not a failed command", outcome.ok)
+        assertTrue(
+            "the parent is not told the phone has no stop control: ${outcome.note}",
+            outcome.note?.contains("no stop control") == true,
+        )
+    }
+
+    /**
+     * The other direction, and it is a failure rather than a note: a control left on screen for a
+     * siren that has stopped is a button that does nothing, which is the symptom of the defect.
+     */
+    @Test
+    fun `a control that cannot be taken away is reported as a failure`() {
+        val device = FakeSirenDevice(throwOn = setOf("hideStopControl"))
+        val controller = SirenController(device, FakeSirenTimer())
+        controller.start()
+
+        val outcome = controller.stop()
+
+        assertFalse("this must not be reported as a clean stop", outcome.ok)
+        assertTrue(
+            "the failure does not name the control: ${outcome.failure}",
+            outcome.failure?.contains("stop control") == true,
+        )
+        // Still stopped everything it could reach. A siren that gives up on the tone because a
+        // notification would not cancel is worse than the notification.
+        assertFalse(device.tonePlaying)
+        assertFalse(device.vibrating)
+    }
+
+    /**
+     * The negative control for the four above.
+     *
+     * A siren that failed to start must not leave a stop control for a tone that is not playing.
+     * Without this, `showStopControl` could be called unconditionally at the top of `start()` and
+     * every other test here would stay green.
+     */
+    @Test
+    fun `a siren that could not start shows no control at all`() {
+        val device = FakeSirenDevice(throwOn = setOf("startTone"))
+        val controller = SirenController(device, FakeSirenTimer())
+
+        val outcome = controller.start()
+
+        assertFalse("the tone never started", outcome.ok)
+        assertFalse("so there is nothing to stop", device.stopControlShown)
     }
 }

@@ -1,6 +1,9 @@
 package io.github.helios57.familyguard.commands
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
@@ -18,7 +21,9 @@ import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import io.github.helios57.familyguard.R
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -26,11 +31,21 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * [SirenDevice] over the platform's alarm stream, ringtone player and vibrator.
  *
- * Thin on purpose: every decision — the auto-stop cap, what is captured, what is restored — is in
- * [SirenController], which has JVM tests. What is left here is the four calls, and each of them is
- * the one that cannot be exercised without a phone.
+ * Thin on purpose: every decision — the auto-stop cap, what is captured, what is restored, when the
+ * stop control appears — is in [SirenController], which has JVM tests. What is left here is the
+ * platform calls, and each of them is one that cannot be exercised without a phone.
+ *
+ * @param stopIntent what the notification's *Stop ringing* button fires, or null when the caller
+ *   could not build one. Passed in rather than constructed here so this file does not have to know
+ *   which component answers it: the intent targets `ConnectionService`, which owns the
+ *   [SirenController] this device belongs to, and a dependency in that direction would be a cycle.
+ *   Null is a real state — `getForegroundService` can return null — and it is reported as a siren
+ *   with no on-screen stop rather than as a notification with a dead button.
  */
-class AndroidSirenDevice(private val context: Context) : SirenDevice {
+class AndroidSirenDevice(
+    private val context: Context,
+    private val stopIntent: PendingIntent? = null,
+) : SirenDevice {
 
     private val audio: AudioManager? = context.getSystemService(AudioManager::class.java)
 
@@ -101,6 +116,58 @@ class AndroidSirenDevice(private val context: Context) : SirenDevice {
         manager.setStreamVolume(AudioManager.STREAM_ALARM, level, 0)
     }
 
+    /**
+     * Posts the notification that carries the stop button.
+     *
+     * `IMPORTANCE_HIGH` on a channel id of its own. Both halves matter: high, because a control
+     * folded into the shade is one a person searching a noisy room will not find; and its own id,
+     * because a channel's importance is fixed at creation and cannot be raised afterwards —
+     * reusing the app's existing setup channel would silently inherit `IMPORTANCE_DEFAULT` and
+     * produce no heads-up at all, with nothing anywhere reporting that it had not.
+     *
+     * `setOngoing` so it cannot be swiped away and leave the phone ringing with the control gone.
+     * The siren's own cap removes it either way.
+     */
+    override fun showStopControl() {
+        val manager = context.getSystemService(NotificationManager::class.java)
+            ?: throw IllegalStateException("this device has no NotificationManager")
+        manager.createNotificationChannel(
+            NotificationChannel(
+                SIREN_CHANNEL,
+                context.getString(R.string.siren_channel),
+                NotificationManager.IMPORTANCE_HIGH,
+            )
+        )
+        val text = context.getString(R.string.siren_text)
+        val builder = NotificationCompat.Builder(context, SIREN_CHANNEL)
+            .setContentTitle(context.getString(R.string.siren_title))
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setOngoing(true)
+        if (stopIntent == null) {
+            // Thrown rather than posted without the button: the controller turns this into the note
+            // a parent reads, and a notification whose only control is missing is worse than none —
+            // it says the phone can be silenced from here when it cannot.
+            throw IllegalStateException("the stop button has no PendingIntent to fire")
+        }
+        builder.addAction(
+            android.R.drawable.ic_lock_silent_mode,
+            context.getString(R.string.siren_stop),
+            stopIntent,
+        )
+        // Tapping the body does the same thing. A person reaching for a screaming phone taps the
+        // notification, not the smaller button inside it.
+        builder.setContentIntent(stopIntent)
+        manager.notify(SIREN_NOTIFICATION_ID, builder.build())
+    }
+
+    override fun hideStopControl() {
+        context.getSystemService(NotificationManager::class.java)?.cancel(SIREN_NOTIFICATION_ID)
+    }
+
     private fun vibrator(): Vibrator? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             context.getSystemService(VibratorManager::class.java)?.defaultVibrator
@@ -112,6 +179,11 @@ class AndroidSirenDevice(private val context: Context) : SirenDevice {
     private companion object {
         /** Off, on, off — a pulse rather than a drone, which carries further through a cushion. */
         val PATTERN = longArrayOf(0, 800, 400)
+
+        const val SIREN_CHANNEL = "family-guard-siren"
+
+        /** 1, 2 and 3 belong to ConnectionService's own notifications. */
+        const val SIREN_NOTIFICATION_ID = 4
     }
 }
 

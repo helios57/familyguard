@@ -682,6 +682,17 @@ function deviceCard(dev, desired) {
   body.push(el('div', { class: 'btn-grid' },
     dev.locked ? cmd('UNLOCK_DEVICE', 'Unlock') : cmd('LOCK_NOW', 'Lock now'),
     cmd('TRIGGER_ALARM', 'Ring'),
+    // Not a toggle, unlike Lock/Unlock above, and the difference is what this console KNOWS. The
+    // server records `locked`, so that pair can show the one button that applies; nothing reports
+    // whether a siren is playing, so a toggle here would have to guess — and guessing wrong hides
+    // the stop from the one person trying to press it. Both are therefore always offered. Stopping
+    // a siren that is not ringing is answered "not ringing" and is not an error.
+    //
+    // Its absence is the defect this pair exists for: on 2026-09-07 a parent rang the phone, could
+    // not stop it from the console because STOP_ALARM appeared nowhere in these assets, could not
+    // stop it on the handset either, and the siren ran its full five-minute cap. STOP_ALARM had
+    // been in FR-9's table, accepted by the API and implemented on the phone the whole time.
+    cmd('STOP_ALARM', 'Stop ringing'),
     cmd('LOCATE_NOW', 'Locate'),
     cmd('SYNC_POLICY', 'Sync now')));
 

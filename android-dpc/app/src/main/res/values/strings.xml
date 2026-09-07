@@ -15,6 +15,16 @@
     <string name="connection_channel">Connection</string>
     <string name="connection_running">Connected to the family settings</string>
     <string name="setup_channel">Setup needed</string>
+
+    <!--
+      The siren's own channel and its stop control (FR-9). IMPORTANCE_HIGH so it is on screen
+      rather than folded into the shade: it is the only way to silence the phone you are holding,
+      and a control nobody can find is the defect it was added for.
+    -->
+    <string name="siren_channel">Ringing</string>
+    <string name="siren_title">FamilyGuard is ringing this phone</string>
+    <string name="siren_text">Someone asked this phone to ring so it can be found. It stops by itself after five minutes.</string>
+    <string name="siren_stop">Stop ringing</string>
     <string name="usage_access_title">Screen time is not being measured</string>
     <string name="usage_access_text">FamilyGuard needs Usage access to see how long apps are used. Without it, screen time reads as zero and daily limits never apply. Tap to open the setting, then turn FamilyGuard on.</string>
 

@@ -17,9 +17,10 @@ import io.github.helios57.familyguard.enforce.AlarmPlatform
  * lets a service started this way call `startForeground` from the background, which is exactly what
  * `onStartCommand` does before anything else.
  *
- * **Two callers, and the wake-up is the whole point of both.** [enforcement] starts a bedtime on a
- * phone lying face down; [updateCheck] is what makes FR-15.6 a cadence rather than a hope, because
- * the coroutine `delay` it replaces is measured on a clock that stops when the phone sleeps — see
+ * **Three callers, and the wake-up is the whole point of all of them.** [enforcement] starts a
+ * bedtime on a phone lying face down; [updateCheck] is what makes FR-15.6 a cadence rather than a
+ * hope; [reconnect] is what puts the push channel back after the server closes it. The last two
+ * replace a coroutine `delay`, which is measured on a clock that stops when the phone sleeps — see
  * [io.github.helios57.familyguard.update.UpdateSchedule]. `RTC_WAKEUP` plus `AllowWhileIdle` is the
  * only combination that both counts wall-clock time and is delivered to a dozing device.
  *
@@ -112,6 +113,7 @@ class AlarmManagerPlatform(
          */
         private const val REQUEST_ENFORCE = 1
         private const val REQUEST_UPDATE_CHECK = 2
+        private const val REQUEST_RECONNECT = 3
 
         /** The bedtime edge and the quota midnight (FR-4.2, NFR-10). */
         fun enforcement(context: Context): AlarmManagerPlatform =
@@ -120,5 +122,18 @@ class AlarmManagerPlatform(
         /** The automatic self-update check (FR-15.6). */
         fun updateCheck(context: Context): AlarmManagerPlatform =
             AlarmManagerPlatform(context, ConnectionService.ACTION_UPDATE_CHECK, REQUEST_UPDATE_CHECK)
+
+        /**
+         * Re-opening the event stream after it drops (FR-9.2), which is what bounds how long a
+         * command waits.
+         *
+         * The shortest-lived of the three and the one that fires most often — every fifteen
+         * minutes in steady state, because that is where the server caps a connection. It is here
+         * for exactly the same reason [updateCheck] is: the wait it backs is a coroutine `delay`,
+         * measured on a clock that stops when the phone sleeps. See
+         * [ConnectionService.waitForReconnect] for the measurement.
+         */
+        fun reconnect(context: Context): AlarmManagerPlatform =
+            AlarmManagerPlatform(context, ConnectionService.ACTION_RECONNECT, REQUEST_RECONNECT)
     }
 }

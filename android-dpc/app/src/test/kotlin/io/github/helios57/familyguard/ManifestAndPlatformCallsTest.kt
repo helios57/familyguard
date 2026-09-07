@@ -942,6 +942,101 @@ class ManifestAndPlatformCallsTest {
     private fun xmlWithoutComments(file: File): String =
         file.readText().replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "")
 
+    /**
+     * The connection loop must hand [EventStream] a wait of its own.
+     *
+     * `EventStream`'s `wait` parameter DEFAULTS to `kotlinx.coroutines.delay`, and that default is
+     * the defect: `delay` is measured on a clock that stops while the phone is suspended, so a
+     * stream closed by the server's fifteen-minute cap is re-opened only once something else
+     * happens to wake the device. Measured on the pilot phone on 2026-09-07 — close-to-open gaps of
+     * 83 s, 3 min 10 s, 5 min 00 s and 9 min 50 s, and a parent's two `Ring` presses unheard for two
+     * minutes inside the last one.
+     *
+     * The fix is a wait the caller supplies, backed by an `RTC_WAKEUP` alarm. Deleting `wait =` at
+     * the call site silently restores the old behaviour: it compiles, every unit test still passes
+     * because they exercise `EventStream` directly with their own hook, and the only symptom is
+     * commands arriving minutes late on hardware. This test is the only place that can see it.
+     */
+    @Test
+    fun `the connection loop does not let the event stream fall back to a bare delay`() {
+        val service = File(main, "kotlin/io/github/helios57/familyguard/sync/ConnectionService.kt")
+        assertTrue("${service.path} is not where the connection loop lives any more", service.isFile)
+        val text = code(service)
+
+        // Calibration on text this test controls, both halves. A reader that cannot see the
+        // defaulted call reports the real file clean for the same reason it reports anything clean.
+        assertTrue(
+            "the reader does not notice a stream built with no wait, so its answer on the real " +
+                "file means nothing",
+            !suppliesItsOwnWait("val stream = EventStream(api) { event -> handle(event) }"),
+        )
+        assertTrue(
+            "the reader does not recognise a stream that DOES supply one, so it would fail the " +
+                "real file no matter what it said",
+            suppliesItsOwnWait("val stream = EventStream(api, wait = ::waitForReconnect) { e -> f(e) }"),
+        )
+
+        assertTrue(
+            "ConnectionService builds an EventStream without passing `wait`, so the reconnect is " +
+                "timed by a clock that stops while the phone sleeps and a command can wait minutes",
+            suppliesItsOwnWait(text),
+        )
+
+        // And the wake-up it is backed by has to exist. A wait that books nothing is the same
+        // stalled clock with more code around it.
+        assertTrue(
+            "nothing books a reconnect wake-up, so the wait above has no way to end on a sleeping " +
+                "phone",
+            text.contains("AlarmManagerPlatform.reconnect("),
+        )
+        assertTrue(
+            "the reconnect wake-up is never answered in onStartCommand, so the alarm fires into " +
+                "a service that does nothing with it",
+            text.contains("ACTION_RECONNECT") && text.contains("onReconnectAlarm()"),
+        )
+    }
+
+    /** Whether this source builds an [EventStream] and names `wait` in the same call. */
+    private fun suppliesItsOwnWait(code: String): Boolean =
+        Regex("""EventStream\((?:[^{]*?)wait\s*=""", RegexOption.DOT_MATCHES_ALL)
+            .containsMatchIn(code)
+
+    /**
+     * Every `PendingIntent` this app books into the platform must have a request code of its own.
+     *
+     * Two pending intents that share a request code and target the same component are ONE pending
+     * intent: the second booking replaces the first, and the symptom is whichever feature is booked
+     * less often simply never happening — with nothing logged, nothing red, and no way to tell it
+     * from a phone that is asleep. `AlarmManagerPlatform` already says this in a comment; a comment
+     * cannot notice a third alarm arriving with a copied constant, and this release added two more
+     * call sites.
+     */
+    @Test
+    fun `no two pending intents share a request code`() {
+        val files = listOf(
+            File(main, "kotlin/io/github/helios57/familyguard/sync/AlarmManagerPlatform.kt"),
+            File(main, "kotlin/io/github/helios57/familyguard/sync/ConnectionService.kt"),
+        )
+        val declared = mutableMapOf<String, MutableList<String>>()
+        for (file in files) {
+            assertTrue("${file.path} is gone; this check has stopped measuring", file.isFile)
+            for (m in Regex("""const val (REQUEST_\w+)\s*=\s*(\d+)""").findAll(code(file))) {
+                declared.getOrPut(m.groupValues[2]) { mutableListOf() }.add(m.groupValues[1])
+            }
+        }
+        assertTrue(
+            "no REQUEST_… constants were found in ${files.map { it.name }}: they have been " +
+                "renamed or moved, so this check is comparing an empty set against itself",
+            declared.size >= 3,
+        )
+        val shared = declared.filterValues { it.size > 1 }
+        assertTrue(
+            "these request codes are used by more than one pending intent, so the later booking " +
+                "silently cancels the earlier: $shared",
+            shared.isEmpty(),
+        )
+    }
+
     private companion object {
         /**
          * Components that are exported with no permission, by name, each with what stands in for one.

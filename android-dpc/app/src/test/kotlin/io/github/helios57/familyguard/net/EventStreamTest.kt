@@ -124,6 +124,57 @@ class EventStreamTest {
         assertTrue("${server.requests.size}", server.requests.size >= 3)
     }
 
+    /**
+     * The reconnect is gated by the injected wait and by nothing else.
+     *
+     * This is the seam the whole two-minute-late `Ring` hangs off. `EventStream` defaults to
+     * `delay`, which is measured on a clock that stops while the phone is suspended, so on real
+     * hardware the caller replaces it with a wait backed by an `RTC_WAKEUP` alarm. That only works
+     * if the loop actually waits on what it is given — a `delay` left anywhere in the reconnect
+     * path would keep the old behaviour while every other test here stayed green.
+     *
+     * Measured by holding the wait open: no second connection may reach the server until it
+     * returns. The release is the positive control — without it, "no second connection" would also
+     * be what a broken loop that stopped reconnecting looks like.
+     */
+    @Test
+    fun `the reconnect waits on the injected wait, not on a clock of its own`() = runBlocking {
+        body = "event: connected\ndata: {}\n\n"
+        val held = Channel<Unit>(Channel.UNLIMITED)
+        val asked = Channel<Long>(Channel.UNLIMITED)
+        val stream = EventStream(
+            ApiClient(server.baseUrl, token = { "device-token" }),
+            backoff = fastBackoff(),
+            wait = { millis ->
+                asked.send(millis)
+                held.receive()
+            },
+        ) { }
+
+        val job = launch { stream.run() }
+        // The first connection happens before any wait, so reaching the wait at all proves the
+        // stream opened and closed once.
+        val first = withTimeout(TIMEOUT) { asked.receive() }
+        assertTrue("a wait of $first ms is outside the configured backoff", first in 0..4)
+
+        // Held. Nothing may reconnect while it is.
+        val duringHold = server.requests.size
+        repeat(50) { yield() }
+        assertEquals(
+            "the loop reconnected while the wait had not returned, so something other than the " +
+                "injected wait is timing the reconnect",
+            duringHold,
+            server.requests.size,
+        )
+
+        // Released — and this half is what makes the assertion above mean "waiting" rather than
+        // "stopped".
+        held.send(Unit)
+        withTimeout(TIMEOUT) { while (server.requests.size <= duringHold) yield() }
+        job.cancel()
+        assertTrue(server.requests.size > duringHold)
+    }
+
     @Test
     fun `the backoff resets on the connected frame and not on a bare connection`() = runBlocking {
         // Two runs of the same shape, differing only in whether the server says `connected`. The

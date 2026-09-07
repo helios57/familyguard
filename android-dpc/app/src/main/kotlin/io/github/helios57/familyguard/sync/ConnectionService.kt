@@ -86,6 +86,7 @@ import io.github.helios57.familyguard.usage.UsageLedger
 import io.github.helios57.familyguard.usage.UsageStatsForegroundReader
 import io.github.helios57.familyguard.usage.UsageTick
 import io.github.helios57.familyguard.usage.UsageTracker
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -99,6 +100,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.net.URL
 import java.time.Instant
@@ -106,6 +108,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The one long-lived component: it enrolls if it must, holds the event stream open, and syncs.
@@ -210,6 +213,73 @@ class ConnectionService : Service() {
     @Volatile
     private var checkUpdate: (suspend (String) -> Unit)? = null
 
+    /** Wakes the phone when the event stream is due to be re-opened. See [waitForReconnect]. */
+    private val reconnectAlarm by lazy { AlarmManagerPlatform.reconnect(this) }
+
+    /**
+     * The gate [waitForReconnect] is parked on, or null when nothing is waiting.
+     *
+     * `AtomicReference` rather than a plain field because it is written from the connection
+     * coroutine and read from `onStartCommand`, which the platform calls on the main thread.
+     */
+    private val reconnectGate = AtomicReference<CompletableDeferred<Unit>?>(null)
+
+    /**
+     * Waits out the reconnect backoff on the **wall clock**, on a phone that may be asleep.
+     *
+     * This is the whole fix for a command that arrives minutes late. The server closes every event
+     * stream at fifteen minutes, so the loop in [EventStream] reconnects four times an hour in
+     * normal operation, and the `connected` frame has by then reset the backoff — so the wait it
+     * asks for is under a second. On the pilot phone on 2026-09-07 the measured close-to-open gaps
+     * were 83 s, 3 min 10 s, 5 min 00 s and then 9 min 50 s, and it was during that last one that a
+     * parent pressed *Ring* twice and the phone heard neither for two minutes. Nothing was lost —
+     * the queue is the authority and the event is only a nudge — but a sub-second wait cannot
+     * produce gaps like those on a clock that is running. `delay` is measured on one that stops
+     * while the device is suspended, the same defect [UpdateSchedule] carries the measurement for.
+     *
+     * **Two ways out, and the phone picks.** Awake: the timeout expires on the uptime clock at
+     * [millis], which is what already worked and stays the cheap path — no alarm has to be
+     * delivered. Asleep: uptime stops, the timeout therefore never expires, and the `RTC_WAKEUP`
+     * alarm wakes the device and completes the gate. Whichever comes first wins, and because the
+     * timeout bounds the wait, a wake-up the platform never delivers cannot park this loop forever
+     * — the failure mode of the alarm is the behaviour we already had, not a phone that stops
+     * reconnecting.
+     *
+     * A refused booking is logged rather than swallowed. It means this phone is back to the old
+     * behaviour, which reads from the outside exactly like a phone that is simply offline.
+     */
+    private suspend fun waitForReconnect(millis: Long) {
+        if (millis <= 0) return
+        val gate = CompletableDeferred<Unit>()
+        reconnectGate.set(gate)
+        try {
+            when (val booking = reconnectAlarm.schedule(System.currentTimeMillis() + millis)) {
+                AlarmBooking.REFUSED -> Log.w(
+                    TAG,
+                    "reconnect NOT booked (${reconnectAlarm.unavailableReason()}); the stream " +
+                        "re-opens only once something else wakes this phone",
+                )
+                else -> Log.i(TAG, "reconnect in ${millis}ms (${booking.name.lowercase()})")
+            }
+            withTimeoutOrNull(millis) { gate.await() }
+        } finally {
+            reconnectGate.compareAndSet(gate, null)
+            runCatching { reconnectAlarm.cancel() }
+        }
+    }
+
+    /**
+     * The reconnect wake-up arrived: release [waitForReconnect] so the stream is re-opened now.
+     *
+     * Nothing to do when no one is waiting. That is the ordinary race — the phone was awake, the
+     * timeout won, and the alarm was cancelled a moment too late to stop it being delivered.
+     */
+    private fun onReconnectAlarm() {
+        if (reconnectGate.getAndSet(null)?.complete(Unit) != true) {
+            Log.i(TAG, "reconnect alarm: nothing was waiting on it")
+        }
+    }
+
     /**
      * The find-my-phone siren (FR-9), held by the service and not by the connection loop.
      *
@@ -217,7 +287,24 @@ class ConnectionService : Service() {
      * lose the handle to a tone that is already playing and the deadline that stops it — a phone that
      * screams until somebody reboots it, which is the failure the auto-stop cap exists to prevent.
      */
-    private val siren by lazy { SirenController(AndroidSirenDevice(this), HandlerSirenTimer()) }
+    private val siren by lazy {
+        SirenController(AndroidSirenDevice(this, sirenStopIntent()), HandlerSirenTimer())
+    }
+
+    /**
+     * What the siren's on-screen *Stop ringing* button fires.
+     *
+     * The same shape as the alarms: a foreground-service PendingIntent back into this service, which
+     * is where the [SirenController] holding the playing tone lives. A distinct request code, for
+     * the reason [AlarmManagerPlatform] states about its own two — a code shared with another
+     * pending intent is one pending intent, and the loser is silently replaced.
+     */
+    private fun sirenStopIntent(): PendingIntent? = PendingIntent.getForegroundService(
+        this,
+        REQUEST_STOP_SIREN,
+        Intent(this, ConnectionService::class.java).setAction(ACTION_STOP_SIREN),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
 
     /** The one-shot position probe (FR-9). Lazy for the same reason as [alarm]: no `Context` before `onCreate`. */
     private val locationProbe by lazy {
@@ -266,6 +353,8 @@ class ConnectionService : Service() {
 
         if (intent?.action == ACTION_ENFORCE) onEnforcementAlarm()
         if (intent?.action == ACTION_UPDATE_CHECK) onUpdateAlarm()
+        if (intent?.action == ACTION_STOP_SIREN) onStopSiren()
+        if (intent?.action == ACTION_RECONNECT) onReconnectAlarm()
 
         if (job?.isActive != true) {
             job = scope.launch { connect() }
@@ -323,6 +412,24 @@ class ConnectionService : Service() {
         scope.launch { check("alarm") }
     }
 
+    /**
+     * Somebody pressed *Stop ringing* on the phone itself (FR-9).
+     *
+     * Straight through to the controller, with no network in the path — that is the entire point.
+     * `STOP_ALARM` is the parent's route and it travels over the same connection the trigger did;
+     * this one works on a phone in a lift, and it works for the person actually holding it.
+     *
+     * Not routed through the command queue, so nothing here is acknowledged to the server: the
+     * console will still show the TRIGGER_ALARM it sent as acknowledged, because it was. That a
+     * local stop is invisible to the console is a real gap and is written down rather than papered
+     * over — reporting it needs an endpoint that does not exist yet.
+     */
+    private fun onStopSiren() {
+        val outcome = siren.stop()
+        val line = "stop control: ${outcome.summary}"
+        if (outcome.ok) Log.i(TAG, line) else Log.e(TAG, "$line — ${outcome.failure}")
+    }
+
     override fun onDestroy() {
         // Otherwise the wake-up outlives the service that answers it: it restarts this one, which
         // stops again for whatever reason it stopped for, at every edge for the life of the device.
@@ -332,6 +439,9 @@ class ConnectionService : Service() {
         // The instant stays written down, so the next start books it again rather than restarting
         // the two-minute wait.
         runCatching { updateAlarm.cancel() }
+        // And the reconnect wake-up, for the same reason: the loop it releases dies with this
+        // service, so a wake-up left booked restarts a service with nothing waiting on it.
+        runCatching { reconnectAlarm.cancel() }
         usageAccessWatcher?.let { watcher ->
             runCatching { getSystemService(AppOpsManager::class.java)?.stopWatchingMode(watcher) }
             usageAccessWatcher = null
@@ -461,7 +571,7 @@ class ConnectionService : Service() {
             return
         }
 
-        val stream = EventStream(api) { event ->
+        val stream = EventStream(api, wait = ::waitForReconnect) { event ->
             // The event is a wake-up and nothing else — see EventStream. Its type is logged so a
             // stream that is delivering the wrong thing is visible, and never read as state.
             if (!syncAndDrain(synchronizer, reports, commands, "wake:${event.type}")) {
@@ -1635,6 +1745,18 @@ class ConnectionService : Service() {
          * alarm that meant "one of two things" would have to guess which.
          */
         const val ACTION_UPDATE_CHECK = "io.github.helios57.familyguard.UPDATE_CHECK_NOW"
+
+        /** The siren's own stop control on the handset (FR-9). See [onStopSiren]. */
+        const val ACTION_STOP_SIREN = "io.github.helios57.familyguard.STOP_SIREN"
+
+        /**
+         * The event stream's reconnect wake-up. See [waitForReconnect] for why a wake-up is needed
+         * to wait one second.
+         */
+        const val ACTION_RECONNECT = "io.github.helios57.familyguard.RECONNECT_STREAM"
+
+        /** Not an alarm, so not in [AlarmManagerPlatform]'s block — but allocated against it. */
+        private const val REQUEST_STOP_SIREN = 10
 
         /**
          * Starts the service, carrying the provisioning extras when there are any.

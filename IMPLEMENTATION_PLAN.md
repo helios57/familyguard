@@ -4731,3 +4731,143 @@ So the two things that do work are both outside the app, and both are the operat
 Not applicable: Google's Play Protect appeal form covers apps flagged as *harmful*, not the "not
 known" notice; and the install-volume heuristic that relaxes the warning never arrives for a fleet
 of one.
+
+## Phase 18 — Ring, and the two minutes nobody could stop (FR-9, FR-9.2)
+
+The owner pressed **Ring** on the pilot phone. Nothing happened. Two minutes later the phone started
+screaming, and then there was no way to stop it — not from the console, not on the handset — so it
+ran its full five-minute cap while two people watched it.
+
+Three separate defects, none of which had ever been red.
+
+### 18.1 — `STOP_ALARM` existed everywhere except where a parent could reach it
+
+`STOP_ALARM` is in FR-9's own table. The API has accepted it since the beginning
+(`store.ValidCommandTypes`), `CommandHandlers` implements it, `SirenController.stop()` is idempotent
+and covered, and `CommandHandlersTest` asserts the phone implements exactly the set the server
+accepts. **The console contained the string zero times.** Ring was a one-way door.
+
+Lock got its paired Unlock because the server records `locked` and the button can toggle on it.
+Nothing reports whether a siren is playing, so Ring never grew a partner and nobody noticed.
+
+The button is now there, and it is deliberately **not** a toggle — a toggle would have to guess, and
+guessing wrong hides the stop from the one person trying to press it. Both are always offered;
+stopping a siren that is not ringing answers `"not ringing"` and is not an error.
+
+The guard that should have existed is
+`console.TestTheConsoleCanSendEveryCommandTheServerAccepts`, and it is the mirror of the device-side
+one that already existed. It reads `store.ValidCommandTypes` as a **symbol** and `app.js` out of the
+**embedded FS** — the copy that ships — and fails in both directions: a command with no button, and
+a button the API would answer 400 to. `BLOCK_YOUTUBE_ALL` / `UNBLOCK_YOUTUBE_ALL` are listed as
+reached through the Rules `youtube_blocked` switch instead, with the reason, because naming the
+alternative is a claim the next reader can check.
+
+Calibrated three ways: deleting the button turns it red naming `[STOP_ALARM]`; adding
+`cmd('SELF_DESTRUCT', …)` turns it red naming that; and — the one that matters — with the button
+deleted, `STOP_ALARM` still appeared **twice** in comments in the same file and it stayed red. It
+matches `cmd('…')` call sites, not the bare literal, so a tombstone comment cannot pass for a
+feature.
+
+### 18.2 — a screaming phone with nothing on it to press
+
+Volume-down does not work and never could. The tone plays on the alarm stream at maximum, and the
+vibration is `VibrationEffect.createWaveform(PATTERN, 0)` — repeat forever — which no volume control
+touches. Lowering the volume silences at most half of it.
+
+`SirenDevice` now carries `showStopControl()` / `hideStopControl()`, driven from
+`SirenController.start()` and `stop()` so the invariant holds on **every** path including the
+five-minute cap, which is the one no `STOP_ALARM` runs through. `AndroidSirenDevice` posts an
+`IMPORTANCE_HIGH` notification on a channel id of its own with a *Stop ringing* action; the id is
+new because a channel's importance is fixed at creation and reusing the existing setup channel would
+have inherited `IMPORTANCE_DEFAULT` and produced no heads-up at all, with nothing reporting that it
+had not.
+
+Four decisions worth stating:
+
+- **A child can press it.** The siren already silences itself after five minutes whatever anyone
+  does, so what this gives up is at most five minutes of noise; what it prevents is a parent holding
+  a phone they cannot quiet, which is the failure that actually happened.
+- **Shown after the tone starts**, so a siren that failed to start leaves no control behind. That is
+  its own test, and it is the negative control for the other four — without it, an unconditional
+  call at the top of `start()` would keep them all green.
+- **Cleared on the not-ringing path too.** A notification outlives the process that posted it, so a
+  service killed mid-siren comes back believing nothing rings while the phone still shows a stop.
+  `STOP_ALARM` has to be the answer to that as well.
+- **Failing to show it is a note; failing to hide it is a failure.** A ringing phone with no visible
+  stop is still the feature. A stop control left on screen for a siren that has ended is a button
+  that does nothing — indistinguishable, to the person holding it, from §18.1.
+
+A local stop is **not** reported to the server: the console still shows the `TRIGGER_ALARM` it sent
+as acknowledged, because it was. That gap is written down rather than papered over; reporting it
+needs an endpoint that does not exist.
+
+### 18.3 — the two minutes: the push channel was not merely slow, it was absent
+
+Read out of the server, which is the authority. Stream rows are logged at close, so
+`duration_ms: 900003` is the fifteen-minute cap the server applies on purpose:
+
+```
+14:56:57Z  GET /api/v1/device/stream  900007ms
+15:15:07Z  GET /api/v1/device/stream  900003ms   ← last close
+                                                 ← no stream open at all
+15:22:46Z  TRIGGER_ALARM queued                    (7m39s into the gap)
+15:22:52Z  TRIGGER_ALARM queued again
+15:24:57Z  phone reappears, drains both, acks 200ms later
+```
+
+`commands` agrees: both rows `delivered_at − created_at` of **132 s** and **125 s**, then acked
+within 250 ms of delivery. The phone was not slow; it was not listening. The control is the same
+phone awake seven minutes later — `SYNC_POLICY` and `UPDATE_APP` at 15:29:40Z and 15:29:42Z, both
+delivered in **1 second**.
+
+Nothing was lost, and that is by design: the event is a wake-up, the fetch is the delivery, and the
+queue is the authority. What was unbounded was the latency.
+
+**The cause is the reconnect wait.** `EventStream.run()` waited with
+`delay(backoff.nextDelayMillis())`, and by the time a stream closes cleanly the `connected` frame
+has already reset the backoff — so that wait is **0–1000 ms**. The measured close-to-open gaps that
+afternoon were 83 s, 3 min 10 s, 5 min 00 s and finally ≥ 9 min 50 s. A sub-second wait cannot
+produce those on a clock that is running. `kotlinx.coroutines.delay` is measured on one that stops
+while the device is suspended — the identical defect §17.11 found in the update timer and fixed
+*there only*. Two `delay`s, one fix, and this is the one where the symptom is a parent pressing a
+button and nothing happening.
+
+`EventStream` now takes a `wait` hook. `ConnectionService.waitForReconnect` books
+`AlarmManagerPlatform.reconnect` — `RTC_WAKEUP` + `AllowWhileIdle`, request code **3** — and parks
+on a `CompletableDeferred` inside `withTimeoutOrNull(millis)`. **Two ways out and the phone picks
+which:** awake, the timeout expires on the uptime clock and no alarm has to be delivered; asleep,
+uptime stops, the timeout never expires, and the alarm wakes the device and completes the gate.
+Because the timeout still bounds the wait, an alarm the platform never delivers degrades to the
+behaviour we already had rather than parking the loop forever.
+
+Two source guards, because neither failure can be reached at runtime on the JVM:
+
+- ***the connection loop does not let the event stream fall back to a bare delay*** — `wait`
+  **defaults** to `delay`, so deleting `wait =` at the call site compiles, keeps every unit test
+  green (they inject their own hook), and silently restores the old behaviour. Calibrated by doing
+  exactly that: red, naming it.
+- ***no two pending intents share a request code*** — two pending intents with the same code and
+  target are one pending intent; the later booking cancels the earlier and the symptom is whichever
+  feature is booked less often simply never happening, with nothing logged. `AlarmManagerPlatform`
+  said this in a comment, and a comment cannot notice a third alarm arriving with a copied constant.
+  This release added two more call sites. Calibrated by pointing `REQUEST_RECONNECT` at 2: red,
+  naming `{2=[REQUEST_UPDATE_CHECK, REQUEST_RECONNECT]}`.
+
+### 18.4 — what this does not claim
+
+**It closes the window in which there is no stream. It is not a measurement of push latency to a
+sleeping phone.** Every fast delivery on record — 0.7 s, 1 s, 1.3 s — was to a phone somebody was
+holding. Whether a dozing phone with an **open** stream reacts in under a second has not been
+measured here, and the number that would settle it is `delivered_at − created_at` for a `Ring`
+pressed after the phone has been idle past the fifteen-minute cap. Until that is taken, the honest
+claim is the narrow one.
+
+If that number is not small, the next lever is a device-owner doze exemption — and it needs its own
+measurement, not an assumption: `DevicePolicyManager.setApplicationExemptions` with
+`EXEMPT_FROM_POWER_RESTRICTIONS` is API 34 and the floor here is API 29, so whatever is true on the
+S24 says nothing about the S20.
+
+Also unmeasured, and for the same reason as everything in §17.8: the notification action has no test
+on any layer above the controller. `SirenControllerTest` proves the controller calls it on every
+path; that the notification is posted, is heads-up, and that its button reaches `onStopSiren` is
+proven by nothing but reading the code, and needs the handset.
