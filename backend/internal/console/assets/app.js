@@ -623,11 +623,14 @@ function deviceCard(dev, desired) {
     // field, and a phone that has not said is not a phone that is restricted.
     st.power_exempt === false
       && el('span', { class: 'badge warn', text: 'battery restricted' }),
-    // Separate badge, because it is a separate switch with a separate remedy. Shown only when the
-    // battery one is NOT the story — an app that is battery-restricted has its alarms deferred
-    // whether or not they were booked as exact, so leading with the exact-alarm switch there would
-    // send a parent to the setting that changes less.
-    st.exact_alarms === false && st.power_exempt !== false
+    // Separate badge because it is a separate switch with a separate remedy, and shown WHENEVER it
+    // is false — including alongside the battery badge. It used to be suppressed when
+    // power_exempt was also false, on the reasoning that battery restriction is the bigger effect
+    // and the parent should be sent to the setting that changes more. The pilot phone reported
+    // both false on one heartbeat (2026-09-07 19:00Z) and that reasoning became a defect: it hides
+    // the existence of the second switch until the first is fixed, which is a second trip to
+    // Settings and a second day of waiting to find out. Order the remedies; do not hide one.
+    st.exact_alarms === false
       && el('span', { class: 'badge warn', text: 'alarms not exact' }));
 
   const body = [head, facts];
@@ -651,19 +654,33 @@ function deviceCard(dev, desired) {
   if (st.power_exempt === false || st.exact_alarms === false) {
     // Named for what a parent sees rather than for the API: nobody presses Ring and thinks "my
     // alarms are being coalesced". Measured on the pilot phone 2026-09-07 while restricted — a
-    // 15-minute update check firing 6m51s and then 21m44s late, and a one-second stream
-    // reconnect taking 204 s, 83 s and 116 s asleep against 1.5 s awake.
+    // 15-minute update check firing 6m51s, 21m44s and 8m20s late, and a one-second stream
+    // reconnect taking 83–495 s asleep against 1.5 s awake.
+    //
+    // EVERY remedy that applies is listed, ordered by how much it changes. This was an either/or
+    // and that was wrong: the pilot phone reported power_exempt=false AND exact_alarms=false on
+    // the same heartbeat, so the parent was shown one switch and would have discovered the second
+    // only after fixing the first and waiting for a fresh heartbeat. Two switches, one trip.
+    const steps = [];
+    if (st.power_exempt === false) {
+      steps.push(el('li', {},
+        el('b', { text: 'Let it run in the background' }),
+        el('small', { text: 'Settings \u2192 Apps \u2192 FamilyGuard \u2192 Battery \u2192 Unrestricted. On Samsung, also open Settings \u2192 Battery \u2192 Background usage limits and remove FamilyGuard from Sleeping apps and Deep sleeping apps.' })));
+    }
+    if (st.exact_alarms === false) {
+      steps.push(el('li', {},
+        el('b', { text: 'Let it wake at the right moment' }),
+        el('small', { text: 'Settings \u2192 Apps \u2192 FamilyGuard \u2192 Alarms and reminders \u2192 allow.' })));
+    }
     body.push(el('p', { class: 'warn' },
       el('strong', { text: 'This phone is delaying FamilyGuard in the background. ' }),
       'Ring, Lock and Locate can take minutes to arrive while the phone is asleep, and nothing '
-      + 'reports an error when they do \u2014 the work is not lost, only late. ',
-      st.power_exempt === false
-        ? 'On the phone, open Settings \u2192 Apps \u2192 FamilyGuard \u2192 Battery and choose '
-          + 'Unrestricted. On Samsung, also check Settings \u2192 Battery \u2192 Background usage '
-          + 'limits and remove FamilyGuard from Sleeping apps and Deep sleeping apps. '
-        : 'On the phone, open Settings \u2192 Apps \u2192 FamilyGuard \u2192 Alarms and reminders '
-          + 'and allow it. ',
-      'FamilyGuard cannot grant this itself \u2014 there is no device-owner API for it.'));
+      + 'reports an error when they do \u2014 the work is not lost, only late. '
+      + 'FamilyGuard cannot grant this itself \u2014 there is no device-owner API for it. '
+      + (steps.length > 1
+        ? 'Two settings on the phone need changing, and both matter:'
+        : 'One setting on the phone needs changing:')));
+    body.push(el('ol', { class: 'steps' }, steps));
   }
 
   if (st.usage_access === false) {
