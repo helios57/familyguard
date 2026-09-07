@@ -5093,3 +5093,19 @@ by construction. **A co-occurrence is only evidence when the two things were sch
 **What is still not measured:** any of it with the switches ON. That is the A/B, it needs one tap on
 the phone for each switch, and until it is taken "battery optimisation is the cause" remains a
 well-supported reading rather than a demonstrated one.
+
+**One open question, deliberately left open until after the A/B.** `exact_alarms` costs a manual tap
+on every phone forever, so it is worth knowing whether a device owner can grant it. Measured:
+`DevicePolicyManager` has **no** method matching `alarm|exact|appop|opmode` in the android-37.1 SDK
+(0 matches, calibrated by the same command printing 491 lines), but it *does* expose
+`setPermissionGrantState`. Whether that reaches `SCHEDULE_EXACT_ALARM` depends on the permission's
+protection level — it is documented for *runtime* (dangerous) permissions, and an appop permission
+is expected to be out of scope, but **that expectation is not measured** and must not be written
+down as though it were. Resolving it needs a live Android (`pm list permissions -f`); the emulator
+was offline.
+
+It is left open on purpose rather than chased now: if flipping the battery switch alone restores the
+latency, exact alarms may not matter, and designing a remedy before the measurement is precisely
+what Phase 18 did. Measure first, then decide whether this question is worth answering. Note also
+that `USE_EXACT_ALARM` — the auto-granted alternative — would foreclose Play distribution, which is
+one of the two remedies for the Play Protect problem in 17.12; it is not a free swap.
