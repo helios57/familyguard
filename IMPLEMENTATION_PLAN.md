@@ -5465,27 +5465,51 @@ start. Because the staged file is *executed* before it is installed, its tempora
 `.exe` suffix on Windows — `os.CreateTemp` substitutes the random part for the last `*`, so the
 suffix survives the pattern.
 
-**That suffix is load-bearing, and it was measured rather than assumed.** A/B on the Windows guest,
-two binaries differing only in that pattern, both pointed at a server hosting a newer build:
+**That suffix is convention, not necessity — and the paragraph that used to stand here said the
+opposite on the strength of a confounded experiment.** The correction is kept in full because the
+mistake is more instructive than the fix.
 
-| staged name | result |
+What was originally run: two binaries differing only in the staged-file pattern, arm A (no `.exe`)
+first, arm B (`.exe`) second. Arm A failed — `the downloaded binary did not run, so it was NOT
+installed: exit status 1 (it printed: nothing)` — and arm B succeeded. That was written up as a
+measured defect. **It was n=1 against n=1, and the two arms were not exchangeable:** they ran in
+sequence against the same payload bytes, so "first time this machine had ever seen these bytes" was
+perfectly confounded with the treatment.
+
+What the follow-up measured, after a peer pointed out that their own Windows binary ran fine without
+an `.exe` name:
+
+| probe | result |
 |---|---|
-| `.fgctl-update-<rand>` | `the downloaded binary did not run, so it was NOT installed: exit status 1 (it printed: nothing)`, exit non-zero, still reports `v0.0.0-running` |
-| `.fgctl-update-<rand>.exe` | `Updated … v0.0.0-running → v9.9.9-served`, exit 0, and the binary afterwards reports `v9.9.9-served` |
+| same PE under four names — `fg-probe.exe`, `fg-probe.new`, `.fg-update-9999`, `.fg-update-9999.exe` — each run through the exact call `verifyRuns` uses | **all four run**, `LookPath` returns each path unchanged, stdout correct |
+| the no-`.exe` build, fresh directory per trial, n=8 | **8/8 succeed** |
+| the `.exe` build, fresh directory per trial, n=8 | **8/8 succeed** |
+| the `.exe` build against a payload with bytes the guest had never seen, run first | **succeeds** |
 
-So without it **every Windows self-update would have failed** — this was a real defect, not a
-precaution. It failed in the best available way: `verifyRuns` caught it, nothing was installed, the
-working binary was untouched and no partial file was left in the directory. That is the "run it and
-read the version back" check paying for itself on the first platform that needed it.
+So the extension is irrelevant, and the "first encounter with these bytes" theory that replaced it
+does not reproduce either. Reading Go 1.26.5's own source agrees: `hasExt` counts the dot after the
+final separator, so `.fgctl-update-123` is treated as *having* an extension, `lookExtensions` finds
+it absent from `PATHEXT`, and `findExecutable` short-circuits on `hasExt`+`chkStat` and returns the
+path unchanged. Nothing in Go rewrites or rejects it, and `CreateProcessW` maps a PE regardless of
+its name.
 
-**The mechanism is NOT established, and is deliberately not claimed.** `exit status 1` is Go's
-`*ExitError`, so the process did start and did exit 1 — which is *not* the same mechanism as cmd's
-refusal to execute an extensionless file (`is not recognized as an internal or external command`),
-measured separately on the same guest. Why a PE launched by `CreateProcess` under a name Windows
-does not recognise as executable exits 1 while printing nothing was not run to ground; the A/B
-settles what to do without settling why. The swap is platform-split: on unix a rename over a running executable is fine, on Windows
-the running file is moved to `.old` first and its path is reported, because Windows will not delete
-a running image and silently leaking the file would be worse than mentioning it.
+Windows Defender was ruled out as far as its own log allows: cloud-lookup events (2010) do sit in
+the failure window, but there is **no** detection, action-taken or ASR-block event (1006/1007/1015/
+1116/1117/1121) anywhere in the log — with the filter positive-controlled at 63 hits for an ID that
+does exist, because an empty result from a query that cannot match looks exactly like a clean one.
+
+**So the original failure is unexplained and unreproduced, and that is the honest end state.** The
+`.exe` suffix is kept because naming an executable `.exe` on Windows is conventional and costs
+nothing, *not* because it was shown to fix anything. What the episode actually established is about
+method rather than Windows: a two-arm experiment run in sequence, sharing state that the treatment
+does not control, is not an A/B — and a single trial per arm cannot distinguish a treatment effect
+from a transient. The `verifyRuns` failure path now reports the staged file's size and mode as well
+as the exit status, so a second occurrence arrives as evidence instead of a mystery.
+
+What did hold up is the *shape* of the failure: whatever it was, it failed safe. `verifyRuns`
+refused the install, the working binary was untouched, and no partial file was left in the
+directory. That is the "run it and read the version back" check doing its job — the one claim from
+the original write-up that survives.
 
 The download route re-hashes the file on every request and refuses with 503 if it no longer matches
 the manifest. The cost is one hash of a ~9 MB file on a route used a handful of times per release;

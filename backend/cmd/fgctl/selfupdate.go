@@ -117,9 +117,11 @@ func cmdSelfUpdate(ctx context.Context, env *environment, args []string) error {
 	// rename and a rename cannot cross filesystems. A temp dir would work on a developer machine
 	// and fail wherever /tmp is its own mount.
 	dir := filepath.Dir(self)
-	// The staged file is EXECUTED below, before it is installed. On Windows a file without the .exe
-	// extension is not reliably runnable, so the pattern carries one -- os.CreateTemp substitutes
-	// the random part for the last '*', which is why the suffix survives.
+	// The staged file is EXECUTED below, before it is installed. On Windows it is named .exe by
+	// CONVENTION, not necessity: measured on a Windows 11 guest, Go runs the same PE from this
+	// directory under `.exe`, under `.new`, and under a leading-dot extensionless name, 8/8 each.
+	// An earlier version of this comment claimed the suffix was required and cited an A/B; that
+	// A/B was confounded and its conclusion was wrong. See IMPLEMENTATION_PLAN.md 20.5.
 	pattern := ".fgctl-update-*"
 	if runtime.GOOS == "windows" {
 		pattern = ".fgctl-update-*.exe"
@@ -203,13 +205,28 @@ func verifyRuns(ctx context.Context, path, want string) error {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, path, "version").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%w (it printed: %s)", err, summarise(out))
+		// Deliberately verbose. This check has failed exactly once, on Windows, and could not be
+		// reproduced afterwards under any condition tried -- so the next occurrence has to arrive
+		// carrying its own evidence instead of sending someone back to a VM. The error text already
+		// separates a process that ran and exited from one that never started; what was missing the
+		// first time was whether the staged file was even there and whole.
+		return fmt.Errorf("%w%s (it printed: %s)", err, stagedState(path), summarise(out))
 	}
 	// Contains, not equals: the line is "fgctl <version>".
 	if !strings.Contains(string(out), want) {
 		return fmt.Errorf("it reports %q, but the manifest promised %s", summarise(out), want)
 	}
 	return nil
+}
+
+// stagedState describes the downloaded file at the moment the exec failed, so a truncated download
+// is distinguishable from a complete one that will not run.
+func stagedState(path string) string {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Sprintf(" [the staged file could not be stat'd: %v]", err)
+	}
+	return fmt.Sprintf(" [staged %s: %d bytes, mode %v]", filepath.Base(path), fi.Size(), fi.Mode())
 }
 
 func summarise(out []byte) string {
