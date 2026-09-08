@@ -68,6 +68,9 @@ browser that layer reports **2, not measured** rather than skipping quietly).
 # control plane
 cd backend && go build ./cmd/server
 
+# the CLI / MCP server — this machine only, or ./build-fgctl.sh for the linux+windows+macOS matrix
+cd backend && go build ./cmd/fgctl
+
 # container image (build context is backend/ on purpose — see the Dockerfile's header)
 docker build -t familyguard-control-plane:dev backend/
 
@@ -281,10 +284,12 @@ Nothing is ever applied by hand. Whatever runs this should read it from git.
 
 ```
 backend/
-  cmd/server/            the only binary
+  cmd/server/            the control plane
+  cmd/fgctl/             the CLI, and the same binary serves MCP (`fgctl mcp`)
   internal/auth/         JWKS cache, RS256 ID tokens, HS256 sessions, device-token hashing
   internal/config/       env parsing that refuses rather than defaults
   internal/console/      the parent console and its assets
+  internal/fgclient/     the parent-side API client fgctl is built on
   internal/enforce/      the server-side half of the enforcement model
   internal/httpapi/      routes, middleware, handlers
   internal/policy/       policy model, validation, compilation to the device bundle

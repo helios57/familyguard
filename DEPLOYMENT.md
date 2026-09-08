@@ -695,6 +695,125 @@ curl -H "Authorization: Bearer fgk_…" https://guard.example.com/api/v1/childre
 
 ---
 
+## `fgctl` — the command line, and the MCP server
+
+`fgctl` is the same API from a terminal, and the same binary serves it over MCP. It authenticates
+with an API key, so everything above about what a key is and is not applies unchanged.
+
+Build it from `backend/`:
+
+```bash
+./build-fgctl.sh              # writes backend/dist/ for linux, windows and macOS, plus SHA256SUMS
+go build -o fgctl ./cmd/fgctl # or just the one for this machine
+```
+
+**There is no compiled-in server address.** This repository is public, so a default host would
+publish a real deployment's address; an unconfigured binary exits 3 and says how to configure
+itself. Sign in once:
+
+```bash
+fgctl login --url https://guard.example.com     # prompts for the fgk_… key, not echoed
+echo "$KEY" | fgctl login --url https://guard.example.com --token-stdin   # or from a pipe
+```
+
+The key is verified against `GET /me` **before** it is stored, so a login that reports success is
+one the server agreed to. It is written to `os.UserConfigDir()` — `~/.config/familyguard/` on Linux,
+`%AppData%\FamilyGuard\` on Windows, `~/Library/Application Support/familyguard/` on macOS — at
+mode 0600 on unix, and is never printed by any command, not even as a prefix. `FAMILYGUARD_URL` and
+`FAMILYGUARD_TOKEN` override the file, which is how to run it in CI with no file at all.
+
+`fgctl` with no arguments lists the commands. The ones worth knowing:
+
+| command | what it answers |
+|---|---|
+| `fgctl devices` | every enrolled device, its model and lock state |
+| `fgctl device <id>` | everything the phone has reported — **including whether Android is letting it keep its own schedule**, with the remedy printed when it is not |
+| `fgctl commands <id>` | the queue, with how long each command took to *deliver* and then to *acknowledge* |
+| `fgctl ring <id>` | queue `TRIGGER_ALARM`; `stop-ring`, `lock`, `unlock`, `locate`, `sync`, `update` likewise |
+| `fgctl audit` | who did what, with a key distinguished from a browser |
+
+Add `--json` to any command for machine-readable output.
+
+**The delivery latency is the point of `fgctl commands`.** `created → delivered` is how long the
+phone took to come and ask; `delivered → acked` is how long it then took to act. A battery-
+restricted phone shows a large first number and a tiny second one, and that pair is what separates
+"the phone was asleep" from "the phone is broken". See `IMPLEMENTATION_PLAN.md` §19.
+
+### As an MCP server
+
+`fgctl mcp` speaks MCP over stdio. Point a client at it with the credential in the environment:
+
+```json
+{
+  "mcpServers": {
+    "familyguard": {
+      "command": "/usr/local/bin/fgctl",
+      "args": ["mcp"],
+      "env": {
+        "FAMILYGUARD_URL": "https://guard.example.com",
+        "FAMILYGUARD_TOKEN": "fgk_…"
+      }
+    }
+  }
+}
+```
+
+It exposes twelve task-shaped tools rather than one per route — the API has around forty-five parent
+endpoints, and a forty-five-tool server is one a model cannot choose within. `get_device`
+additionally returns a `background_restriction` block when the phone has *reported* a switch as off,
+because the null-versus-false distinction is the whole point and a model reading raw JSON flattens
+it. A null means the phone has not said, and produces no advice.
+
+**The four deletes are deliberately not tools.** An API key is the parent that created it, so the
+capability exists either way; withholding the tool means a model must go through
+`fgctl rm-device … --yes`, where a human types the flag. `tests/e2e/fgctl_test.go` asserts their
+absence, because "we chose not to expose it" is worth nothing if a later change quietly adds them.
+
+### Windows
+
+`build-fgctl.sh` produces `fgctl-windows-amd64.exe` and `fgctl-windows-arm64.exe`. The config path
+resolves through `os.UserConfigDir()` rather than a hand-built `~/.config`, so it lands in
+`%AppData%\FamilyGuard\`, and the no-echo key prompt goes through `golang.org/x/term`, which
+handles the Windows console having no tty to put in raw mode.
+
+**Measured on a Windows 11 guest (10.0.26100), amd64, 2026-09-08.** Previously this section said
+the Windows binaries had never been executed; they have now.
+
+| checked | result |
+|---|---|
+| config path, `HOME` set | `C:\Users\<user>\AppData\Roaming\FamilyGuard\config.json` |
+| config path, `HOME` **removed** | identical |
+| config path, `%AppData%` removed | fails, `%AppData% is not defined`, rc=1 |
+| `login` with a key the server refuses | rc=1, and nothing written |
+| `login` with a key it accepts, then again over the existing file | rc=0 both times |
+| `whoami`, `config`, `version`, unknown command | as on Linux |
+| `mcp`, driven from `cmd.exe` with stdin held open | 2 responses, 12 tools — identical to Linux |
+
+The middle three rows are the point. An SSH session on Windows gets a `HOME` that a desktop session
+does not have, so a CLI with any hand-rolled `HOME` fallback writes to the right place over SSH and
+the wrong place for every real user — the test passes and the product is broken. `fgctl` resolves
+through `os.UserConfigDir()`, which on Windows reads `%AppData%` and never `HOME`; clearing
+`%AppData%` makes it fail outright, which is what proves the first two rows are about `%AppData%`
+rather than a coincidence. (Thanks to the kissdesk session, which had shipped exactly that defect and
+warned about it.)
+
+> **Two things that are still not what they look like.** The `0600` on the config file is inert on
+> NTFS: `icacls` shows the file inheriting `SYSTEM`, `Administrators` and the user, all full
+> control. Other non-admin users cannot read it because `C:\Users\<user>` denies them, but a local
+> administrator can — the same posture as every other app that stores a token under `%AppData%`, and
+> not the guarantee the mode bits suggest. And `fgctl mcp < frames.jsonl` yields only the *first*
+> response: the SDK tears the session down when stdin ends with work in flight. Hold stdin open
+> (`(type frames.jsonl & ping -n 3 127.0.0.1 > nul) | fgctl mcp`) or drive it as a real client does.
+> Do **not** run an MCP stdio smoke through an SSH channel — measured across six trials it returned
+> 0 or 1 responses and never 2, varying run to run, which reads as a flaky server rather than a
+> flaky transport.
+
+**Exit codes**, so a script can tell the cases apart: `0` success, `1` the command ran and failed,
+`2` no command given, `3` no server or no credential configured. `2` and `3` were both confirmed
+distinct from a binary that fails to start (`1` on Windows for a missing executable).
+
+---
+
 ## Enrolling the first phone
 
 1. Sign in to `https://guard.example.com` as a bootstrap parent.

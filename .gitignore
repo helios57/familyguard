@@ -49,3 +49,8 @@ LOCAL-NOTES.md
 
 # Test scratch
 /tests/.tmp/
+
+# fgctl: the cross-compilation output, and a stray local `go build -o fgctl ./cmd/fgctl`
+backend/dist/
+backend/fgctl
+backend/fgctl.exe

@@ -92,6 +92,14 @@ if ! (cd "$ROOT/backend" && "$GO" build -o "$WORK/family-guard" ./cmd/server); t
   notmeasured "the control plane did not build"
 fi
 
+# fgctl is built here for the same reason as the server: the suite drives it as a black box over a
+# pipe, so it must not be able to import the client's own constants and check them against
+# themselves.
+echo "building fgctl…"
+if ! (cd "$ROOT/backend" && "$GO" build -o "$WORK/fgctl" ./cmd/fgctl); then
+  notmeasured "fgctl did not build"
+fi
+
 # ---- postgres -------------------------------------------------------------
 
 echo "starting postgres ($PG_IMAGE)…"
@@ -133,6 +141,7 @@ done
 # ---- run ------------------------------------------------------------------
 
 export E2E_SERVER_BIN="$WORK/family-guard"
+export E2E_FGCTL_BIN="$WORK/fgctl"
 export E2E_PG_CONTAINER="$CONTAINER"
 export E2E_PG_HOST=127.0.0.1
 export E2E_PG_PORT="$PG_PORT"

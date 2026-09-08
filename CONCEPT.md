@@ -125,6 +125,7 @@ Go 1.26, Gin, `pgx` against PostgreSQL. Layout:
 ```
 backend/
   cmd/server/main.go     startup order, maintenance sweep, graceful shutdown
+  cmd/fgctl/             the CLI and MCP server over the parent API (FR-17 keys)
   internal/config/       env parsing; refuses to start on a missing or weak secret
   internal/store/        pgx queries + embedded SQL migrations
   internal/auth/         OIDC ID-token verification, session tokens, device tokens

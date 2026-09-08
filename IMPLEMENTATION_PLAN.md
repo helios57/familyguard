@@ -5286,3 +5286,141 @@ fetches policy first so it cannot produce a bare heartbeat, the poll loop was pa
 remaining in-code path that heartbeats without a policy GET is `enforceFromCache()`. Elimination over
 a set of paths I enumerated by reading is not the same as observing the alarm fire, and without a
 device log I cannot close that gap. Counted as supporting, not as a third independent replication.
+
+---
+
+## Phase 20 — `fgctl`: the API from a terminal, and the same binary over MCP (FR-17)
+
+Phase 19 was diagnosed with `ssh` + `kubectl exec` + `psql`, and most of that was unnecessary. The
+control plane already had a credential built for programs — API keys, FR-17, "everything a parent
+can do in the console can be done with an API key instead of a browser session" — and no client that
+used it. So the state watcher polled the database pod for `power_exempt`/`exact_alarms`/`screen_on`,
+which `GET /devices/:id` returns, and the latency table was assembled by hand from SQL over
+`commands`, which `GET /devices/:id/commands` returns.
+
+`fgctl` is that client. One binary, in the backend module: `fgctl <command>` for a terminal,
+`fgctl mcp` for an MCP client, one HTTP layer underneath both.
+
+### 20.1 What it is, and the three decisions worth recording
+
+**It shares the server's own types.** `internal/fgclient` decodes into `store.Child`,
+`store.Device`, `store.DeviceState`, `store.Command`, `store.Policy` — not into structs copied into
+the client. A field renamed on the server breaks the CLI at compile time instead of silently
+producing an empty column in a table a parent is reading. The `send` command validates against
+`store.ValidCommandTypes` for the same reason: the closed set has exactly one definition.
+
+**There is no compiled-in server address.** The repository is public. A default host would publish a
+real deployment's address in source, so an unconfigured binary exits **3** and prints how to
+configure itself. It contacts nothing.
+
+**The four deletes are not MCP tools.** An API key *is* the parent that created it, so the
+capability exists regardless; withholding the tool only means a model must go through
+`fgctl rm-device … --yes`, where a human types the flag. This is a judgement, not a security
+boundary, and it is asserted in the suite — "we chose not to expose it" is worth nothing if a later
+change quietly adds them back.
+
+### 20.2 The calibrations
+
+Six black-box tests in `tests/e2e/fgctl_test.go`, driving the real binary against the real server
+over a pipe. The e2e module has no dependencies and cannot import the backend, so the client is
+genuinely a black box — including the MCP half, whose JSON-RPC is hand-written, so the wire format
+is asserted rather than assumed.
+
+Three were calibrated by breaking the product and watching the test go red:
+
+| broken | test | what it printed |
+|---|---|---|
+| `login` stores without the `GET /me` probe | `TestFgctlLoginRefusesAKeyTheServerDoesNot` | `Signed in … as ()` while the server log shows `/api/v1/me → 401` |
+| a `delete_child` tool added to the MCP server | `TestFgctlMCPServesTheTools` | `"delete_child" is exposed over MCP; destructive deletes are CLI-only by design` |
+| `config` prints the token | `TestFgctlNeverPrintsTheCredential` | `fgctl [config] printed the credential` |
+
+The first is the one that mattered. **A login that stores an unverified credential and reports
+success is this project's recurring defect shape**: the failure surfaces later, on an unrelated
+command, and reads as a server problem. The negative half is paired with a positive one on the same
+server — without it, "the bad key was refused" could be passing because the server was unreachable.
+
+Two further properties are asserted rather than assumed. The tests run the binary with
+`XDG_CONFIG_HOME`/`AppData` pointed at a temp directory, so a test of `login` cannot overwrite the
+credential of whoever runs the suite — and the environment is built from scratch rather than
+inherited, because an ambient `FAMILYGUARD_TOKEN` would silently authenticate the test that is
+meant to be measuring an *unauthenticated* one, and it would pass.
+
+### 20.3 Windows — executed on a guest, and what that found
+
+`build-fgctl.sh` cross-compiles six targets (linux, windows, darwin × amd64, arm64) and writes
+`SHA256SUMS`. All six build; `file` reports the Windows artefact as `PE32+ executable (console)
+x86-64`, with the linux one reported as ELF as the control that `file` discriminates.
+
+Two things make it Windows-correct rather than accidentally so: the config path resolves through
+`os.UserConfigDir()` rather than a hand-built `~/.config`, which is the whole of the story
+(`%AppData%\FamilyGuard\`); and the no-echo prompt goes through `golang.org/x/term`, whose Windows
+implementation is a different file from the unix one — which is what `GOOS=windows go vet` actually
+buys, since the `runtime.GOOS` branches in this code compile everywhere. That vet was calibrated:
+a deliberate arity error inside a `runtime.GOOS == "windows"` branch takes it to rc=1.
+
+**This section used to end "NOT MEASURED: no Windows binary has ever been executed." It has now been
+run**, on a Windows 11 guest (10.0.26100, amd64) borrowed from another session, 2026-09-08. Every
+row of the table in `DEPLOYMENT.md#Windows` was taken there. Three findings are worth keeping here.
+
+**The `HOME` confound, which is the reason the run was worth making.** An SSH session on Windows is
+given a `HOME` by sshd; a desktop session has none — `[Environment]::GetEnvironmentVariable('HOME',
+'User')` and `('HOME','Machine')` are both empty, and the value only exists because sshd invented
+it. So any CLI with a hand-rolled `HOME` fallback writes to the right place when tested over SSH and
+the wrong place for every real user, and the test reports success. `fgctl` is immune because
+`os.UserConfigDir()` reads `%AppData%` and never `HOME` on Windows — but "immune by reading the
+source" is not the claim worth recording. The claim is the measurement, and it needs three cases,
+not two: `HOME` set and `HOME` removed give an identical path, and **`%AppData%` removed makes it
+fail outright** (`%AppData% is not defined`, rc=1). Without the third case the first two are equally
+consistent with a fallback that happened not to fire.
+
+> **A trap inside the trap, which cost a measurement.** In `cmd`, `set HOME= && prog` does **not**
+> delete `HOME` — everything between `=` and `&&` is taken as the value, so it sets it to a single
+> space. The first probe printed `HOME= ` and would have recorded a clean run against an environment
+> that still had `HOME`. It is `set "HOME=" && prog`. Note the failure direction: the wrong form
+> quietly *keeps* the variable, so it hides exactly the bug the check exists to find.
+
+**`fgctl mcp` exited 1 on a normal client disconnect** — found here, and not Windows-specific at
+all; it reproduced on Linux the moment it was looked for. The Go MCP SDK's `Server.Run` returns
+`server is closing: EOF` when the client goes away with a request in flight, and passing that to the
+exit code makes every ordinary shutdown look like a crash to whatever supervises the process. Fixed
+by building the transport from `mcp.IOTransport` (which is what `mcp.StdioTransport` *is*) over a
+reader that records EOF, so the clean case is identified where it can be known for certain. The
+SDK's own sentinel, `jsonrpc2.ErrServerClosing`, lives under the SDK's `internal/` and cannot be
+imported; matching its message would be a string comparison against another module's private
+wording, which changes without notice and fails in the direction that hides errors. Related, and
+**not** fixed because it is the SDK's teardown rather than this code's: responses still in flight
+when stdin ends are dropped, so `fgctl mcp < frames.jsonl` yields only the first response. Hold
+stdin open. (A peer's Rust MCP server does *not* drop them under the identical shape, which is what
+locates this in the SDK rather than in cmd redirection.)
+
+**The exit codes were split.** `fgctl` with no arguments printed usage and exited **0**, so
+`fgctl $CMD` with an unset variable reported success for having done nothing. Asking for help is
+still 0; no command given is now 2. The full set is 0 success, 1 the command ran and failed, 2 no
+command, 3 no server or no credential — and 2 and 3 were both confirmed distinct from a binary that
+fails to start, which is 1 on Windows.
+
+> **Still not what it looks like: the `0600` on the config file is inert on NTFS.** `icacls` shows
+> the file inheriting `SYSTEM`, `Administrators` and the user, all full control. Other non-admin
+> users cannot read it because `C:\Users\<user>` denies them, but a local administrator can. That
+> is the same posture as every other application storing a token under `%AppData%`, and it is the
+> platform's answer rather than this code's — but it is not the guarantee the mode bits imply, so it
+> is written down rather than left to be inferred from a call to `os.Chmod`.
+
+> **Do not run an MCP stdio smoke through an SSH channel.** Measured across six trials against the
+> same guest binary: 0 or 1 responses, never 2, varying run to run, while the identical frames run
+> *inside* the guest returned 2 of 2 every time. The ssh channel truncates, and because it varies it
+> reads as a flaky server rather than a flaky transport. Redirect inside the guest and fetch the
+> output file.
+
+### 20.4 What this does not do
+
+It does not close the gap Phase 19 ran into. **The reconnect gaps are still unreachable from any
+interface**: `deviceStream` persists nothing — no row, no table, no endpoint — so stream open/close
+times exist only in the gin request log of the live pod, and `fgctl` cannot serve what nothing
+writes. Adding `device_connections`, or a last-open/last-close pair on `device_state`, would make
+§19's whole measurement a `fgctl` call and let the console show a parent why a Ring was late. It is
+deliberately **not** in this phase: deploying replaces the pod and takes the log window with it, and
+the A/B in §19.8 is still pending.
+
+Nor is there a distribution channel. `release.yml` publishes a ghcr image and creates no GitHub
+Release, so the Windows `.exe` is something you build, not something you download.

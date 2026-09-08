@@ -53,6 +53,7 @@ const (
 // single test has had the chance to fail for the wrong reason.
 var (
 	serverBin   string
+	fgctlBin    string
 	pgContainer string
 	pgHost      string
 	pgPort      string
@@ -88,6 +89,7 @@ func TestMain(m *testing.M) {
 		return v
 	}
 	serverBin = read("E2E_SERVER_BIN")
+	fgctlBin = read("E2E_FGCTL_BIN")
 	pgContainer = read("E2E_PG_CONTAINER")
 	pgHost = read("E2E_PG_HOST")
 	pgPort = read("E2E_PG_PORT")
@@ -104,6 +106,10 @@ func TestMain(m *testing.M) {
 	}
 	if _, err := os.Stat(serverBin); err != nil {
 		fmt.Fprintf(os.Stderr, "NOT MEASURED: E2E_SERVER_BIN %q: %v\n", serverBin, err)
+		os.Exit(2)
+	}
+	if _, err := os.Stat(fgctlBin); err != nil {
+		fmt.Fprintf(os.Stderr, "NOT MEASURED: E2E_FGCTL_BIN %q: %v\n", fgctlBin, err)
 		os.Exit(2)
 	}
 	if _, err := os.Stat(chromeBin); err != nil {
