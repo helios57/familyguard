@@ -662,6 +662,13 @@ Play Console → **App erstellen**. Three things are permanent and cannot be cha
 The create-app form says you can choose your signing key when you create a release. **That is
 false.** Google generates and activates one at the moment the app is created.
 
+**Assume you will not be reminded.** There is no warning to dismiss, no field to get wrong and no
+error to read: the app is created, a key is generated and activated, and the console reports
+success. The key page is not part of the creation flow, so nothing puts it in front of you. **The
+failure mode here is discovery, not judgement** — which is why this step is an instruction to go
+and look rather than a recommendation to weigh. (Sharpened by the `muplay` session, from the other
+side of the same procedure.)
+
 Go straight to `…/app/<appId>/keymanagement` and read the SHA-256 back.
 
 **The test is NOT "do I have an installed base yet?"** — that question gives the wrong answer, and
