@@ -771,6 +771,39 @@ published but reaches nobody. Until Google reviews the app, testers see the temp
 `versionCode` must be unique and increasing across everything ever uploaded, including rejected
 attempts that never got accepted (a refused upload does not consume one).
 
+### 6. Driving the console from a browser
+
+The console is a Material SPA and every one of these cost real time. They are recorded because
+each failure *reads like something else*.
+
+- **A dialog that is gone from the screen can still be in the DOM.** An org-verification overlay
+  survived a full page reload; selectors matched it, and the click then timed out with *"element
+  is not visible"* — which reads as a wrong selector, not a stale node. Filter every DOM query
+  through a visibility predicate, without exception.
+- **`label:has-text("…")` matches the section heading, not the radio.** The first create-app
+  submit failed on `Wähle "Kostenlos" oder "Kostenpflichtig" aus` for exactly this: the label
+  matched, the click landed on a heading, the radio stayed unset. Click the input itself.
+- **The submit button never disables, so an enabled button is not evidence the form is valid.**
+  Calibrated by un-ticking a required declaration: the button stayed live. The authorities are
+  the post-submit validation error and the `mdc-checkbox--selected` / `mdc-radio--selected`
+  wrapper class on the control. Read those, never the button.
+- **Direct navigation to `/create-new-app` silently redirects to the app list** while the account
+  is gated — indistinguishable from a dead URL. Reach it from the list page's own button.
+- **The console renders in the account's locale** (German here), so English selector text matches
+  nothing and looks like a missing element.
+- **After a publish, reload the track page** and use the *disappearance* of "Keine Releases" as
+  the discriminator. The page rendered straight after submit is not the authority.
+- **A browser-automation MCP writes downloads into the repo root** (`.playwright-mcp/`) and
+  restricts uploads to allowed roots, so staged files must live inside the repo too. Those
+  snapshots contain whatever host was open. This repo is public: `.playwright-mcp/` is gitignored
+  for that reason, and staged files are deleted after use.
+- **There is no debug port to hand off.** The browser is launched with `--remote-debugging-pipe`,
+  not `--remote-debugging-port`: no TCP endpoint, no `DevToolsActivePort`, nothing a second client
+  can attach to. What persists the Google login is the profile directory
+  (`~/.cache/ms-playwright-mcp/mcp-chrome-*`), and only one process may hold one at a time — it
+  carries a `SingletonLock` symlinked to the live PID. A different automation session gets a
+  different profile and is **not** signed in.
+
 ## Installing another app on a child's phone
 
 Requires `APK_DIR` (above). The model is a **declared set, not a queue of commands**: you say which
