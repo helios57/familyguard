@@ -5161,3 +5161,33 @@ with them off. The measurement has to be a *distribution* over a comparable idle
 18-sample series is the control — and ideally with each sample classified awake or asleep from the
 state series. That is a stricter test than the one this phase has been assuming, and it is the one
 that will actually settle it.
+
+### 19.8 The control set, and the test — written down before the A/B is run
+
+Nine consecutive reconnect gaps with **every sample verified screen-off** (the state series ran from
+23:29:37Z with `screen_on=true` on 0 of 170 polls, and heartbeats landed within a second or two of
+several of the opens), both switches `false`:
+
+```
+2.7   49.5   125.9   130.0   174.0   187.0   233.0   319.6   482.0      (seconds)
+
+n=9    median 174.0    mean 189.3    over 60 s: 7 of 9    under 10 s: 1 of 9
+```
+
+**2.7 s, asleep and restricted.** That is inside the awake range (1.5 s, 1.7 s), so at the fast end
+the two conditions are not merely overlapping but indistinguishable. Any single fast reading after
+the switches are flipped is therefore uninformative, and so is a small handful of them.
+
+**The test, fixed now rather than after the data arrives.** The A/B passes if, over a comparable
+idle stretch with samples confirmed screen-off:
+
+- the **median** falls from 174 s to under 10 s, **and**
+- the **fraction under 10 s** rises from 1 of 9 to substantially all of them.
+
+It fails if the median stays in the hundreds, whatever individual fast samples appear. It is
+**inconclusive** — not a pass — if fewer than about nine confirmed-asleep samples are collected, or
+if the state series shows the phone was handled during the window.
+
+Writing the criterion down first is the point. With a control containing a 2.7 s sample, a
+post-hoc reading of the after-data could support almost any conclusion, and Phase 18 already
+demonstrated what happens when a fix is believed before it is measured.
