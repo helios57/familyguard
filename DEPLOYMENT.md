@@ -602,7 +602,8 @@ missing the console shows no comparison at all rather than an "up to date" nobod
 > 3. On the phone: FamilyGuard → **Recovery** → the recovery code. Everything lifts.
 > 4. In the phone's own browser open **`https://<your host>/dpc.apk`** and install it over the top.
 >    Same key, so it is an update: Device Owner, the credential and the app data all survive.
->    **Google Play Protect will stop this and say the app "is not known"** — it is an app Google has
+>    **Google Play Protect will stop this and say the app "is not known"** — a Play listing exists
+>    as of 2026-09-08, but nothing has been published to it, so this build is still one Google has
 >    never seen, installed by a browser. Choose *Install anyway*; that gate is on the browser path,
 >    not on the DPC's own updates.
 > 5. Device card → **Replace phone** again for a fresh code (the first has a 30-minute life), then
@@ -1033,8 +1034,9 @@ to revoke it, and the same four steps then hold.
 2. In the phone's own browser open **`https://<your host>/dpc.apk`** and tap the download to
    install. Same signing key, so it installs **over** the old build: Device Owner and app data both
    survive, and nothing has to be re-provisioned. **Play Protect blocks this the first time**, with
-   *"blocked by Play Protect because it's not known"* — the app is not on Play and never will be, so
-   choose *Install anyway*. The button on an install over an existing app says **Update**, not
+   *"blocked by Play Protect because it's not known"* — a Play listing exists as of 2026-09-08 but
+   **no release has been uploaded to it**, so this APK is still one Google has never seen; choose
+   *Install anyway*. The button on an install over an existing app says **Update**, not
    Install.
 3. Console → **Replace phone** for a fresh setup code.
 4. FamilyGuard → **Recovery** → **Re-link this phone**, and type it.

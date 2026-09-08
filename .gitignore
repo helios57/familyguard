@@ -54,3 +54,9 @@ LOCAL-NOTES.md
 backend/dist/
 backend/fgctl
 backend/fgctl.exe
+
+# Playwright MCP writes here when a browser drives the Play Console or the live console UI.
+# It lands page snapshots, console logs and downloaded artifacts in the REPO ROOT, and those
+# snapshots contain whatever host was open — this repo is destined to go public, so one
+# `git add .` would publish server internals. Nothing in here is ever worth committing.
+/.playwright-mcp/

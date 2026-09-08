@@ -5799,3 +5799,85 @@ so the two new declarations are checked as shipped rather than as authored.
 > "restored" check was the only thing that caught the loss, and it is easy to read as flakiness.
 > Snapshot with `cp` and restore from that, then assert the file is *still modified* afterwards.
 
+
+## Phase 22 — the Play listing, and the key Google had already replaced (§17.12 remedy 2)
+
+§17.12 offered two remedies for Play Protect and warned that remedy 2 carried one irreversible
+decision: *"the signing key must stay the one the fleet already trusts."* The account verification
+cleared on 2026-09-08 and the app was created. **The warning was right, and the console defeated it
+before anyone was asked.**
+
+### 22.1 What was created
+
+`FamilyGuard` / `io.github.helios57.familyguard`, app id `4974388380576404212`, on the personal
+developer account `5395020420629339834`. App, free, three declarations accepted (developer programme
+policy, Play App Signing terms, US export law). `Paketname verfügbar` was confirmed *before*
+submitting, and the package matches the shipped `applicationId` exactly — that string is permanent
+now, and a mismatch would have been unrecoverable.
+
+Free rather than paid is also permanent once published, and is correct here.
+
+### 22.2 The create-app page makes a promise it does not keep
+
+The form says, next to the Play App Signing consent:
+
+> *"Du kannst deinen App-Signaturschlüssel auswählen, wenn du ein Release erstellst."*
+> (You can choose your app signing key when you create a release.)
+
+That is false. The App signing page immediately showed a key already `In Verwendung`, `Zuerst
+verwendet 8 Sept. 2026, 13:55` — **the minute the app was created** — with SHA-256
+`6B:BF:4D:0A:74:B9:04:54:2B:8A:57:7E:B9:F0:FE:3C:4A:D7:BC:99:64:A3:2D:FD:E6:AE:39:00:71:F1:FB:9A`.
+
+Not `b62cda94…`. Had a release been uploaded against that key, every enrolled phone would have
+refused the update permanently, and for a device-owner DPC the only way back is a factory reset.
+**Nothing warns you.** The key page is not part of the creation flow; you have to go and look.
+
+### 22.3 The fix, and why it was cheap at that exact moment
+
+`Schlüssel ändern` → *"Einen Schlüssel aus dem Java KeyStore exportieren und hochladen"* → PEPK.
+Its warning dialog lists exactly two consequences — testers on internal/closed tracks stop getting
+updates, and uploaded versions become unusable — and **both were void**: no tracks, no uploads. The
+window in which this is free is the window between creating the app and publishing anything to it.
+
+Verified by three independent hashes, all read back after a **full page reload**, not from the DOM
+left over from the save:
+
+| | keystore `~/.familyguard/familyguard-release.jks`, alias `familyguard` | Play, after the change |
+|---|---|---|
+| MD5 | `36:9E:54:96:0E:FE:B3:12:4C:86:38:DB:E0:56:BC:F8` | same |
+| SHA-1 | `FF:31:59:87:96:1E:B9:15:8D:57:3B:92:57:C6:1A:7D:F3:01:E0:FA` | same |
+| SHA-256 | `B6:2C:DA:94:…:8A:8E:10` | same |
+
+and Google's `6B:BF:4D:0A…` is **absent** from the reloaded page — the negative half, without which
+"our fingerprint is present" would not have distinguished a replacement from an addition.
+
+### 22.4 Three traps, all of the house's favourite shape
+
+1. **The submit button is never disabled, so its enabled state is not evidence of a valid form.**
+   The first create attempt failed on *"Wähle \"Kostenlos\" oder \"Kostenpflichtig\" aus"*: a label
+   click had landed on the section heading, not the radio. Calibrated by un-ticking a required
+   declaration and re-reading the button — **still enabled**, so the control does not bind and
+   counting it as a pass would have been counting nothing. The authority is the validation error,
+   and afterwards the app list: exactly one `FamilyGuard`, no duplicate from the failed submit.
+2. **PEPK cannot read a password from a pipe.** `System.console()` returns null when stdin is not a
+   tty, and the tool dies with an NPE inside `KeystoreHelper.loadKeystore` — which reads like a
+   broken keystore, not a missing terminal. It needs a pty (`script -qec …`).
+3. **That pty then echoes the password into anything capturing its output.** The run log had to be
+   shredded. The check that caught it was `grep -qF` for the password *before* printing the log,
+   rather than a `sed` redaction — and the `sed` attempt had already failed with *"unknown option to
+   `s'"* because the password contains `/`. A redaction that crashes is the good case; one that
+   silently half-matches is not.
+
+### 22.5 What this does NOT yet buy
+
+**No release has been uploaded and no track exists**, so Play Protect's behaviour is unchanged
+today: the self-hosted `/dpc.apk` is still an APK Google has never seen, and remedy 1 (the phone's
+*Scan apps with Play Protect* toggle) is still the operative one.
+
+Still unmeasured, and worth settling before building on it: **whether a Play listing makes the
+self-hosted sideload trusted at all, or whether updates must then come from Play.** If it is the
+latter, FR-15.6's self-update path changes fundamentally — the app currently fetches its own APK
+from the control plane, and that channel does not become a Play channel by existing alongside one.
+A personal account also needs a 12-tester/14-day closed test for production, so the internal testing
+track is the target; it also avoids restricted-permission review for `QUERY_ALL_PACKAGES`,
+`ACCESS_BACKGROUND_LOCATION` and `REQUEST_INSTALL_PACKAGES`.
