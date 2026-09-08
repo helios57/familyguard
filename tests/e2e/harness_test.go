@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -193,6 +194,12 @@ func withSelfHostedAPK(path string) harnessOption {
 // catalog route answers "not configured", which is its own test.
 func withAPKDir(dir string) harnessOption {
 	return func(h *harness) { h.env["APK_DIR"] = dir }
+}
+
+// withFgctlDir gives the server a directory of CLI builds to vend at /fgctl. Without it the
+// manifest answers "hosted": false, which is its own test.
+func withFgctlDir(dir string) harnessOption {
+	return func(h *harness) { h.env["FGCTL_DIR"] = dir }
 }
 
 // withPublicHost makes the server publish itself under a different name than this test reaches it
@@ -905,15 +912,69 @@ func newDatabase(t *testing.T) string {
 	return name
 }
 
+// psqlBudget is what one statement gets before the call is treated as not having returned. It is
+// not a correctness bound -- CREATE/DROP DATABASE take milliseconds on an idle box.
+const psqlBudget = 30 * time.Second
+
+// psql runs one statement inside the postgres container.
+//
+// It separates two outcomes that are NOT the same finding. Postgres refusing a statement is a real
+// result about the product -- a leaked pgx pool blocks a drop, and that is worth failing over. The
+// call not returning inside its budget is a statement about the host, and this suite shares a box.
+// Reporting the second as a test failure fails a test that already passed, and names the wrong
+// culprit: measured 2026-09-08, TestAnUploadedAPKIsReadRatherThanDescribed went red on
+// "DROP DATABASE ...: signal: killed" from its own t.Cleanup, while passing alone in 4.4 s at the
+// same host load average of 14.
+//
+// The discrimination has to happen here, at the exec, because it is not recoverable later:
+// exec.CommandContext kills on deadline and the OOM killer kills too, and both surface as the
+// identical string "signal: killed". ctx.Err() is the only thing that tells them apart.
 func psql(t *testing.T, statement string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	out, err := runPsql(psqlBudget, statement)
+	if err == nil {
+		return
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		// One retry on a longer budget. A slow host is the expected cause and it is transient.
+		out, err = runPsql(3*psqlBudget, statement)
+		if err == nil {
+			t.Logf("psql %q returned only on the retry: the first attempt did not answer within %s "+
+				"(host load %s). The statement succeeded; the budget was the problem.",
+				statement, psqlBudget, loadAverage())
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("psql %q did not return within %s on either attempt, so this is NOT MEASURED "+
+				"-- it is not evidence that the product misbehaved (host load %s)",
+				statement, 3*psqlBudget, loadAverage())
+		}
+	}
+	t.Fatalf("psql %q: %v\n%s", statement, err, out)
+}
+
+// runPsql reports a deadline as context.DeadlineExceeded rather than as the process's own
+// "signal: killed", which a kill from anywhere else produces identically.
+func runPsql(budget time.Duration, statement string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", "exec", "-e", "PGPASSWORD="+pgPassword, pgContainer,
 		"psql", "-U", pgUser, "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-q", "-c", statement)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("psql %q: %v\n%s", statement, err, out)
+	out, err := cmd.CombinedOutput()
+	if err != nil && ctx.Err() != nil {
+		return out, fmt.Errorf("no answer within %s: %w (%v)", budget, context.DeadlineExceeded, err)
 	}
+	return out, err
+}
+
+// loadAverage is reported alongside a timeout so the reader can tell contention from a hang without
+// having to reproduce it. Absent on non-Linux, where it is simply omitted rather than guessed at.
+func loadAverage() string {
+	b, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return "unknown"
+	}
+	return strings.Join(strings.Fields(string(b))[:3], " ")
 }
 
 func quoteIdent(name string) string {
