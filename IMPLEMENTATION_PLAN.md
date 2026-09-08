@@ -5868,16 +5868,46 @@ and Google's `6B:BF:4D:0A…` is **absent** from the reloaded page — the negat
    `s'"* because the password contains `/`. A redaction that crashes is the good case; one that
    silently half-matches is not.
 
-### 22.5 What this does NOT yet buy
+### 22.5 The permission Play refuses, measured as a clean A/B
 
-**No release has been uploaded and no track exists**, so Play Protect's behaviour is unchanged
-today: the self-hosted `/dpc.apk` is still an APK Google has never seen, and remedy 1 (the phone's
-*Scan apps with Play Protect* toggle) is still the operative one.
+The first bundle was **rejected outright**:
 
-Still unmeasured, and worth settling before building on it: **whether a Play listing makes the
-self-hosted sideload trusted at all, or whether updates must then come from Play.** If it is the
-latter, FR-15.6's self-update path changes fundamentally — the app currently fetches its own APK
-from the control plane, and that channel does not become a Play channel by existing alongside one.
-A personal account also needs a 12-tester/14-day closed test for production, so the internal testing
-track is the target; it also avoids restricted-permission review for `QUERY_ALL_PACKAGES`,
-`ACCESS_BACKGROUND_LOCATION` and `REQUEST_INSTALL_PACKAGES`.
+> *"Deine App kann die Berechtigung \"android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION\" nicht
+> nutzen, weil diese nur unter bestimmten Bedingungen verwendet werden darf."*
+
+No help link, no declaration form, no appeal path in the UI — a bare manifest check. Confirmed as an
+A/B on the same tree with exactly one line different (`git diff --numstat` = `0 1`):
+
+| bundle | Play's verdict |
+|---|---|
+| with `UPDATE_PACKAGES_WITHOUT_USER_ACTION` | rejected, no version code assigned |
+| without it | accepted: `15 (0.6.6)`, API 29+, target 37, **zero errors** |
+
+**That permission is FR-15.6's whole silent-update mechanism**, so the consequence is structural:
+the Play artifact and the self-hosted artifact cannot be the same binary. It is also not a loss —
+a Play-distributed app is updated *by Play*, so the permission has no job there. The self-hosted
+APK keeps it.
+
+One trap on the way, and it is the same shape as §22.4's: **an empty required Release-Name disables
+`Weiter`, which reads exactly like the bundle being rejected.** The two were told apart by filling
+the name and re-reading the button — it went live, so the name was that blocker — and then by the
+review step, which listed **no bundles** and said *"Du musst für diese App ein APK oder Android App
+Bundle hochladen"*. Two different causes, one indistinguishable symptom.
+
+### 22.6 Published, and what is still not measured
+
+Version `15 (0.6.6)` is **live on the internal test track** as of 2026-09-08, built without
+`UPDATE_PACKAGES_WITHOUT_USER_ACTION`, signed with `b62cda94…` and therefore delivered by Play under
+the same certificate the fleet already trusts. Internal testing needed **no store listing, no
+content rating and no data-safety declaration** — only a bundle and a release name. No testers are
+configured, deliberately: adding one invites Play to take over updating an app that is currently
+installed from the self-hosted APK.
+
+**Still not measured, and it is the question that motivated all of this:** whether a published Play
+release makes Play Protect stop blocking the *self-hosted* sideload of the same package and key.
+Google's own guidance page does not address signing certificates, developer reputation or install
+volume at all, so there is no authority to read — it has to be tried. The test is a version bump
+shipped the normal way, and then watching whether the phone's unattended update installs without a
+human tapping *Install anyway*. Until that runs, remedy 1 (the handset's *Scan apps with Play
+Protect* toggle) is still what is holding.
+

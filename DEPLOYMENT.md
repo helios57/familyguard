@@ -619,6 +619,118 @@ enrolled phone — which the fleet permits, by design, because `no_factory_reset
 
 ---
 
+## Publishing to Google Play
+
+Written down 2026-09-08, after doing it once. Everything below was measured on this app; the two
+traps in steps 2 and 5 each cost a rebuild, and the one in step 2 is unrecoverable if you miss it.
+
+**Why bother.** Play Protect blocks a sideloaded APK it has never seen — including the DPC's own
+device-owner install session, so unattended updates install nothing (see `IMPLEMENTATION_PLAN.md`
+§17.12). Publishing under the *same signing key* is the remedy that does not need a per-handset
+toggle.
+
+### 1. Create the app
+
+Play Console → **App erstellen**. Three things are permanent and cannot be changed afterwards:
+
+- **Package name** — must equal `applicationId` in `android-dpc/app/build.gradle.kts`, character for
+  character. Press **Verfügbarkeit prüfen** and read `Paketname verfügbar` before submitting.
+- **Free vs paid** — free cannot become paid once published.
+- The app itself. There is no delete, only unpublish.
+
+> The **create** button is never disabled, even with required fields empty or declarations
+> un-ticked. Its enabled state is not evidence the form is valid — calibrated by un-ticking a
+> required declaration and re-reading it, still enabled. The authority is the red validation error,
+> and then the app list. If a submit fails, **re-read the app list before retrying**, or you risk a
+> duplicate.
+
+### 2. Fix the signing key IMMEDIATELY — before uploading anything
+
+The create-app form says you can choose your signing key when you create a release. **That is
+false.** Google generates and activates one at the moment the app is created.
+
+Go straight to `…/app/<appId>/keymanagement` and read the SHA-256 back. If it is not the key your
+installed base already trusts, a release published against it makes **every enrolled phone refuse
+the update permanently**, and for a device-owner DPC the only way back is a factory reset.
+
+Fix it with **Schlüssel ändern → "Einen Schlüssel aus dem Java KeyStore exportieren und hochladen"**.
+The dialog warns that testers stop getting updates and uploaded versions become unusable; both are
+void while no track and no upload exist. **That window is the only time this is free.**
+
+```bash
+# Download BOTH from the dialog: the app-specific public key PEM, and pepk.jar.
+# PEPK needs a real terminal: System.console() is null behind a pipe and it dies with an NPE in
+# KeystoreHelper.loadKeystore, which reads like a broken keystore rather than a missing tty.
+PW=$(cat ~/.familyguard/keystore-password)
+printf '%s
+%s
+' "$PW" "$PW" | script -qec "java -jar pepk.jar \
+  --keystore=$HOME/.familyguard/familyguard-release.jks \
+  --alias=familyguard --output=output.zip --include-cert \
+  --rsa-aes-encryption --encryption-key-path=./encryption-public-key.pem" /dev/null > pepk.log 2>&1
+
+# The pty ECHOES the passphrase into that log. Check before printing it, then destroy it.
+grep -qF "$PW" pepk.log && shred -u pepk.log
+```
+
+Upload `output.zip`, save, then **reload the page** and check both halves: your fingerprint present
+*and* Google's absent. "Ours is present" alone cannot tell a replacement from an addition.
+
+### 3. Build and sign the bundle
+
+Play takes an **AAB**, not an APK, and `apksigner` cannot sign one — an AAB is a JAR, so it is
+`jarsigner`:
+
+```bash
+cd android-dpc
+./gradlew :app:bundleRelease          # app/build/outputs/bundle/release/app-release.aab, unsigned
+PW=$(cat ~/.familyguard/keystore-password)
+printf '%s
+' "$PW" | jarsigner -keystore ~/.familyguard/familyguard-release.jks \
+  -digestalg SHA-256 -sigalg SHA256withRSA app-release.aab familyguard
+```
+
+`The signer's certificate is self-signed` is expected. Verify the signer before uploading — extract
+the cert from the signature block and fingerprint it independently, rather than trusting
+`jar verified`:
+
+```bash
+unzip -q -o app-release.aab 'META-INF/*.RSA' -d /tmp/aabv
+openssl pkcs7 -inform DER -in /tmp/aabv/META-INF/*.RSA -print_certs \
+  | openssl x509 -noout -fingerprint -sha256
+```
+
+### 4. `UPDATE_PACKAGES_WITHOUT_USER_ACTION` is refused, and it is the whole self-update story
+
+Measured 2026-09-08 as a clean A/B — the same tree, one manifest line different:
+
+| bundle | result |
+|---|---|
+| with `android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION` | **rejected**: *"Deine App kann die Berechtigung … nicht nutzen, weil diese nur unter bestimmten Bedingungen verwendet werden darf."* |
+| without it | **accepted**: `15 (0.6.6)`, zero errors |
+
+There is no help link on that error and no declaration form to fill in — it is a bare manifest
+check. So a Play artifact and the self-hosted artifact **cannot be the same binary**: Play's copy
+cannot carry FR-15.6's silent self-update, and does not need to, because Play does the updating.
+The self-hosted APK keeps the permission.
+
+### 5. Upload to the internal test track
+
+`…/tracks/internal-testing` → **Neuen Release erstellen** → upload the signed AAB.
+
+> **Release-Name is required, and an empty one disables `Weiter`.** That reads exactly like the
+> bundle was rejected. Distinguish the two by filling the name and re-reading the button: if it
+> goes live, the name was the blocker; if the bundle really was refused, the review step then says
+> *"Du musst für diese App ein APK oder Android App Bundle hochladen"* and lists no bundles.
+
+Internal testing needs **no store listing, no content rating and no data-safety declaration** to
+publish — only a bundle and a release name. Testers are separate, and a release with none is
+published but reaches nobody. Until Google reviews the app, testers see the temporary name
+`<package> (unreviewed)`.
+
+`versionCode` must be unique and increasing across everything ever uploaded, including rejected
+attempts that never got accepted (a refused upload does not consume one).
+
 ## Installing another app on a child's phone
 
 Requires `APK_DIR` (above). The model is a **declared set, not a queue of commands**: you say which
