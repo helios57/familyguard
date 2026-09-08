@@ -789,6 +789,12 @@ each failure *reads like something else*.
   wrapper class on the control. Read those, never the button.
 - **Direct navigation to `/create-new-app` silently redirects to the app list** while the account
   is gated — indistinguishable from a dead URL. Reach it from the list page's own button.
+- **A console redirect has three causes and the landing URL tells them apart.** "It bounced me"
+  is the same symptom for a gated account, an account with no developer registration, and no
+  Google session at all. `…/console/u/0/developers` → **`/console/about/`** plus
+  `myaccount.google.com` bouncing to its *marketing* page means there is no Google session in
+  this profile; a real session that merely lacks a developer account keeps you on an account
+  page. Check `myaccount.google.com` before concluding anything about the console.
 - **The console renders in the account's locale** (German here), so English selector text matches
   nothing and looks like a missing element.
 - **After a publish, reload the track page** and use the *disappearance* of "Keine Releases" as
@@ -802,7 +808,11 @@ each failure *reads like something else*.
   can attach to. What persists the Google login is the profile directory
   (`~/.cache/ms-playwright-mcp/mcp-chrome-*`), and only one process may hold one at a time — it
   carries a `SingletonLock` symlinked to the live PID. A different automation session gets a
-  different profile and is **not** signed in.
+  different profile and is **not** signed in — confirmed by a second session that was handed a
+  different profile and could not reach this one, so releasing the lock was never what it needed.
+  To find which profile holds a session, count the `google.com` rows in each profile's cookie DB
+  (read-only, `file:…?immutable=1`, **names and counts only, never values**): the signed-in one
+  stands out by an order of magnitude, and a handful of rows is just consent cookies.
 
 ## Installing another app on a child's phone
 
