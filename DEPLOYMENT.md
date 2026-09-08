@@ -841,12 +841,23 @@ warned about it.)
 > NTFS: `icacls` shows the file inheriting `SYSTEM`, `Administrators` and the user, all full
 > control. Other non-admin users cannot read it because `C:\Users\<user>` denies them, but a local
 > administrator can — the same posture as every other app that stores a token under `%AppData%`, and
-> not the guarantee the mode bits suggest. And `fgctl mcp < frames.jsonl` yields only the *first*
-> response: the SDK tears the session down when stdin ends with work in flight. Hold stdin open
-> (`(type frames.jsonl & ping -n 3 127.0.0.1 > nul) | fgctl mcp`) or drive it as a real client does.
-> Do **not** run an MCP stdio smoke through an SSH channel — measured across six trials it returned
-> 0 or 1 responses and never 2, varying run to run, which reads as a flaky server rather than a
-> flaky transport.
+> not the guarantee the mode bits suggest. And **`fgctl mcp < frames.jsonl` usually returns NOTHING
+> AT ALL** — the SDK tears the session down when stdin ends with work in flight, and the responses
+> go with it. Measured on Linux, three requests per run, arms interleaved and then reversed to
+> exclude an order effect: **0 responses in 20 of 22 runs** at immediate EOF (1–2 in the other two,
+> never 3), against **3 of 3 in 22 of 22 runs** with stdin held open ~2 s. An earlier version of
+> this note said "only the first response"; that was wrong, and understated it.
+>
+> **It exits 0 while doing this**, with nothing on stdout or stderr, so
+> `fgctl mcp < frames.jsonl && echo ok` prints `ok` having received nothing. Hold stdin open
+> (`(type frames.jsonl & ping -n 3 127.0.0.1 > nul) | fgctl mcp`) or drive it as a real MCP client
+> does — a real client keeps the pipe open, which is why this never bites in normal use.
+>
+> The advice here used to include "do not run an MCP stdio smoke through an SSH channel", on the
+> grounds that ssh returned 0–1 responses where an in-guest redirect returned 2 of 2. **That is
+> retracted: the in-guest half was wrong.** Both artefacts are 199 bytes holding one response, and a
+> re-measurement in-guest gave `0 1 0 0 1`. Both shapes redirect a file, so both hit EOF immediately
+> and both lose responses for the reason above; ssh was never the cause.
 
 **Exit codes**, so a script can tell the cases apart: `0` success, `1` the command ran and failed,
 `2` no command given, `3` no server or no credential configured. `2` and `3` were both confirmed

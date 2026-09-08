@@ -5387,11 +5387,32 @@ by building the transport from `mcp.IOTransport` (which is what `mcp.StdioTransp
 reader that records EOF, so the clean case is identified where it can be known for certain. The
 SDK's own sentinel, `jsonrpc2.ErrServerClosing`, lives under the SDK's `internal/` and cannot be
 imported; matching its message would be a string comparison against another module's private
-wording, which changes without notice and fails in the direction that hides errors. Related, and
-**not** fixed because it is the SDK's teardown rather than this code's: responses still in flight
-when stdin ends are dropped, so `fgctl mcp < frames.jsonl` yields only the first response. Hold
-stdin open. (A peer's Rust MCP server does *not* drop them under the identical shape, which is what
-locates this in the SDK rather than in cmd redirection.)
+wording, which changes without notice and fails in the direction that hides errors.
+
+**Related, and not fixed because it is the SDK's teardown rather than this code's: when stdin
+reaches EOF with work in flight, responses are dropped — usually ALL of them.** An earlier version
+of this paragraph said "yields only the first response"; that number was wrong. Measured on Linux,
+three requests per run, order-controlled by interleaving the arms and then reversing them within
+each pair:
+
+| stdin | responses per run |
+|---|---|
+| at EOF immediately (`fgctl mcp < frames.jsonl`) | **0** in 20 of 22 runs, 1–2 in the other 2, never 3 |
+| held open ~2 s after the last frame | **3 of 3, in 22 of 22 runs** |
+
+So "hold stdin open" is the right advice, but the failure it avoids is total loss, not partial. A
+peer's Rust MCP server drains fully under a file-redirect shape (10/10 at three responses), so this
+is the Go SDK's teardown rather than redirection as such — stated as a cross-implementation
+difference, which is what was measured, not as a defect report against a library neither of us read.
+
+**The dangerous part is the exit code, and this code makes it worse rather than better.** The lossy
+run exits **0** with zero bytes on stdout and nothing on stderr. Before the clean-shutdown fix above
+it exited 1, so that fix — correct for the case it was written for, a real client disconnecting —
+converts this case from a loud failure into a silent success. A smoke test of the shape
+`fgctl mcp < frames.jsonl && echo ok` therefore prints `ok` having received nothing at all. No guard
+was added: distinguishing "read requests, answered none" from a client that legitimately sends only
+notifications and closes needs the SDK's own view of its queue, and sniffing frames for `"id"` in
+the transport would be a fragile guess. It is documented instead.
 
 **The exit codes were split.** `fgctl` with no arguments printed usage and exited **0**, so
 `fgctl $CMD` with an unset variable reported success for having done nothing. Asking for help is
@@ -5406,11 +5427,24 @@ fails to start, which is 1 on Windows.
 > platform's answer rather than this code's — but it is not the guarantee the mode bits imply, so it
 > is written down rather than left to be inferred from a call to `os.Chmod`.
 
-> **Do not run an MCP stdio smoke through an SSH channel.** Measured across six trials against the
-> same guest binary: 0 or 1 responses, never 2, varying run to run, while the identical frames run
-> *inside* the guest returned 2 of 2 every time. The ssh channel truncates, and because it varies it
-> reads as a flaky server rather than a flaky transport. Redirect inside the guest and fetch the
-> output file.
+> **RETRACTED: "the ssh channel truncates MCP stdio".** This block used to say that an ssh channel
+> gave 0 or 1 responses where the same frames run *inside* the guest returned 2 of 2 every time, and
+> to recommend redirecting in-guest for that reason. The in-guest half was wrong, and the surviving
+> artefact says so plainly: `mcp-cmd.jsonl` (in-guest) and `mcp-ssh.jsonl` (over ssh) are both 199
+> bytes holding exactly **one** response. Re-measured on the guest, n=5, in-guest redirect gives
+> `0 1 0 0 1` — the same distribution as ssh, not 2 of 2.
+>
+> Both shapes redirect a file, so **both hit EOF immediately, and the loss is the stdin-EOF drop
+> above.** Attributing it to ssh was the same error as the `.exe` A/B in 20.5: a difference credited
+> to the variable being manipulated without controlling the one that actually mattered. Three claims
+> in this section were written that way and two of them were wrong.
+>
+> What still holds: an ssh channel is a poor place to run an stdio smoke, because it adds a variable
+> you are not controlling. What does NOT hold is that it was the cause of anything measured here.
+> NOT MEASURED: the held-open arm on Windows. The PowerShell form used (`& { Get-Content …;
+> Start-Sleep 2 } | fgctl mcp`) returned 0–1 responses, indistinguishable from the EOF case, and
+> there was no control proving it kept the child's stdin open at all — so that cell says nothing
+> about Windows and is reported as unmeasured rather than as a platform difference.
 
 ### 20.4 What this does not do
 
