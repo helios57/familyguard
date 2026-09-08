@@ -649,13 +649,33 @@ Play Console → **App erstellen**. Three things are permanent and cannot be cha
 The create-app form says you can choose your signing key when you create a release. **That is
 false.** Google generates and activates one at the moment the app is created.
 
-Go straight to `…/app/<appId>/keymanagement` and read the SHA-256 back. If it is not the key your
-installed base already trusts, a release published against it makes **every enrolled phone refuse
-the update permanently**, and for a device-owner DPC the only way back is a factory reset.
+Go straight to `…/app/<appId>/keymanagement` and read the SHA-256 back.
+
+**The test is NOT "do I have an installed base yet?"** — that question gives the wrong answer, and
+it gives it in the direction that cannot be undone. The test is:
+
+> **Will any artifact signed by my own key ever have to interoperate with the Play build?**
+
+A GitHub Releases channel, an F-Droid build, or a fleet-managed sideload all answer **yes with zero
+installs so far**. If Google holds the app signing key, that other channel's APK and the Play
+install carry different certificates, and Android then refuses to update either one with the other
+**in both directions** — the only way across is uninstall and reinstall, which discards all local
+app data. For an app whose state is deliberately local-only, that is not an inconvenience, it is
+data loss. (Raised by the `muplay` session, which is dual-distributed via GitHub Releases and keeps
+audiobook positions on-device by design; its own write-up is in that repo at `docs/PLAY-RELEASE.md`.)
+
+For FamilyGuard the answer is yes twice over: the self-hosted `/dpc.apk` is exactly such a channel,
+and a certificate change makes **every enrolled phone refuse the update permanently** — for a
+device-owner DPC the only way back is a factory reset.
+
+Only when nothing signed by your key will ever meet the Play build — Play is the sole channel,
+now and later — is Google's generated key the right choice. Decide that deliberately; do not
+arrive at it by default.
 
 Fix it with **Schlüssel ändern → "Einen Schlüssel aus dem Java KeyStore exportieren und hochladen"**.
 The dialog warns that testers stop getting updates and uploaded versions become unusable; both are
-void while no track and no upload exist. **That window is the only time this is free.**
+void while no track and no upload exist. **That window is the only time this is free** — which is
+what makes the ordering load-bearing: create the app, fix the key, then everything else.
 
 ```bash
 # Download BOTH from the dialog: the app-specific public key PEM, and pepk.jar.
