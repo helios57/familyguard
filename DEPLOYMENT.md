@@ -626,8 +626,21 @@ traps in steps 2 and 5 each cost a rebuild, and the one in step 2 is unrecoverab
 
 **Why bother.** Play Protect blocks a sideloaded APK it has never seen — including the DPC's own
 device-owner install session, so unattended updates install nothing (see `IMPLEMENTATION_PLAN.md`
-§17.12). Publishing under the *same signing key* is the remedy that does not need a per-handset
-toggle.
+§17.12). Publishing is the remedy that does not need a per-handset toggle. **Whether it actually
+works is not yet measured** (§22.6): Google's own guidance page says nothing about signing
+certificates, developer reputation or install volume, so there is no authority to read.
+
+> **Two goals, and they are ORTHOGONAL — do not let one stand in for the other.**
+>
+> 1. **Same certificate across channels** decides whether a Play install and a self-hosted install
+>    can *update* each other. Settled, and settled by step 2 below.
+> 2. **Play Protect's "not known" warning** decides whether the self-hosted APK installs *at all*
+>    without someone tapping *Install anyway*. Unsettled.
+>
+> Getting the key right does nothing for (2), and (2) turning out badly does not make the key
+> decision wrong — it stands on its own merits either way. "We did the key properly" is a tempting
+> reason to assume the sideload story is handled. It is not. (Distinction drawn by the `muplay`
+> session, which is exposed to both.)
 
 ### 1. Create the app
 
