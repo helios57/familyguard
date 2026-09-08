@@ -22,8 +22,39 @@ enum class StatusLevel {
     NOT_MEASURED,
 }
 
-/** One labelled fact on the status screen. */
-data class StatusLine(val label: String, val value: String, val level: StatusLevel)
+/**
+ * A settings screen this app can send whoever is holding the phone straight to.
+ *
+ * An enum rather than an `Intent`, because [deviceStatus] is a pure function and must stay one: the
+ * decision *that* a line offers a fix belongs with the decision that the line is ATTENTION at all,
+ * where it is asserted on the JVM. Turning the enum into an intent is `RecoveryActivity`'s job, and
+ * it resolves the intent before offering the button — a button that opens nothing is worse than no
+ * button, because it reads as the phone refusing.
+ *
+ * There is deliberately no action for a screen this app cannot verify the result of. Samsung's
+ * sleeping-apps list has no public API, so an "I fixed it" the app cannot confirm would be a control
+ * that reports success having evaluated nothing; the battery line says so in words instead.
+ */
+enum class StatusAction {
+    /** Battery optimisation off for this app — the system's own "allow background?" dialog. */
+    ALLOW_BACKGROUND,
+
+    /** Alarms and reminders, for the exact wake-up a bedtime starts on. */
+    ALLOW_EXACT_ALARMS,
+}
+
+/**
+ * One labelled fact on the status screen, and — where there is one — the way to fix it.
+ *
+ * [action] is null for every line that is already OK. A fix button next to a fact that needs no
+ * fixing trains the reader to ignore the buttons, which costs exactly the two lines that have one.
+ */
+data class StatusLine(
+    val label: String,
+    val value: String,
+    val level: StatusLevel,
+    val action: StatusAction? = null,
+)
 
 /**
  * Everything the on-device status screen shows (FR-13.4), as data rather than as views.
@@ -69,6 +100,16 @@ data class StatusFacts(
     val serverHost: String?,
     /** Null when it could not be determined — an unusual state, and not the same as `false`. */
     val deviceOwner: Boolean?,
+    /**
+     * Whether this app is exempt from battery optimisation, or null when it could not be read.
+     *
+     * Not a preference. With this false the platform defers every alarm this app books, measured at
+     * up to 520.9 s against a ceiling of 300 s that `Backoff` can ever request — so a "lock now"
+     * arrives minutes late and nothing anywhere says why.
+     */
+    val powerExempt: Boolean?,
+    /** Whether this app may book an exact alarm, or null when it could not be read. */
+    val exactAlarms: Boolean?,
     /** When a recovery code released this phone, or null if it is under management. */
     val releasedSinceMillis: Long?,
     /** The version this device last applied cleanly. 0 when it never has. */
@@ -92,6 +133,8 @@ data class StatusFacts(
 object StatusLabels {
     const val ENROLLMENT = "Enrollment"
     const val DEVICE_OWNER = "Management"
+    const val BACKGROUND = "Background activity"
+    const val EXACT_ALARMS = "Alarms"
     const val RULES = "Rules"
     const val POLICY = "Settings version"
     const val LAST_CONTACT = "Last reached the family settings"
@@ -139,6 +182,54 @@ fun deviceStatus(facts: StatusFacts): DeviceStatus {
         )
 
         true -> StatusLine(StatusLabels.DEVICE_OWNER, "this app manages this phone", StatusLevel.OK)
+    }
+
+    // The two capabilities that decide whether anything this app schedules actually happens on
+    // time. They are not settings a family chooses: with either one off, the app still reports
+    // healthy, the console still shows the command as sent, and it simply arrives late -- which is
+    // the failure this whole block exists to make visible. Measured on the one enrolled handset:
+    // a reconnect the app asked for in under a second took 520.9 s, and the update check drifted
+    // 6m51s, 21m44s and 8m20s late for days before anything noticed.
+    //
+    // Both carry a fix button, including in the NOT_MEASURED case. "Could not be read" is not a
+    // reason to withhold the way to set it -- the screen that cannot answer the question is exactly
+    // the one where a parent needs the switch, and the settings screen answers it for them.
+    lines += when (facts.powerExempt) {
+        null -> StatusLine(
+            StatusLabels.BACKGROUND,
+            "could not be read on this phone",
+            StatusLevel.NOT_MEASURED,
+            StatusAction.ALLOW_BACKGROUND,
+        )
+
+        false -> StatusLine(
+            StatusLabels.BACKGROUND,
+            "restricted, so every wake-up this app books is delayed — up to eight minutes on this " +
+                "phone. Tap the button and choose Allow. On a Samsung, also check Device care → " +
+                "Battery for a sleeping-apps list this app cannot read.",
+            StatusLevel.ATTENTION,
+            StatusAction.ALLOW_BACKGROUND,
+        )
+
+        true -> StatusLine(StatusLabels.BACKGROUND, "allowed", StatusLevel.OK)
+    }
+
+    lines += when (facts.exactAlarms) {
+        null -> StatusLine(
+            StatusLabels.EXACT_ALARMS,
+            "could not be read on this phone",
+            StatusLevel.NOT_MEASURED,
+            StatusAction.ALLOW_EXACT_ALARMS,
+        )
+
+        false -> StatusLine(
+            StatusLabels.EXACT_ALARMS,
+            "not allowed, so wake-ups are approximate and a bedtime can start late",
+            StatusLevel.ATTENTION,
+            StatusAction.ALLOW_EXACT_ALARMS,
+        )
+
+        true -> StatusLine(StatusLabels.EXACT_ALARMS, "allowed", StatusLevel.OK)
     }
 
     lines += if (facts.releasedSinceMillis != null) {

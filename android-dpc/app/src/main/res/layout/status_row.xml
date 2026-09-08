@@ -35,4 +35,28 @@
         android:textAppearance="?attr/textAppearanceBodyMedium"
         android:textIsSelectable="true" />
 
+    <!--
+      The way to fix this row, GONE on every row that has nothing to fix — which is most of them,
+      and all of them once the phone is set up correctly.
+
+      `wrap_content` and start-aligned rather than the full-width buttons above: those two are the
+      screen's purpose and this is a subordinate action on one line of a report. A second
+      full-width button would compete with the recovery button for the same glance, on the screen
+      whose entire reason for existing is that button.
+
+      It carries its own `contentDescription` because the row's description is set on the row, and a
+      screen reader reaching the button by swipe would otherwise announce only "Open settings" with
+      no way to know which of the two it opens. 48dp because it is a real tap target on a phone
+      being held by somebody who is already annoyed.
+    -->
+    <Button
+        android:id="@+id/status_row_fix"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:minHeight="48dp"
+        android:text="@string/status_fix"
+        android:visibility="gone" />
+
 </LinearLayout>

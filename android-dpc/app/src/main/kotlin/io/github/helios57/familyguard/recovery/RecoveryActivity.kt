@@ -1,7 +1,11 @@
 package io.github.helios57.familyguard.recovery
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -18,6 +22,7 @@ import io.github.helios57.familyguard.enroll.EnrollResult
 import io.github.helios57.familyguard.enroll.Enroller
 import io.github.helios57.familyguard.enroll.androidDeviceFacts
 import io.github.helios57.familyguard.status.DeviceStatus
+import io.github.helios57.familyguard.status.StatusAction
 import io.github.helios57.familyguard.status.StatusLevel
 import io.github.helios57.familyguard.status.StatusLine
 import io.github.helios57.familyguard.status.deviceStatus
@@ -410,7 +415,86 @@ class RecoveryActivity : AppCompatActivity() {
             line.label,
             line.value,
         )
+        bindFix(row, line)
         return row
+    }
+
+    /**
+     * The fix button, for the rows that have something to fix.
+     *
+     * **The intent is resolved before the button is offered.** A button that opens nothing reads as
+     * the phone refusing the fix, which is worse than no button: it sends a parent looking for a
+     * fault in this app when the truth is that their handset has no such screen. When nothing
+     * resolves, the button is replaced by a sentence saying so — replaced, not disabled, because a
+     * greyed-out button is a puzzle rather than an answer.
+     *
+     * There is no "done" state to manage. Returning from Settings re-enters [onStart], which
+     * re-reads the switch from the platform and rebuilds these rows, so the line goes green because
+     * the capability actually changed — never because this screen was told a tap happened. That is
+     * the difference between reporting the fix and reporting the button press.
+     */
+    private fun bindFix(row: View, line: StatusLine) {
+        val button = row.findViewById<Button>(R.id.status_row_fix)
+        val action = line.action
+        if (action == null) {
+            button.visibility = View.GONE
+            return
+        }
+        // Named `screen`, never `intent`: the Activity's own `intent` property is the caller-supplied
+        // one this file must never read, and a local shadowing it is how that rule stops being
+        // legible. `ManifestAndPlatformCallsTest` asserts the distinction rather than trusting it.
+        val screen = settingsIntentFor(action)
+        if (screen == null) {
+            button.visibility = View.GONE
+            row.findViewById<TextView>(R.id.status_row_value).append(
+                "\n" + getString(R.string.status_fix_unavailable)
+            )
+            return
+        }
+        button.visibility = View.VISIBLE
+        button.contentDescription = getString(R.string.status_fix_description, line.label)
+        button.setOnClickListener {
+            // Even a resolved intent can be refused at launch — a ROM that lists the activity and
+            // guards it, or one that disappears between the check and the tap. The screen says so
+            // instead of dying: this is the screen somebody opens when the phone is already
+            // misbehaving.
+            runCatching { startActivity(screen) }.onFailure {
+                status.text = getString(R.string.status_fix_unavailable)
+            }
+        }
+    }
+
+    /**
+     * The first settings screen on this phone that can set [action], or null if there is none.
+     *
+     * A list rather than one intent because the direct route is not universal. The system dialogs
+     * are tried first — one tap, and they set exactly the switch in question — and the app's own
+     * details page is the last resort, which exists on every Android and is two taps further from
+     * the switch. Ordering them this way means a phone that has the good screen gets it, and a
+     * phone that does not still gets somewhere useful rather than nothing.
+     */
+    private fun settingsIntentFor(action: StatusAction): Intent? {
+        val self = Uri.fromParts("package", packageName, null)
+        val candidates = when (action) {
+            StatusAction.ALLOW_BACKGROUND -> listOf(
+                // One tap: the system's own "allow background activity?" dialog. Needs the
+                // REQUEST_IGNORE_BATTERY_OPTIMIZATIONS declaration, which the manifest carries.
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, self),
+                // The whole list, where the parent has to find this app among every app installed.
+                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, self),
+            )
+
+            StatusAction.ALLOW_EXACT_ALARMS -> buildList {
+                // API 31+ only. Below that the appop does not exist, every alarm is already exact,
+                // and the line this button belongs to is OK — so no button is drawn at all.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    add(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, self))
+                }
+                add(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, self))
+            }
+        }
+        return candidates.firstOrNull { it.resolveActivity(packageManager) != null }
     }
 
     /** Resolves a theme colour attribute. Literal colours would be unreadable in the other theme. */

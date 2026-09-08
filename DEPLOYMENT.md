@@ -533,13 +533,31 @@ phone reports the two switches that decide this and the console shows **battery 
 update check firing 6m51s, 21m44s and 8m20s late, and a one-second stream reconnect taking
 83–495 s across five sleeping cycles against 1.5 s awake.
 
-The fix is on the phone and takes one tap; FamilyGuard cannot grant it, and there is no device-owner
-API that can — `DevicePolicyManager` has no power-management method at all:
+**From 0.6.5 you do not have to find those switches yourself.** Open FamilyGuard on the phone — it
+is the launcher entry, the same screen that takes a recovery code — and the status block at the
+bottom carries a line per switch with an **Open settings** button beside it. Background activity
+goes straight to the system's one-tap *allow background activity?* dialog; Alarms goes to that app's
+Alarms and reminders page. The line turns green because the phone re-read the switch when you came
+back, never because the button was pressed, so what you see is the capability and not the tap.
+
+If a handset has no such screen the button is replaced by a sentence saying so, rather than being
+offered and doing nothing.
+
+**0.6.5 also removes the alarms switch entirely on Android 13 and later**, by declaring
+`USE_EXACT_ALARM` — a permission granted at install, with nothing to turn on. `SCHEDULE_EXACT_ALARM`
+remains for Android 12, and below Android 12 exact alarms need no permission at all, so the button
+is there for the one tier that still needs it.
+
+The manual paths still work, and are the fallback if a button is missing. FamilyGuard cannot grant
+the battery exemption itself, and there is no device-owner API that can — `DevicePolicyManager` has
+no power-management method at all:
 
 > Settings → Apps → **FamilyGuard** → Battery → **Unrestricted**
 >
 > On Samsung, also Settings → Battery → *Background usage limits*, and remove FamilyGuard from
-> **Sleeping apps** and **Deep sleeping apps**. It is put there automatically.
+> **Sleeping apps** and **Deep sleeping apps**. It is put there automatically. **This list has no
+> public API, so the app cannot read it and does not claim to** — there is no button for it, and no
+> status line that would sit permanently at "unknown".
 
 A phone with no badge has told the server it is unrestricted. A phone with *no report at all* is
 running a DPC older than 0.6.4, which is not the same thing and is why the badge appears only on a

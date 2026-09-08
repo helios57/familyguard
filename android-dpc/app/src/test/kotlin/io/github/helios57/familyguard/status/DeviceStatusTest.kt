@@ -2,6 +2,7 @@ package io.github.helios57.familyguard.status
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -300,6 +301,123 @@ class DeviceStatusTest {
         assertTrue(labels.none { it.isBlank() })
     }
 
+
+    // ---- the two switches that decide whether anything happens on time ------------------------
+
+    /**
+     * Battery optimisation on is ATTENTION, and it carries the way to turn it off.
+     *
+     * This is the defect the whole feature exists for. With it restricted the app reports healthy,
+     * the console shows the command as sent, and it arrives up to 520.9 s later against a ceiling
+     * of 300 s that `Backoff` can ever request — so nothing anywhere is red and the phone is simply
+     * slow. The line has to be ATTENTION *and* actionable; a report without the switch is what the
+     * parent already had.
+     */
+    @Test
+    fun `a battery-restricted phone needs attention and offers the switch`() {
+        val line = deviceStatus(facts(powerExempt = false)).line(StatusLabels.BACKGROUND)
+
+        assertEquals(StatusLevel.ATTENTION, line.level)
+        assertEquals(StatusAction.ALLOW_BACKGROUND, line.action)
+    }
+
+    @Test
+    fun `an unrestricted phone is OK and offers nothing to fix`() {
+        val line = deviceStatus(facts(powerExempt = true)).line(StatusLabels.BACKGROUND)
+
+        assertEquals(StatusLevel.OK, line.level)
+        assertNull("an OK line offered a fix button", line.action)
+    }
+
+    /** Null is the third state here too, and it still offers the switch — see the null branch. */
+    @Test
+    fun `a battery state that could not be read is not reported as restricted`() {
+        val unread = deviceStatus(facts(powerExempt = null)).line(StatusLabels.BACKGROUND)
+        val restricted = deviceStatus(facts(powerExempt = false)).line(StatusLabels.BACKGROUND)
+
+        assertEquals(StatusLevel.NOT_MEASURED, unread.level)
+        assertEquals(StatusAction.ALLOW_BACKGROUND, unread.action)
+        assertTrue(
+            "an unreadable battery state and a measured restriction read the same",
+            unread.value != restricted.value,
+        )
+    }
+
+    @Test
+    fun `exact alarms that are not allowed need attention and offer the switch`() {
+        val line = deviceStatus(facts(exactAlarms = false)).line(StatusLabels.EXACT_ALARMS)
+
+        assertEquals(StatusLevel.ATTENTION, line.level)
+        assertEquals(StatusAction.ALLOW_EXACT_ALARMS, line.action)
+    }
+
+    @Test
+    fun `exact alarms that are allowed are OK and offer nothing to fix`() {
+        val line = deviceStatus(facts(exactAlarms = true)).line(StatusLabels.EXACT_ALARMS)
+
+        assertEquals(StatusLevel.OK, line.level)
+        assertNull("an OK line offered a fix button", line.action)
+    }
+
+    @Test
+    fun `an alarm state that could not be read is not reported as refused`() {
+        val unread = deviceStatus(facts(exactAlarms = null)).line(StatusLabels.EXACT_ALARMS)
+        val refused = deviceStatus(facts(exactAlarms = false)).line(StatusLabels.EXACT_ALARMS)
+
+        assertEquals(StatusLevel.NOT_MEASURED, unread.level)
+        assertTrue(
+            "an unreadable alarm state and a measured refusal read the same",
+            unread.value != refused.value,
+        )
+    }
+
+    /**
+     * The two are independent, because on the measured phone they were both off and either alone
+     * is enough to defer a wake-up. A screen that folded them into one line would let a parent fix
+     * one, see the line go green, and still have a phone that is minutes late.
+     */
+    @Test
+    fun `the two switches are separate lines and neither hides the other`() {
+        val status = deviceStatus(facts(powerExempt = false, exactAlarms = true))
+
+        assertEquals(listOf(StatusLabels.BACKGROUND), status.problems().map { it.label })
+        assertEquals(StatusLevel.OK, status.line(StatusLabels.EXACT_ALARMS).level)
+    }
+
+    /**
+     * No line offers a fix it has no need of, and every line that needs one has it.
+     *
+     * The general form of the two assertions above, so a line added later cannot quietly ship a
+     * button beside a healthy fact or an ATTENTION with no way out.
+     */
+    @Test
+    fun `an action is offered exactly when there is something to act on`() {
+        val worst = deviceStatus(facts(powerExempt = false, exactAlarms = false))
+
+        assertTrue(
+            "an OK line carries an action: " + worst.lines.filter {
+                it.level == StatusLevel.OK && it.action != null
+            }.map { it.label },
+            worst.lines.none { it.level == StatusLevel.OK && it.action != null },
+        )
+        assertEquals(
+            listOf(StatusLabels.BACKGROUND, StatusLabels.EXACT_ALARMS),
+            worst.lines.filter { it.action != null }.map { it.label },
+        )
+    }
+
+    /**
+     * A healthy phone shows no fix buttons at all.
+     *
+     * The negative control for the whole feature. Without it, a bug that attached an action to
+     * every line would pass every assertion above — each of those only ever looks at the line it
+     * names.
+     */
+    @Test
+    fun `a correctly set up phone offers no fix buttons`() {
+        assertEquals(emptyList<String>(), deviceStatus(facts()).lines.mapNotNull { it.action?.name })
+    }
+
     // ---- ages --------------------------------------------------------------------------------
 
     /**
@@ -335,6 +453,8 @@ class DeviceStatusTest {
         deviceId: String? = "dev-4417",
         serverHost: String? = "mdm.example.ch",
         deviceOwner: Boolean? = true,
+        powerExempt: Boolean? = true,
+        exactAlarms: Boolean? = true,
         releasedSinceMillis: Long? = null,
         appliedPolicyVersion: Long = 9,
         cachedPolicyVersion: Long? = 9,
@@ -346,6 +466,8 @@ class DeviceStatusTest {
         deviceId = deviceId,
         serverHost = serverHost,
         deviceOwner = deviceOwner,
+        powerExempt = powerExempt,
+        exactAlarms = exactAlarms,
         releasedSinceMillis = releasedSinceMillis,
         appliedPolicyVersion = appliedPolicyVersion,
         cachedPolicyVersion = cachedPolicyVersion,

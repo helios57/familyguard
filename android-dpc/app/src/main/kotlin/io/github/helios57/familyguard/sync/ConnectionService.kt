@@ -1373,7 +1373,7 @@ class ConnectionService : Service() {
             // person flips in Settings, and a stale "it was fine at boot" would be worse than not
             // reporting at all. Null rather than false when the service is missing — an unmeasured
             // restriction reported as a measured one is a fabricated finding.
-            powerExempt = power?.isIgnoringBatteryOptimizations(packageName),
+            powerExempt = AlarmManagerPlatform.powerExemptAllowed(this),
             exactAlarms = AlarmManagerPlatform.exactAlarmsAllowed(this),
             // "" is a phone with nothing to report and clears whatever the server was showing;
             // text is the last self-update that did not end with a new build running (FR-15.7).

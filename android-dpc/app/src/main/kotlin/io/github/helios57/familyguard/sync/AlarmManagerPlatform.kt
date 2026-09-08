@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.PowerManager
 import io.github.helios57.familyguard.enforce.AlarmBooking
 import io.github.helios57.familyguard.enforce.AlarmPlatform
 
@@ -149,6 +150,22 @@ class AlarmManagerPlatform(
          */
         fun exactAlarmsAllowed(context: Context): Boolean? =
             context.getSystemService(AlarmManager::class.java)?.let { exactAllowed(it) }
+
+        /**
+         * Whether this app is exempt from battery optimisation, or null when it could not be read.
+         *
+         * The other half named above, and here for the same reason [exactAlarmsAllowed] is: the
+         * heartbeat and the on-device status screen must not read this fact through two
+         * expressions. Two readers of one capability drift, and the drift shows up as a console
+         * and a phone disagreeing about why a command was late — with no way to tell which is
+         * lying.
+         *
+         * Null when there is no `PowerManager` at all, which is not `false`: "restricted" and "we
+         * could not ask" have different fixes, and only one of them is a switch.
+         */
+        fun powerExemptAllowed(context: Context): Boolean? =
+            context.getSystemService(PowerManager::class.java)
+                ?.isIgnoringBatteryOptimizations(context.packageName)
 
         private fun exactAllowed(manager: AlarmManager): Boolean =
             Build.VERSION.SDK_INT < Build.VERSION_CODES.S || manager.canScheduleExactAlarms()

@@ -677,9 +677,13 @@ function deviceCard(dev, desired) {
       'Ring, Lock and Locate can take minutes to arrive while the phone is asleep, and nothing '
       + 'reports an error when they do \u2014 the work is not lost, only late. '
       + 'FamilyGuard cannot grant this itself \u2014 there is no device-owner API for it. '
+      + 'The quickest way is on the phone: open FamilyGuard there and each setting below has an '
+      + 'Open settings button beside it that goes straight to the switch. '
       + (steps.length > 1
-        ? 'Two settings on the phone need changing, and both matter:'
-        : 'One setting on the phone needs changing:')));
+        ? 'Two settings on the phone need changing, and both matter \u2014 the full paths, if you '
+          + 'would rather navigate yourself:'
+        : 'One setting on the phone needs changing \u2014 the full path, if you would rather '
+          + 'navigate yourself:')));
     body.push(el('ol', { class: 'steps' }, steps));
   }
 

@@ -86,6 +86,23 @@
     <string name="status_row_description_attention">Needs attention. %1$s: %2$s</string>
     <string name="status_unavailable">This phone could not read its own status.</string>
 
+    <!--
+      The fix button on a status row, and what a screen reader says about it.
+
+      One label for both switches rather than "Allow background activity" / "Allow alarms": the row
+      above it already names which switch this is, and a button repeating its own row's label is
+      read twice by a screen reader. The spoken description is where the pairing is made explicit,
+      because a button reached by swiping arrives with no row context at all.
+    -->
+    <string name="status_fix">Open settings</string>
+    <string name="status_fix_description">Open settings for %1$s</string>
+    <!--
+      Shown in place of the button when this phone has no screen for that switch. It replaces the
+      button rather than sitting beside a dead one: a button that opens nothing reads as the phone
+      refusing, and sends a parent looking for a fault that is not there.
+    -->
+    <string name="status_fix_unavailable">This phone has no screen for that setting.</string>
+
     <plurals name="recovery_wait_minutes">
         <item quantity="one">%d minute</item>
         <item quantity="other">%d minutes</item>

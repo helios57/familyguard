@@ -5643,3 +5643,121 @@ shares this machine with other work — during the red, a peer session held the 
 with a VM at 311 % CPU and a compiler at 260 % — and the same test passed alone in 4.4 s at that
 same load average. Isolation-green is not suite-green; what changed is that a slow host now reports
 itself as a slow host instead of as a broken feature.
+
+## Phase 21 — the two switches, on the phone, with a button each (FR-13.4)
+
+Phase 19 ended by proving the platform defers this app's alarms and naming the two switches that
+stop it. It then left the owner to find them: *Settings → Apps → FamilyGuard → Battery →
+Unrestricted*, and *Alarms and reminders → allow*, typed out in the console and in `DEPLOYMENT.md`.
+
+That is a diagnosis handed over as homework, and the owner said so — "i dont want to look for this
+switches manually, the app has to check it and provide me with buttons to the switches". The
+measurement was never the deliverable; the phone behaving was.
+
+### 21.1 One of the two switches is gone, not buttoned
+
+`SCHEDULE_EXACT_ALARM` is an appop that defaults **off** for an app that is not a clock, which is
+why `exact_alarms=false` was true of this app for its whole life with nothing saying so. Android 13
+added `USE_EXACT_ALARM`, a **normal** permission granted at install: no switch, no screen, nothing
+to find. It is now declared, so on API 33+ that half needs no button at all.
+
+The button stays, because the permission does not cover every tier:
+
+| tier | how exact alarms are obtained | button needed |
+|---|---|---|
+| API 33+ (this phone, API 36) | `USE_EXACT_ALARM`, granted at install | no — the line is OK on first run |
+| API 31–32 | `SCHEDULE_EXACT_ALARM`, an appop | yes |
+| API 29–30 (the S20 floor, NFR-13) | every alarm is already exact | no — no permission exists |
+
+Declared knowing Play restricts it to alarm and calendar apps. This app is not Play-distributed —
+it installs itself from the family's own control plane — and if that ever changes, the declaration
+is the thing to revisit, not the button beside it.
+
+### 21.2 The buttons, and why they are fenced
+
+`StatusLine` gained `action: StatusAction?` — an **enum, not an `Intent`**. `deviceStatus()` is a
+pure function asserted on the JVM, and the decision *that* a line offers a fix belongs with the
+decision that it is ATTENTION at all. `RecoveryActivity` maps the enum to an intent, tries the
+one-tap system dialog first and the app's own details page last, and **resolves it before offering
+the button**: a button that opens nothing reads as the phone refusing, which sends a parent looking
+for a fault in this app. When nothing resolves the button is *replaced* by a sentence, not disabled
+— a greyed-out button is a puzzle rather than an answer.
+
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` is declared for the one-tap dialog. It grants nothing by
+itself; without it the app may only open the whole battery-optimisation list, where the parent has
+to find FamilyGuard among every app on the phone. A fix nobody can find is a fix nobody applies.
+
+**There is no "done" state, deliberately.** Returning from Settings re-enters `onStart`, which
+re-reads the capability from the platform and rebuilds the rows. The line goes green because the
+switch actually moved — never because a tap was observed. That is the difference between reporting
+the fix and reporting the button press, and it is the whole reason this screen can be trusted.
+
+### 21.3 A guard that had to be narrowed, and was made stronger doing it
+
+`RecoveryActivity` is exported with **no permission** — it is the launcher entry, so any app on the
+phone can start it. `ManifestAndPlatformCallsTest` protected that with two blunt rules: the file may
+not contain the word `intent` (case-insensitively), and may not call `startActivity`, `startService`
+or `startForegroundService`.
+
+The first is a proxy for "does not trust its caller" and the second's *stated* reason is only about
+`ConnectionService` — "a sync that reaches the server ends the recovery it was just given". Neither
+reason covers opening a Settings screen, but both rules forbid it, so shipping the buttons meant
+either deleting the guard or replacing it with something sharper.
+
+Sharper, in three parts:
+
+- **The intent reader is now case-SENSITIVE.** Kotlin spells the caller-supplied one `intent` and a
+  constructed one `Intent(`, so one pattern separates "takes input from whoever launched us" from
+  "builds an intent of its own". A third calibration half was added asserting the reader does *not*
+  flag `startActivity(Intent(Settings.ACTION_…))` — without it the guard cannot tell the two apart
+  and can only be satisfied by deletion. The local in `bindFix` is named `screen`, never `intent`,
+  so nothing shadows the property the rule is about.
+- **`startService`/`startForegroundService` stay banned outright.** That is the reason the rule was
+  written for, and it is untouched.
+- **A new fence replaces the `startActivity` ban:** every `Intent(` this file constructs must name a
+  `Settings.ACTION_` constant. So the only place the screen can send anyone is a system settings
+  page chosen from a literal in this file — it cannot be aimed at a component the caller names.
+  Combined with the intent-reading rule, there is no path from the caller to the target, which is
+  the confused-deputy property the original ban was reaching for and never actually stated.
+
+### 21.4 What is not offered, and why that is the honest answer
+
+Samsung's *Sleeping apps* / *Deep sleeping apps* lists have **no public API**. The app cannot read
+them, so there is no status line for them and no button.
+
+A line would have to sit permanently at NOT_MEASURED, and a permanently-not-green line is the
+"red-forever == never-red" failure this codebase keeps finding: it trains the eye to skip the whole
+block, costing the two lines that *can* be answered. A button would be worse — an "I fixed it" whose
+result the app cannot confirm is a control that reports success having evaluated nothing. The
+battery line says so in words instead, and `DEPLOYMENT.md` keeps the manual path.
+
+### 21.5 Calibration
+
+Nine new cases in `DeviceStatusTest`, all on the pure function. The three that matter are not the
+per-line assertions but the ones that bind across lines: an action is offered **exactly** when there
+is something to act on, the two switches are independent so fixing one cannot green the other, and
+a correctly set-up phone offers **no** buttons at all — the negative control, without which a bug
+attaching an action to every line would pass every other assertion, since each only looks at the
+line it names.
+
+Each new or changed guard was calibrated by breaking it and watching it go red, then restored:
+
+| broken | expected | measured |
+|---|---|---|
+| — (baseline, nothing broken) | green | **GREEN** |
+| battery restriction rendered as `OK` | `DeviceStatusTest` red | **RED** |
+| an `Intent(` not built from `Settings.ACTION_` | the new fence red | **RED** |
+| `intent.getBooleanExtra` added to `RecoveryActivity` | the narrowed reader red | **RED** |
+| the console's in-app hint deleted | `TestBothPowerSwitchesAreShownWhenBothAreOff` red | **RED** |
+
+Full suite after restoring: **58 suites, 552 tests, 0 failures**, plus backend `go build`/`go vet`
+rc=0 and every backend package `ok`. The permission allowlist test reads the **merged** manifest,
+so the two new declarations are checked as shipped rather than as authored.
+
+> **The restore step of that calibration destroyed the feature once, and the log said `RED` rather
+> than saying so.** The script undid each mutation with `git checkout -- <file>`, which restores to
+> **HEAD** — and the feature being calibrated was still uncommitted, so both Kotlin files were
+> reverted to a state that never had it. The three break-verdicts were valid; the trailing
+> "restored" check was the only thing that caught the loss, and it is easy to read as flakiness.
+> Snapshot with `cp` and restore from that, then assert the file is *still modified* afterwards.
+

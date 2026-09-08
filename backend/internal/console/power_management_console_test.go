@@ -73,6 +73,17 @@ func TestBothPowerSwitchesAreShownWhenBothAreOff(t *testing.T) {
 		}
 	}
 
+	// 2b. And the in-app route, which is now the primary one: from 0.6.5 the phone's own status
+	//     screen carries an Open settings button per switch that goes straight there. The manual
+	//     paths above remain as the fallback, but a console that lists only them sends the parent
+	//     back to hunting through Settings -- the exact complaint that produced the buttons.
+	for _, hint := range []string{"open FamilyGuard", "Open settings button"} {
+		if !strings.Contains(js, hint) {
+			t.Errorf("the console never mentions %q, so a parent is sent to navigate Settings by "+
+				"hand even though the phone now offers the switch directly", hint)
+		}
+	}
+
 	// 3. The three-valued rule. `null` is a phone that has not said, and an older DPC sends neither
 	//    field; a truthy test would put a warning on every such device the day this ships. Only an
 	//    explicit `=== false` distinguishes "measured restricted" from "not reported".

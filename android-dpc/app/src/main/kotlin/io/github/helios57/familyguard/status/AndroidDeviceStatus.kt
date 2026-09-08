@@ -6,6 +6,7 @@ import io.github.helios57.familyguard.policy.DeviceOwnerPolicy
 import io.github.helios57.familyguard.recovery.AndroidRecoveryStore
 import io.github.helios57.familyguard.recovery.RecoveryJournal
 import io.github.helios57.familyguard.recovery.RecoveryMode
+import io.github.helios57.familyguard.sync.AlarmManagerPlatform
 import io.github.helios57.familyguard.sync.EncryptedPolicyCache
 import io.github.helios57.familyguard.usage.DayAttribution
 import io.github.helios57.familyguard.usage.EncryptedUsageStore
@@ -63,6 +64,12 @@ fun deviceStatusFacts(
         deviceId = credentials?.deviceId,
         serverHost = credentials?.serverUrl?.let(::hostOf),
         deviceOwner = deviceOwner,
+        // The same two expressions the heartbeat reports, called rather than re-derived: a screen
+        // that computes a capability differently from the code that uses it is describing a
+        // different program. Wrapped like every other read here — a throw is "not measured", which
+        // renders as its own level and never as `false`.
+        powerExempt = runCatching { AlarmManagerPlatform.powerExemptAllowed(app) }.getOrNull(),
+        exactAlarms = runCatching { AlarmManagerPlatform.exactAlarmsAllowed(app) }.getOrNull(),
         releasedSinceMillis = stores?.let { runCatching { RecoveryMode(it.mode).activeSince() }.getOrNull() },
         appliedPolicyVersion = cache?.let { runCatching { it.appliedVersion() }.getOrNull() } ?: 0L,
         cachedPolicyVersion = cached?.settings?.version,

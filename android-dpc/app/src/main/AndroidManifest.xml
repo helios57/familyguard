@@ -104,6 +104,37 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <!--
+      The same capability, granted at install instead of asked for, on Android 13 and later.
+
+      SCHEDULE_EXACT_ALARM above is an appop a person must switch on in Settings, and it defaults
+      OFF for an app that is not a clock — which is how this app spent its whole life so far taking
+      the inexact fallback branch with nothing anywhere saying so. USE_EXACT_ALARM is the normal
+      permission that replaces it: granted at install, no switch, no screen to find. Below API 33
+      the appop is still the route, and below API 31 exact alarms need no permission at all, so all
+      three tiers are covered and the minSdk 29 floor (NFR-13) needs neither.
+
+      This is a *fix*, not a report: on this phone it removes one of the two switches entirely. It
+      is declared knowing Play restricts it to alarm and calendar apps — this app is not
+      Play-distributed (it installs itself from the family's own control plane), and if that ever
+      changes this declaration is the thing to revisit, not the button that stays beside it for the
+      API 31-32 tier.
+    -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!--
+      Lets the status screen open the system's own "allow background activity?" dialog directly,
+      instead of sending a parent hunting through Settings for it.
+
+      Declaration-only: it grants nothing by itself and cannot exempt this app from anything. What
+      it buys is ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, which is one tap; without it the app
+      may only open the whole battery-optimisation list, where the parent must find this app among
+      every app on the phone. That difference is the whole feature — the measured cost of this
+      switch being off is a wake-up deferred to 520.9 s against a 300 s ceiling, and a fix nobody
+      can find is a fix nobody applies.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!--
       The find-my-phone siren (FR-9) rings on the alarm stream and vibrates with it. The sound needs
       no permission; the vibration does. A lost phone is often a silenced phone, and the pulse is what
       carries through a sofa cushion — dropping it would leave the feature working only in a quiet

@@ -272,6 +272,14 @@ class ManifestAndPlatformCallsTest {
             "the reader flags a source that never mentions an intent, so it cannot discriminate",
             !readsTheIntent(withTheBug.replace("intent.getBooleanExtra(\"skip_lockout\", false)", "false")),
         )
+        // The half that the case-insensitive version could not pass, and the reason it was narrowed:
+        // constructing an intent is not reading the one you were started with. Without this, the
+        // guard forbids the fix buttons and the only way to ship them is to delete the guard.
+        assertTrue(
+            "the reader cannot tell a CONSTRUCTED intent from the caller-supplied one, so it " +
+                "forbids opening a settings screen and would have to be deleted to allow one",
+            !readsTheIntent("""startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, self))"""),
+        )
 
         // And that the file is the screen it is supposed to be: "reads no intent" is trivially true
         // of an empty file, and of one whose submit path was deleted.
@@ -281,9 +289,27 @@ class ManifestAndPlatformCallsTest {
             text.contains("submit(") && text.contains("androidRecoveryController"),
         )
         assertTrue(
-            "RecoveryActivity starts a service or another component; starting ConnectionService " +
-                "here syncs, and a sync that reaches the server ends the recovery it was just given",
-            !Regex("""\bstart(Activity|Service|ForegroundService)\b""").containsMatchIn(text),
+            "RecoveryActivity starts a service; starting ConnectionService here syncs, and a sync " +
+                "that reaches the server ends the recovery it was just given",
+            !Regex("""\bstart(Service|ForegroundService)\b""").containsMatchIn(text),
+        )
+
+        // `startActivity` is permitted, for the two fix buttons on the status block, and is fenced
+        // by the property below instead of by a ban. The ban was never about starting an activity
+        // -- it was about starting ConnectionService, which is what the assertion above covers.
+        //
+        // The fence: every intent this file constructs names a `Settings.ACTION_` constant. So the
+        // only place this screen can send anyone is a system settings page, chosen from a literal
+        // in this file. It cannot be aimed at a component the caller names, which matters because
+        // this activity is exported with no permission -- any app on the phone can start it, and an
+        // exported activity that forwards an attacker-shaped intent is a confused deputy. Combined
+        // with the intent-reading assertion below, there is no path from the caller to the target.
+        val unfenced = Regex("""\bIntent\((?!Settings\.ACTION_)""").findAll(text).map { it.value }.toList()
+        assertTrue(
+            "RecoveryActivity builds an intent that is not a Settings.ACTION_ screen: $unfenced. " +
+                "It is exported with no permission, so an intent it can be steered to build is one " +
+                "any app on this phone can aim",
+            unfenced.isEmpty(),
         )
 
         assertTrue(
@@ -357,8 +383,20 @@ class ManifestAndPlatformCallsTest {
         Regex("""\bdeviceToken\b""").containsMatchIn(code)
 
     /** Any mention of an intent at all — see the calling test for why the token, not the accessor. */
+    /**
+     * Whether this source reads the intent it was *started with*.
+     *
+     * Case-SENSITIVE, and that is the whole precision of it. Kotlin spells the Activity's
+     * caller-supplied intent `intent` and a constructed one `Intent(`, so one pattern separates
+     * "takes input from whoever launched us" from "builds an intent of its own". This used to be
+     * case-insensitive — a source could not contain the *word* — which was a sound proxy only for
+     * as long as the screen never needed to open anything. When it did, the blunt version would
+     * have had to be deleted to let a Settings button through, and deleting it would have taken the
+     * real protection with it. The narrow one keeps it: `startActivity` is now allowed, and
+     * `intent.getBooleanExtra` is still a red.
+     */
     private fun readsTheIntent(code: String): Boolean =
-        Regex("""(?i)\bintent\b""").containsMatchIn(code)
+        Regex("""\bintent\b|\bgetIntent\s*\(""").containsMatchIn(code)
 
     /**
      * FR-2.3 / NFR-6, checked at the only place it can be: the source.
@@ -510,6 +548,15 @@ class ManifestAndPlatformCallsTest {
             // time rather than assumed: an ungranted appop degrades the alarm to an inexact one,
             // which is why this is a permission whose absence costs precision, not the feature.
             "android.permission.SCHEDULE_EXACT_ALARM" to "the enforcement wake-up",
+            // The API 33+ replacement for that appop: granted at install, so there is no switch to
+            // find and no screen to send anyone to. Declared alongside, not instead of — the appop
+            // is still the only route on API 31-32, and below 31 neither is needed.
+            "android.permission.USE_EXACT_ALARM" to "exact wake-ups without a switch",
+            // Declaration-only, and it exempts nothing by itself. It is what lets the status screen
+            // open the system's one-tap "allow background activity?" dialog instead of the whole
+            // battery-optimisation list. Without it the fix exists but nobody can find it.
+            "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" to
+                "the one-tap route to the background-activity switch",
             // The siren's vibration (FR-9). A lost phone is usually a silenced phone, so this is the
             // half of "make it findable" that survives a muted ringer.
             "android.permission.VIBRATE" to "the find-my-phone siren",
