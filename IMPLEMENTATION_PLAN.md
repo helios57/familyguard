@@ -5164,40 +5164,60 @@ that will actually settle it.
 
 ### 19.8 The control set, and the test — written down before the A/B is run
 
-Twelve consecutive reconnect gaps with **every sample verified screen-off** (the state series ran
-from 23:29:37Z to 03:35:21Z with `screen_on=true` on 0 of 239 polls, and each gap window contains at
-least one poll inside it — an uncovered window is *not measured*, not *asleep*), both switches
-`false`:
+The control ran overnight: the state series covers 23:29:37Z to 07:40:30Z — **8 h 11 min** — with
+`screen_on=true` on **0 of 477 polls** and both switches `false` on **all 477**, and the gap series
+covers 23:40:34Z to 07:29:51Z (7 h 49 min) — **25 consecutive reconnect gaps, 0 discontinuous** (every row's
+`opened` reconciles with its predecessor's `closed` to within 1.5 s, so the series has no hole).
+
+Applying this section's own coverage rule — *a gap window with no state poll strictly inside it is
+**not measured**, not asleep* — excludes 2 of the 25, and they are the two fastest:
+
+| | n | median | min | max | < 10 s | > 60 s | > 300 s |
+|---|---|---|---|---|---|---|---|
+| every gap recorded | 25 | 227.8 | 2.7 | 520.9 | 1 | 22 | 6 |
+| **coverage-verified (the control)** | **23** | **233.0** | **49.5** | **520.9** | **0** | **22** | **6** |
 
 ```
-2.7   49.5   82.0   125.9   130.0   174.0   187.0   233.0   302.3   319.6   482.0   520.9   (seconds)
-
-n=12   median 180.5   over 60 s: 10 of 12   under 10 s: 1 of 12   max 520.9
+49.5   63.3   66.7   82.0   125.9  130.0  160.0  174.0  187.0  214.7  227.8  233.0
+251.0  259.0  288.6  296.8  299.1  302.3  319.6  397.5  482.0  499.5  520.9    (seconds)
 ```
 
-> Three of these (82.0, 302.3, 520.9) were recovered after the `kubectl logs` follow dropped at
-> 03:24Z. The pod was **not** replaced — same name, `restarts=0`, same digest `dd076e5d…` — so the
-> container log still held them and a re-pull recovered the window with the row we already had as
-> the positive control. Nothing was lost. The watcher was re-armed seeded at the last known close,
-> so no gap is double-counted and none is dropped for want of a predecessor.
+> **The two excluded samples are 2.7 s (window 02:08:55→02:08:58) and 23.8 s (04:40:21→04:40:44).**
+> Polls are 60 s apart, so a 3-second window containing one is a ~5 % event; neither contained one.
+> An earlier version of this section carried the 2.7 s sample in the control **and** stated the
+> coverage rule that disqualifies it, then built on it — *"2.7 s, asleep and restricted … at the
+> fast end the two conditions are indistinguishable"*. That claim is withdrawn: the sample was
+> never measured. Both polls bracketing it read screen-off, which is suggestive, but `screen_on` is
+> a **last-reported** column overwritten by each heartbeat, so a bracketing pair cannot exclude a
+> wake between them — only a poll inside the window can, which is why the rule is written that way.
+>
+> The correction runs in the direction that makes the control *stronger*, and that is exactly why
+> it needed stating: the discarded samples are the only ones that made the restricted condition
+> look fast. **No coverage-verified sample is under 10 s. The minimum is 49.5 s.**
 
-**2.7 s, asleep and restricted.** That is inside the awake range (1.5 s, 1.7 s), so at the fast end
-the two conditions are not merely overlapping but indistinguishable. Any single fast reading after
-the switches are flipped is therefore uninformative, and so is a small handful of them.
+> Earlier drops of the `kubectl logs` follow cost nothing. The pod was never replaced across the
+> whole window — `familyguard-control-plane-d965bbfbb-5g94x`, `restarts=0`, started 2026-09-07
+> 17:53:03Z, digest `dd076e5d…` — so the container log still held every close, and each re-pull
+> recovered its window using a row already in the series as the positive control that the pull could
+> see anything at all. The watcher is now supervised (`gapsupervise.sh`) and re-arms seeded from the
+> last close it actually recorded, so a drop can neither double-count a gap nor drop one for want of
+> a predecessor. Three instances had previously died unsupervised, and a stopped watcher looks
+> exactly like a phone that stopped reconnecting.
 
-**The test, fixed now rather than after the data arrives.** The A/B passes if, over a comparable
-idle stretch with samples confirmed screen-off:
+**The test, fixed now rather than after the data arrives.** The treatment arm does **not yet
+exist** — both switches were verified `false` on all 477 polls — so restating the baseline here is
+pre-registration, not post-hoc fitting. The A/B passes if, over a comparable idle stretch with
+samples confirmed screen-off by a poll inside each window:
 
-- the **median** falls from 180.5 s to under 10 s, **and**
-- the **fraction under 10 s** rises from 1 of 12 to substantially all of them.
+- the **median** falls from 233.0 s to under 10 s, **and**
+- the **fraction under 10 s** rises from 0 of 23 to substantially all of them.
 
 It fails if the median stays in the hundreds, whatever individual fast samples appear. It is
-**inconclusive** — not a pass — if fewer than about a dozen confirmed-asleep samples are collected,
+**inconclusive** — not a pass — if fewer than about a dozen coverage-verified samples are collected,
 or if the state series shows the phone was handled during the window.
 
-Writing the criterion down first is the point. With a control containing a 2.7 s sample, a
-post-hoc reading of the after-data could support almost any conclusion, and Phase 18 already
-demonstrated what happens when a fix is believed before it is measured.
+Writing the criterion down first is the point. Phase 18 already demonstrated what happens when a fix
+is believed before it is measured.
 
 
 ### 19.9 The upper bound the app cannot exceed — and four samples that do
@@ -5224,12 +5244,16 @@ class Backoff(baseMillis: Long = 1_000, maxMillis: Long = 300_000, …)
 
 **`nextDelayMillis()` can never return more than 300 000 ms.** Not after one failure, not after
 sixty-four — the exponent is clamped at `EXPONENT_CAP` and the ceiling at `maxMillis`, and both were
-written precisely so that a long outage cannot produce an absurd delay. Four of the twelve measured
-gaps are above that ceiling:
+written precisely so that a long outage cannot produce an absurd delay. Six of the twenty-three
+coverage-verified gaps are above that ceiling:
 
 ```
-302.3   319.6   482.0   520.9      seconds — against a 300.0 s hard maximum
+302.3   319.6   397.5   482.0   499.5   520.9      seconds — against a 300.0 s hard maximum
 ```
+
+The doubled control (§19.8) did not weaken this — it held the rate steady at roughly a quarter of
+all gaps (4 of 12, then 6 of 23) while adding two fresh exceedances, 397.5 s and 499.5 s. The
+excess is not a tail artefact of one unlucky stretch.
 
 The app cannot have requested those waits. The only remaining step between the request and the
 observation is the platform's delivery of the `RTC_WAKEUP` alarm that backs `wait`, so the platform
@@ -5245,8 +5269,8 @@ measured from. So at each close `attempt == 0`, and the requested wait was drawn
 Two consequences worth stating plainly:
 
 - **A gap above 300 s is self-evidently a platform deferral**, and needs no control, no state
-  series, and no screen-off classification to be read that way. Of the four, 302.3 s is close enough
-  to the ceiling to be uninteresting; 482.0 s and 520.9 s are not.
+  series, and no screen-off classification to be read that way. Of the six, 302.3 s and 319.6 s are
+  close enough to the ceiling to be uninteresting; 397.5 s, 482.0 s, 499.5 s and 520.9 s are not.
 - **The A/B criterion in §19.8 stands unchanged.** This argument establishes *that* the platform is
   deferring; it says nothing about whether flipping the two switches stops it. That is still the
   thing to measure, and the criterion is still the one fixed before the data.
