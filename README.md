@@ -70,6 +70,7 @@ cd backend && go build ./cmd/server
 
 # the CLI / MCP server — this machine only, or ./build-fgctl.sh for the linux+windows+macOS matrix
 cd backend && go build ./cmd/fgctl
+# …though a running deployment already hands it out: curl -fL -o fgctl https://guard.example.com/fgctl/fgctl-linux-amd64
 
 # container image (build context is backend/ on purpose — see the Dockerfile's header)
 docker build -t familyguard-control-plane:dev backend/
@@ -290,6 +291,7 @@ backend/
   internal/config/       env parsing that refuses rather than defaults
   internal/console/      the parent console and its assets
   internal/fgclient/     the parent-side API client fgctl is built on
+  internal/fgctldist/    the fgctl builds a deployment serves at /fgctl, for `fgctl self-update`
   internal/enforce/      the server-side half of the enforcement model
   internal/httpapi/      routes, middleware, handlers
   internal/policy/       policy model, validation, compilation to the device bundle

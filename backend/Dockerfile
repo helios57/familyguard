@@ -46,6 +46,39 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 RUN go version -m /out/server | grep -q 'CGO_ENABLED=0'
 RUN /out/server 2>&1 | grep -q 'DATABASE_URL is required'
 
+# The CLI, cross-compiled for the platforms a parent might run it on, and served by this same
+# server at /fgctl. Baked into the image rather than mounted from the node so that the binaries and
+# the server are one artefact: they are stamped with the same VERSION above, which is what lets
+# `fgctl self-update` answer "am I current?" by comparing one number instead of two that can drift.
+#
+# The cost is honest and worth stating: six static Go binaries add roughly 55 MB to an image that is
+# otherwise about 30 MB. That is one pull per release, and the alternative -- a second out-of-band
+# upload step per platform, like the DPC has -- is the thing that made the DPC's version
+# unanswerable from the server in the first place.
+#
+# `if`, not `[ "$os" = windows ] && ext=.exe`: under `set -e` the && form exits non-zero on every
+# non-windows target and aborts the loop at the first one.
+RUN set -eu; \
+    for target in linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64; do \
+        os="${target%/*}"; arch="${target#*/}"; ext=""; \
+        if [ "$os" = windows ]; then ext=".exe"; fi; \
+        CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
+            -trimpath \
+            -ldflags="-s -w -X main.version=${VERSION}" \
+            -o "/out/fgctl/fgctl-$os-$arch$ext" ./cmd/fgctl; \
+    done
+
+# Two checks, for the same reason the server has them: a missing target here becomes a 404 on a
+# download link, which is discovered by a parent rather than by this build.
+#
+#   - all six exist. `go build` failing would already have stopped the loop, but a typo in the -o
+#     path would not, and would silently produce five files and one oddly-named seventh.
+#   - the CLI runs, and reports the version that was stamped into it. This is also the only check
+#     that the ldflags path is right: a mistyped -X leaves `version` at "dev", the binary works
+#     perfectly, and self-update then compares "dev" against the server forever.
+RUN [ "$(ls -1 /out/fgctl | wc -l)" -eq 6 ] || { echo "expected 6 fgctl builds, got:"; ls -l /out/fgctl; exit 1; }
+RUN /out/fgctl/fgctl-linux-amd64 version | grep -q "${VERSION}"
+
 # Pinned by digest, not by `:nonroot`. A tag is a pointer the publisher can move, so two builds of
 # the same commit can produce two different images — and the one property this stage is chosen for
 # (nothing to execute) is a property of the *content*, which a tag does not name. Verified by digest
@@ -68,6 +101,9 @@ FROM gcr.io/distroless/static-debian13@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a
 USER 65532:65532
 
 COPY --from=build /out/server /server
+
+# Served at /fgctl by the server above; FGCTL_DIR defaults to this path.
+COPY --from=build /out/fgctl /fgctl
 
 # Documentation only — the port comes from ADDR, and the manifest sets both from one value.
 EXPOSE 8080

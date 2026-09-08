@@ -5422,5 +5422,131 @@ writes. Adding `device_connections`, or a last-open/last-close pair on `device_s
 deliberately **not** in this phase: deploying replaces the pod and takes the log window with it, and
 the A/B in §19.8 is still pending.
 
-Nor is there a distribution channel. `release.yml` publishes a ghcr image and creates no GitHub
-Release, so the Windows `.exe` is something you build, not something you download.
+There is now a distribution channel — see §20.5 — but it is the deployment's own server, not a
+public one. `release.yml` still publishes only a ghcr image and creates no GitHub Release, so
+someone with no FamilyGuard server has nothing to download.
+
+### 20.5 Serving the CLI, and letting it update itself
+
+The server vends the binaries it was built with. Six targets are cross-compiled in the same
+`docker build` that produces the server, stamped with the same `VERSION`, and copied to `/fgctl` in
+the final image; the server scans that directory at startup and serves two routes:
+
+| route | what it is |
+|---|---|
+| `GET /fgctl` | the manifest: version, and per platform the name, size, sha256 and download path |
+| `GET /fgctl/<name>` | the binary |
+
+**Both are unauthenticated, and that is the load-bearing decision.** It is the same line `/dpc.apk`
+sits on. The binary holds no secret — it is the identical file for every deployment — and the
+manifest describes only bytes that are already downloadable, so requiring a key for the manifest
+while leaving the binary open would protect nothing. What it *would* break is the case that matters
+most: `fgctl self-update` on a machine whose stored key has been revoked, which is exactly when a
+working binary is needed. `fgclient.DoAnonymous` exists for these two routes and no others.
+
+**One version, not two.** The binaries are compiled in the same image build from the same source as
+the server, so the manifest's version *is* the server's. That is what makes "am I current?" a
+comparison of one number rather than of two that can drift — the failure the DPC has, where the
+server could not name the build it was serving until `hostedAPK` was added. The comparison is a
+string equality rather than a semver ordering, deliberately: same-build is the whole question, and
+an ordering would add a way to be wrong while breaking rollback.
+
+**What the checksum does and does not establish.** It is transfer integrity, not authenticity: the
+manifest and the bytes come from the same server, so anything able to substitute one can substitute
+the other. Authenticity rests on TLS to a host the parent already trusts with the family's data.
+Written down because a published sha256 invites the opposite reading.
+
+`self-update` (not `update` — that already queues `UPDATE_APP` to a phone) downloads into the
+directory of the binary it is replacing, because the swap is a rename and a rename cannot cross
+filesystems; `/tmp` would work on a developer machine and fail wherever it is its own mount. It then
+does three checks in increasing strength: the size, the sha256, and **it runs the downloaded binary
+and reads back the version**. Only the third covers a file that transferred perfectly and cannot
+start. Because the staged file is *executed* before it is installed, its temporary name carries a
+`.exe` suffix on Windows — `os.CreateTemp` substitutes the random part for the last `*`, so the
+suffix survives the pattern.
+
+**That suffix is load-bearing, and it was measured rather than assumed.** A/B on the Windows guest,
+two binaries differing only in that pattern, both pointed at a server hosting a newer build:
+
+| staged name | result |
+|---|---|
+| `.fgctl-update-<rand>` | `the downloaded binary did not run, so it was NOT installed: exit status 1 (it printed: nothing)`, exit non-zero, still reports `v0.0.0-running` |
+| `.fgctl-update-<rand>.exe` | `Updated … v0.0.0-running → v9.9.9-served`, exit 0, and the binary afterwards reports `v9.9.9-served` |
+
+So without it **every Windows self-update would have failed** — this was a real defect, not a
+precaution. It failed in the best available way: `verifyRuns` caught it, nothing was installed, the
+working binary was untouched and no partial file was left in the directory. That is the "run it and
+read the version back" check paying for itself on the first platform that needed it.
+
+**The mechanism is NOT established, and is deliberately not claimed.** `exit status 1` is Go's
+`*ExitError`, so the process did start and did exit 1 — which is *not* the same mechanism as cmd's
+refusal to execute an extensionless file (`is not recognized as an internal or external command`),
+measured separately on the same guest. Why a PE launched by `CreateProcess` under a name Windows
+does not recognise as executable exits 1 while printing nothing was not run to ground; the A/B
+settles what to do without settling why. The swap is platform-split: on unix a rename over a running executable is fine, on Windows
+the running file is moved to `.old` first and its path is reported, because Windows will not delete
+a running image and silently leaking the file would be worse than mentioning it.
+
+The download route re-hashes the file on every request and refuses with 503 if it no longer matches
+the manifest. The cost is one hash of a ~9 MB file on a route used a handful of times per release;
+what it buys is that the published checksum is a statement about the bytes in *this* response, so a
+client's verification failing always means the download was corrupted and never that the server
+quietly changed the file.
+
+**Calibrated.** Both handler guards were broken on purpose and the tests went red: removing the
+re-hash comparison reddens the changed-file test, and making `Find` accept any name — which is what
+turns the download into a path join — reddens the traversal test on two of its three inputs (the
+third is caught by the checksum check instead, which is the defence-in-depth working). The catalog's
+digest assertion carries its own negative control: two different files must not hash the same, or
+the comparison is satisfied by any constant.
+
+**The image is about 55 MB larger** — six static Go binaries at roughly 9 MB each, on top of an
+image that was around 30 MB. That is one pull per release. The alternative, an out-of-band upload
+per platform like the DPC has, is the arrangement that made the DPC's own version unanswerable from
+the server, and it is not worth repeating to save a pull on a home LAN.
+
+### 20.6 A red that was not about the product, and could not be told apart from one
+
+The full e2e suite went red verifying the work above, on a test that had already passed:
+
+```
+--- FAIL: TestAnUploadedAPKIsReadRatherThanDescribed (34.70s)
+    harness_test.go:909: psql "DROP DATABASE IF EXISTS \"e2e_1161076_1\" WITH (FORCE)": signal: killed
+```
+
+The failure is in `t.Cleanup`, not in the test body. The harness gives every `psql` call a 30 s
+`exec.CommandContext`, and the drop did not come back inside it, so the context killed the child —
+and the test that had passed a moment earlier was reported as failing, naming APK reading as the
+culprit. Backpressure reported as a product fault.
+
+**Two candidate causes produce a byte-identical message.** `exec.CommandContext` SIGKILLs on
+deadline, and so does the OOM killer; both arrive as `signal: killed`. From the log they are
+indistinguishable, and the log is all a CI reader has. The attempt to separate them after the fact
+failed twice over, in ways worth recording:
+
+- `dmesg` returned **zero lines** on this host, and the `dmesg | grep | tail` pipeline reported
+  `rc=0`, which reads exactly like "searched, found no OOM". Only counting the lines `dmesg` could
+  read at all showed the search had never run. (`| tail` destroys `$?`; the positive control is what
+  caught it.)
+- Memory pressure was ruled out on its own evidence — 72 GB available of 94 GB — so an OOM kill was
+  never plausible. But that is a fact about this host on this day, not a discriminator.
+
+So the discrimination has to happen **at the exec, where `ctx.Err()` still exists.** Nothing
+downstream can recover it. `runPsql` now reports a deadline as `context.DeadlineExceeded`, and
+`psql` treats the two outcomes as the different findings they are: postgres *refusing* a statement
+is a real result about the product — a leaked pgx pool blocks a drop, and that must fail — while a
+call that never returned is a statement about the host, retried once on a longer budget and reported
+as **NOT MEASURED** if it misses again.
+
+**Calibrated, three arms.** `TestPsqlTellsARefusalApartFromNoAnswer` asserts that a 1 ms budget is
+classified as a deadline, that a statement postgres refuses is *not*, and that a valid statement
+still succeeds. The third arm is not decoration: the first two together are equally consistent with
+"every error is reported as a refusal", and only a clean positive control excludes that. Removing
+the classification turns arm 1 red on the literal string `signal: killed` and leaves the other two
+green, which is the selectivity the fix claims.
+
+**What this does not claim.** It does not claim the suite is immune to a loaded host. The suite
+shares this machine with other work — during the red, a peer session held the load average at 14
+with a VM at 311 % CPU and a compiler at 260 % — and the same test passed alone in 4.4 s at that
+same load average. Isolation-green is not suite-green; what changed is that a slow host now reports
+itself as a slow host instead of as a broken feature.

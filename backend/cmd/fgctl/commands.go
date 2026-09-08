@@ -35,6 +35,7 @@ func commands() []command {
 		{"logout", "", "forget the stored credential", false, cmdLogout},
 		{"config", "", "show the server and whether a credential is stored", false, cmdConfig},
 		{"version", "", "print the fgctl version", false, cmdVersion},
+		{"self-update", "[--check]", "replace this binary with the one the server hosts", false, cmdSelfUpdate},
 		{"whoami", "", "who the stored credential acts as", true, cmdWhoami},
 		{"children", "", "list the children in the family", true, cmdChildren},
 		{"devices", "", "list every enrolled device", true, cmdDevices},

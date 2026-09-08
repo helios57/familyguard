@@ -74,11 +74,31 @@ var ErrNoServer = errors.New("no server configured: run `fgctl login --url https
 
 // Do performs one request and decodes the body into out, which may be nil to discard it.
 func (c *Client) Do(ctx context.Context, method, path string, body, out any) error {
+	if c.Token == "" {
+		// Checked before BaseURL is, deliberately: "you are not signed in" is the more useful of
+		// the two messages when neither is set.
+		if c.BaseURL == "" {
+			return ErrNoServer
+		}
+		return ErrNoCredential
+	}
+	return c.do(ctx, method, path, body, out, true)
+}
+
+// DoAnonymous is Do without a credential, for the routes that deliberately have none.
+//
+// Only the fgctl manifest and download qualify, and the reason they are unauthenticated is the
+// reason this method exists: `fgctl self-update` has to work on a machine whose stored key has been
+// revoked, which is precisely when a working binary matters most. Sending the key anyway would be
+// harmless -- the server ignores it there -- but it would make a revoked key look like the cause of
+// any failure, and it would mean self-update could not run at all before the first login.
+func (c *Client) DoAnonymous(ctx context.Context, method, path string, body, out any) error {
+	return c.do(ctx, method, path, body, out, false)
+}
+
+func (c *Client) do(ctx context.Context, method, path string, body, out any, authenticate bool) error {
 	if c.BaseURL == "" {
 		return ErrNoServer
-	}
-	if c.Token == "" {
-		return ErrNoCredential
 	}
 	var reader io.Reader
 	if body != nil {
@@ -92,7 +112,9 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 	if err != nil {
 		return fmt.Errorf("building the request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	if authenticate {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -156,6 +178,11 @@ func summarise(payload []byte) string {
 // Get is the common case, spelled once.
 func (c *Client) Get(ctx context.Context, path string, out any) error {
 	return c.Do(ctx, http.MethodGet, path, nil, out)
+}
+
+// GetAnonymous is Get with no credential attached. See DoAnonymous.
+func (c *Client) GetAnonymous(ctx context.Context, path string, out any) error {
+	return c.DoAnonymous(ctx, http.MethodGet, path, nil, out)
 }
 
 // Query builds a path with escaped query parameters, skipping empty values so a caller can pass

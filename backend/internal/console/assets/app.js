@@ -1599,13 +1599,20 @@ function renderActivity(data) {
 
 async function loadFamily() {
   const isPrimary = state.parent && state.parent.role === 'PRIMARY_ADMIN';
-  const [parents, keys] = await Promise.all([
+  const [parents, keys, cli] = await Promise.all([
     api('/parents'),
     // Only a primary admin may list keys, so anyone else gets a 403 rather than an empty list. The
     // catch keeps the whole screen from failing on a call the reader was never entitled to make.
     isPrimary ? api('/api-keys').catch(() => ({ api_keys: [] })) : Promise.resolve(null),
+    // Not through api(): the CLI manifest lives at /fgctl, outside /api/v1 and outside auth, so it
+    // takes neither the base path nor the bearer token. A deployment that ships no CLI answers
+    // {"hosted": false}, and a server too old to know the route 404s — both render as an absence,
+    // which is why the catch returns the same shape rather than propagating.
+    fetch('/fgctl', { headers: { 'Accept': 'application/json' } })
+      .then((r) => (r.ok ? r.json() : { hosted: false }))
+      .catch(() => ({ hosted: false })),
   ]);
-  return { parents: parents.parents || [], keys: keys && (keys.api_keys || []), isPrimary };
+  return { parents: parents.parents || [], keys: keys && (keys.api_keys || []), isPrimary, cli };
 }
 
 /* ---- API keys (FR-17) ---------------------------------------------------- */
@@ -1705,6 +1712,67 @@ function showKeyOnce(key) {
     el('p', { class: 'muted', text: 'Send it as an Authorization: Bearer header. If it leaks, revoke it here — that is immediate, and a key cannot create another one to survive its own revocation.' })));
 }
 
+/* The CLI download. Rendered from whatever the server says it hosts rather than from a hardcoded
+   list, so a deployment built without the cross-compile stage shows nothing instead of six dead
+   links — and a platform added later appears here with no console change. */
+
+const PLATFORMS = {
+  'linux/amd64': 'Linux · x86-64',
+  'linux/arm64': 'Linux · ARM64',
+  'windows/amd64': 'Windows · x86-64',
+  'windows/arm64': 'Windows · ARM64',
+  'darwin/amd64': 'macOS · Intel',
+  'darwin/arm64': 'macOS · Apple silicon',
+};
+
+function likelyOS() {
+  const ua = navigator.userAgent || '';
+  if (/Windows/i.test(ua)) return 'windows';
+  if (/Mac OS X|Macintosh/i.test(ua)) return 'darwin';
+  if (/Linux|X11|Android/i.test(ua)) return 'linux';
+  return '';
+}
+
+function megabytes(n) {
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function cliCard(cli) {
+  const card = el('div', { class: 'card full' },
+    el('div', { class: 'card-head' }, el('h2', { text: 'Command line' })));
+
+  if (!cli || !cli.hosted || !(cli.artifacts || []).length) {
+    card.append(el('p', { class: 'muted', text: 'This server does not host the command-line tool.' }));
+    return card;
+  }
+
+  card.append(el('p', { class: 'muted', text:
+    'fgctl is this server\u2019s API from a terminal, and the same binary is an MCP server an '
+    + 'assistant can drive. Version ' + cli.version + '.' }));
+
+  // The visitor's own OS first. Only the OS is guessed, never the architecture — a wrong arch hands
+  // someone a binary that will not start, while a wrong order costs them one glance.
+  const mine = likelyOS();
+  const sorted = (cli.artifacts || []).slice().sort((a, b) => {
+    const am = a.os === mine ? 0 : 1;
+    const bm = b.os === mine ? 0 : 1;
+    return am - bm || (a.os + a.arch).localeCompare(b.os + b.arch);
+  });
+
+  card.append(el('ul', { class: 'list' }, sorted.map((a) => el('li', {},
+    el('span', { class: 'label' },
+      el('b', { text: PLATFORMS[a.os + '/' + a.arch] || (a.os + ' · ' + a.arch) }),
+      // The checksum is shown, not hidden behind a details element: it is the only way to check a
+      // download, and one nobody performs if it takes a click to find.
+      el('small', { text: megabytes(a.size) + ' · sha256 ' + a.sha256 })),
+    el('a', { class: 'btn btn-quiet', href: a.url, download: a.name, text: 'Download' })))));
+
+  card.append(el('p', { class: 'muted', text:
+    'Then: fgctl login --url ' + location.origin + ' — it asks for an API key, which you can mint '
+    + 'above. `fgctl self-update` replaces it with whatever this server hosts.' }));
+  return card;
+}
+
 function renderFamily(data) {
   const isPrimary = data.isPrimary;
 
@@ -1766,7 +1834,7 @@ function renderFamily(data) {
     el('p', { class: 'muted', text: state.parent ? state.parent.email + ' · ' + state.parent.role.replaceAll('_', ' ').toLowerCase() : '' }),
     el('button', { class: 'btn btn-block', type: 'button', text: 'Sign out', onclick: () => signOut('Signed out.') }));
 
-  return [parents, children, apiKeysCard(data), you];
+  return [parents, children, apiKeysCard(data), cliCard(data.cli), you];
 }
 
 /* ---- sheet -------------------------------------------------------------- */

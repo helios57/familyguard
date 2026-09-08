@@ -144,6 +144,7 @@ Two environment variables bound the size, and they have to agree with the ingres
 |---|---|---|
 | `APK_DIR` | *(unset — feature off)* | where the catalog's files live |
 | `MAX_UPLOAD_BYTES` | `268435456` (256 MB) | the cap on the upload endpoint only |
+| `FGCTL_DIR` | `/fgctl` | the CLI builds served at `/fgctl`; the image puts them there, so this is normally left alone. A directory that does not exist means this deployment hosts no CLI, which is reported as `{"hosted": false}` rather than as an error |
 
 `MAX_UPLOAD_BYTES` is separate from `MAX_BODY_BYTES` rather than a raise of it: the general cap
 exists so that an unauthenticated request is cheap to refuse, and raising it to fit an APK would
@@ -700,7 +701,46 @@ curl -H "Authorization: Bearer fgk_…" https://guard.example.com/api/v1/childre
 `fgctl` is the same API from a terminal, and the same binary serves it over MCP. It authenticates
 with an API key, so everything above about what a key is and is not applies unchanged.
 
-Build it from `backend/`:
+### Getting it
+
+**The server hands it out.** Sign in to the console, open **Family**, and the *Command line* card
+lists a download for each platform with its size and SHA-256. The same thing without a browser:
+
+```bash
+curl -s https://guard.example.com/fgctl | jq .          # what this deployment hosts
+curl -fL -o fgctl https://guard.example.com/fgctl/fgctl-linux-amd64
+chmod +x fgctl
+```
+
+Neither route needs a credential — the binary holds no secret, and requiring a key to fetch the
+tool you need in order to use a key is a loop. Verify the download against the `sha256` in the
+manifest, or against the `X-Fgctl-SHA256` header the download itself carries.
+
+> Note what that checksum is: **transfer integrity, not authenticity.** The manifest and the bytes
+> come from the same server, so it detects a truncated or corrupted download and nothing else.
+> What makes the file trustworthy is TLS to a host you already trust with the family's data.
+
+Once installed, it keeps itself current:
+
+```bash
+fgctl self-update --check   # what is installed, what the server has
+fgctl self-update           # download, verify, and replace this binary
+```
+
+`self-update` checks the size and the SHA-256 **and then runs the downloaded binary** to confirm it
+reports the version the manifest promised, before anything is replaced. On Windows the running
+executable cannot be deleted, so the old one is moved to `fgctl.exe.old` and its path is printed;
+delete it whenever. If the binary lives somewhere you cannot write, `self-update` says so and
+changes nothing rather than half-installing.
+
+The versions come from one place: the binaries are cross-compiled in the same `docker build` as the
+server and stamped with the same version, so "up to date" means "the same build as the server you
+are talking to". A deployment built without that stage answers `{"hosted": false}` and the console
+shows the card as an absence.
+
+### Building it yourself
+
+From `backend/`:
 
 ```bash
 ./build-fgctl.sh              # writes backend/dist/ for linux, windows and macOS, plus SHA256SUMS

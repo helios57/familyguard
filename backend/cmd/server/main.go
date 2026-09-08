@@ -23,6 +23,7 @@ import (
 	"github.com/helios57/familyguard/backend/internal/apk"
 	"github.com/helios57/familyguard/backend/internal/auth"
 	"github.com/helios57/familyguard/backend/internal/config"
+	"github.com/helios57/familyguard/backend/internal/fgctldist"
 	"github.com/helios57/familyguard/backend/internal/httpapi"
 	"github.com/helios57/familyguard/backend/internal/provisioning"
 	"github.com/helios57/familyguard/backend/internal/store"
@@ -119,6 +120,8 @@ func run() error {
 		// compare themselves against on a timer.
 		"dpc_version", versionOrNone(hosted), "dpc_package", packageOrNone(hosted))
 
+	cli := fgctlCatalog(cfg, log)
+
 	srv, err := httpapi.New(httpapi.Deps{
 		Config:            cfg,
 		Store:             st,
@@ -128,6 +131,7 @@ func run() error {
 		SignatureChecksum: signatureSum,
 		PackageChecksum:   packageSum,
 		HostedAPK:         hosted,
+		FgctlCatalog:      cli,
 	})
 	if err != nil {
 		return fmt.Errorf("server: %w", err)
@@ -221,6 +225,44 @@ func apkChecksums(cfg *config.Config) (signature, pkg string, err error) {
 // endpoints already carry through as "the server did not say" and the phones answer by downloading
 // and reading the archive themselves. The one thing that must not happen is a *guess*: a version
 // this server made up would be compared against a real one on a real phone.
+// fgctlCatalog scans the CLI binaries baked into the image.
+//
+// A missing directory is not an error and not a warning: a control plane built without the CLI
+// stage, or run from source in development, simply hosts none, and /fgctl reports "hosted": false.
+// A directory that exists but cannot be read IS worth an error, because that is a broken image
+// rather than a deliberate absence -- and the two are told apart here rather than collapsed into
+// one silent nil.
+func fgctlCatalog(cfg *config.Config, log *slog.Logger) *fgctldist.Catalog {
+	if cfg.FgctlDir == "" {
+		return nil
+	}
+	if _, err := os.Stat(cfg.FgctlDir); errors.Is(err, os.ErrNotExist) {
+		log.Info("this deployment hosts no fgctl binaries", "fgctl_dir", cfg.FgctlDir)
+		return nil
+	}
+	cat, err := fgctldist.Scan(cfg.FgctlDir, version)
+	if err != nil {
+		log.Error("the fgctl directory exists but could not be read, so this server will not offer "+
+			"the CLI for download", "fgctl_dir", cfg.FgctlDir, "error", err)
+		return nil
+	}
+	if len(cat.Artifacts) == 0 {
+		log.Warn("the fgctl directory holds no recognisable builds",
+			"fgctl_dir", cfg.FgctlDir)
+		return nil
+	}
+	names := make([]string, 0, len(cat.Artifacts))
+	for _, a := range cat.Artifacts {
+		names = append(names, a.Name)
+	}
+	// Logged because "which CLI does this deployment vend" has the same problem the DPC had: the
+	// answer lives only in memory otherwise. The version is the server's own, which is the property
+	// that makes self-update coherent.
+	log.Info("fgctl builds available for download",
+		"fgctl_dir", cfg.FgctlDir, "version", version, "builds", strings.Join(names, " "))
+	return cat
+}
+
 func hostedAPK(cfg *config.Config, log *slog.Logger) *apk.Info {
 	if cfg.APKPath == "" {
 		return nil

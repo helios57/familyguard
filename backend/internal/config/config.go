@@ -83,6 +83,11 @@ type Config struct {
 	// wizard before any of this exists.
 	APKDir string
 
+	// FgctlDir holds the cross-compiled fgctl binaries this deployment serves, written into the
+	// image by the Dockerfile. Empty means this deployment hosts no CLI, which is a legitimate
+	// configuration and not an error.
+	FgctlDir string
+
 	// FamilyName names the single family this deployment serves. It is cosmetic — every
 	// authorization decision is made against the parents table — but it is what the console shows.
 	FamilyName string
@@ -128,6 +133,7 @@ func Load() (*Config, error) {
 		APKPath:             os.Getenv("APK_PATH"),
 		APKCertPath:         os.Getenv("APK_CERT_PATH"),
 		APKDir:              os.Getenv("APK_DIR"),
+		FgctlDir:            envOr("FGCTL_DIR", "/fgctl"),
 		FamilyName:          envOr("FAMILY_NAME", "Family"),
 		DPCComponent:        envOr("DPC_COMPONENT", "io.github.helios57.familyguard/.admin.AdminReceiver"),
 		LogLevel:            envOr("LOG_LEVEL", "info"),

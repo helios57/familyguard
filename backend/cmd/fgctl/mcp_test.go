@@ -98,6 +98,11 @@ func TestRunMCPTreatsAClosedClientAsACleanExit(t *testing.T) {
 
 // The negative control for the test above: if runMCP swallowed every error, that test would pass
 // and mean nothing. A stream that fails rather than ending must still be reported.
+//
+// It asserts THIS error, not merely "an error". "err != nil" would also be satisfied by the
+// shutdown error the fix above exists to suppress, so the loose form could pass while the fix was
+// silently inert -- an assertion narrow enough to be wrong. Measured: the SDK hands the reader's
+// error back unwrapped, so errors.Is holds.
 func TestRunMCPStillReportsATransportFailure(t *testing.T) {
 	var out lockedBuffer
 	boom := errors.New("the pipe broke")
@@ -107,5 +112,9 @@ func TestRunMCPStillReportsATransportFailure(t *testing.T) {
 	err := runMCP(context.Background(), fgclient.New("https://example.invalid", "fgk_unused"), stream, &out)
 	if err == nil {
 		t.Fatal("a transport failure was reported as a clean shutdown")
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("the reported error is not the one the transport raised, so this proves nothing "+
+			"about the read failure propagating: %v", err)
 	}
 }

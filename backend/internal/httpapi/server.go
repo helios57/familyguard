@@ -17,6 +17,7 @@ import (
 	"github.com/helios57/familyguard/backend/internal/catalog"
 	"github.com/helios57/familyguard/backend/internal/config"
 	"github.com/helios57/familyguard/backend/internal/enforce"
+	"github.com/helios57/familyguard/backend/internal/fgctldist"
 	"github.com/helios57/familyguard/backend/internal/policy"
 	"github.com/helios57/familyguard/backend/internal/provisioning"
 	"github.com/helios57/familyguard/backend/internal/store"
@@ -55,6 +56,11 @@ type Deps struct {
 	// is installed on the node out of band, so the server knew only its size and its hash. That is
 	// enough to serve it and not enough for a phone to decide, on a timer, whether to take it.
 	HostedAPK *apk.Info
+
+	// FgctlCatalog is the CLI builds this deployment hosts, scanned at startup. Nil means it hosts
+	// none, which is reported as "hosted": false rather than as an error -- a control plane is
+	// perfectly usable without shipping a CLI.
+	FgctlCatalog *fgctldist.Catalog
 }
 
 // Server holds the wired HTTP surface.
@@ -74,6 +80,7 @@ type Server struct {
 	signatureChecksum string
 	packageChecksum   string
 	hostedAPK         *apk.Info
+	fgctl             *fgctldist.Catalog
 }
 
 // New wires a server. It does not listen; the caller owns the lifecycle.
@@ -108,6 +115,7 @@ func New(d Deps) (*Server, error) {
 		httpClient:        d.HTTPClient,
 		signatureChecksum: d.SignatureChecksum,
 		packageChecksum:   d.PackageChecksum,
+		fgctl:             d.FgctlCatalog,
 		hostedAPK:         d.HostedAPK,
 	}, nil
 }
@@ -158,6 +166,12 @@ func (s *Server) Router() (*gin.Engine, error) {
 	// The DPC download, outside /api/v1 and outside every auth group — see serveAPK for why it
 	// cannot have a credential, and why that is safe.
 	r.GET(APKDownloadPath, s.serveAPK)
+
+	// The CLI: its manifest and its binaries, both unauthenticated for the reasons on
+	// FgctlManifestPath. Outside /api/v1 because they are deployment artefacts rather than family
+	// data, which is the same line /dpc.apk sits on.
+	r.GET(FgctlManifestPath, s.fgctlManifest)
+	r.GET(FgctlDownloadPath, s.serveFgctl)
 
 	v1 := r.Group("/api/v1")
 	// Two ways to a session, one decision. POST /auth/google takes an ID token from a client that
