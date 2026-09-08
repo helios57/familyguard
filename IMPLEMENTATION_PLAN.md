@@ -5141,6 +5141,14 @@ owner plausibly picked it up. Only the 19:00:01Z sample is known-awake, because 
 to be captured a second later. The watcher now appends every poll to a state series so the same
 question is answerable next time; the three samples already taken stay unclassifiable forever.
 
+**The classifier settled it the same night.** With the state series running, the phone stayed
+screen-off across 122 consecutive polls (22:48Z–01:35Z, zero `screen_on=true`) and produced gaps of
+482.0, 319.6, 233.0, 187.0, 174.0 and **49.5 s**. The fast one is not a polling artifact: a
+heartbeat landed at 01:19:40Z, *one second* after that stream opened at 01:19:39Z, and it reported
+`screen_on=false`. So a sub-60 s reconnect is confirmed to occur while the phone is asleep and both
+switches are off — the fast tail belongs to the asleep population, and 19.1's "two non-overlapping
+populations" is refuted by a directly classified sample rather than only by suspicion.
+
 The Doze model predicts exactly this shape, which is why the spread is not evidence against it:
 light doze runs short maintenance windows and deep doze long ones, and any interaction resets the
 device to the shallow end. Interspersed short and long deferrals over an evening is what that looks
