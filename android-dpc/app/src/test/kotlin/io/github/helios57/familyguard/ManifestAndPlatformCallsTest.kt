@@ -246,6 +246,74 @@ class ManifestAndPlatformCallsTest {
      * than the property being defended, deliberately: "reads no *interesting* part of the intent"
      * needs a list of the interesting parts, and the list is exactly what nobody updates.
      */
+    /**
+     * The status rows must re-read in onResume, never only in onStart.
+     *
+     * `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` is dialog-themed: it does not cover the activity
+     * that launched it, so that activity is never stopped and onStart does not fire again when the
+     * dialog goes away. 0.6.5 shipped the refresh in onStart, and the measured consequence on an
+     * SM-S928B was a row that still read "restricted" after the parent had tapped Allow. A button
+     * whose result is invisible is worse than no button: it reads as broken and invites turning
+     * something else off to compensate.
+     *
+     * This is a source scan because the failure is a lifecycle binding, and a JVM unit test cannot
+     * drive the Android lifecycle. A scan is a weaker instrument than an assertion about behaviour,
+     * so it is calibrated on both halves below rather than trusted.
+     */
+    @Test
+    fun `the status rows re-read on resume, so returning from a dialog cannot leave them stale`() {
+        val activity = sources.singleOrNull { it.name == "RecoveryActivity.kt" }
+            ?: throw AssertionError("RecoveryActivity.kt was not found in the main source set")
+        val text = code(activity)
+
+        // What the check means: the body of onResume, up to the next override, must call
+        // refreshStatus(). Reading "the file mentions onResume somewhere" would pass on a file that
+        // overrides it for an unrelated reason.
+        fun refreshesOnResume(code: String): Boolean {
+            val start = code.indexOf("override fun onResume()")
+            if (start < 0) return false
+            val rest = code.substring(start + 1)
+            val end = rest.indexOf("override fun").let { if (it < 0) rest.length else it }
+            return rest.substring(0, end).contains("refreshStatus()")
+        }
+
+        // Calibration, both halves, on text this test controls.
+        val withTheBug = """
+            override fun onStart() {
+                super.onStart()
+                refreshStatus()
+            }
+        """.trimIndent()
+        val fixed = """
+            override fun onStart() {
+                super.onStart()
+            }
+
+            override fun onResume() {
+                super.onResume()
+                refreshStatus()
+            }
+        """.trimIndent()
+        assertFalse(
+            "the scan passed 0.6.5's actual bug, so a clean result on the real file would mean nothing",
+            refreshesOnResume(withTheBug),
+        )
+        // An onResume that exists but refreshes nothing must also fail, or the check degrades into
+        // "the word onResume appears in the file".
+        assertFalse(
+            "an empty onResume passed, so the check is matching the name rather than the call",
+            refreshesOnResume("override fun onResume() {\n super.onResume()\n }"),
+        )
+        assertTrue("the scan cannot see the fix, so it can never go green", refreshesOnResume(fixed))
+
+        assertTrue(
+            "RecoveryActivity does not call refreshStatus() from onResume. The battery-exemption " +
+                "prompt is a dialog and never stops this activity, so a row bound to onStart keeps " +
+                "showing the old value after the parent has already granted the exemption.",
+            refreshesOnResume(text),
+        )
+    }
+
     @Test
     fun `the recovery activity trusts nothing from the intent that started it`() {
         val activity = sources.singleOrNull { it.name == "RecoveryActivity.kt" }

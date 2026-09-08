@@ -141,6 +141,20 @@ class RecoveryActivity : AppCompatActivity() {
             }
             render(state)
         }
+    }
+
+    // The status rows re-read here rather than in onStart, and the difference is the whole feature.
+    // `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` is a DIALOG-themed activity: it does not cover
+    // this one, so this activity is never stopped and onStart never fires again when the dialog is
+    // dismissed. Bound to onStart, the row therefore kept saying "restricted" after a parent had
+    // just tapped Allow — the switch had moved and the screen said it had not, which is worse than
+    // no button at all, because it reads as "the button is broken" and invites turning something
+    // else off. onResume fires on return from a dialog AND from a full screen, so it is correct for
+    // every candidate in settingsIntentFor(), not just the one that happens to be full-screen.
+    // Measured 2026-09-08 on an SM-S928B: 0.6.5 shipped with this in onStart and the row did not
+    // move.
+    override fun onResume() {
+        super.onResume()
         refreshStatus()
     }
 

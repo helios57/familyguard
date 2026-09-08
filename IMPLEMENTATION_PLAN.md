@@ -5731,6 +5731,44 @@ block, costing the two lines that *can* be answered. A button would be worse —
 result the app cannot confirm is a control that reports success having evaluated nothing. The
 battery line says so in words instead, and `DEPLOYMENT.md` keeps the manual path.
 
+### 21.6 0.6.5 shipped the buttons bound to the wrong lifecycle callback
+
+Reported by the owner within minutes of the update landing: *"i did it (in the app) but it still
+does not work and the warning is still there."*
+
+`refreshStatus()` was called from `onStart()`. That is correct for a full-screen Settings page,
+which stops the activity behind it — and wrong for the one screen the battery button actually
+opens. `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` is **dialog-themed**: it does not cover the
+launching activity, so that activity is never stopped, `onStart()` does not fire again when the
+dialog is dismissed, and the row keeps rendering the value it read before the tap. A parent can
+grant the exemption and watch the screen tell them they have not.
+
+**This is worse than shipping no button.** The self-verifying property claimed in §21.2 — "the row
+greens because the switch moved, never because a tap was seen" — held in the direction that matters
+for false *positives* and failed completely in the other: it could never green at all for the
+one-tap path. A control that cannot report success is indistinguishable from a broken feature, and
+the natural response is to go turning other things off.
+
+Fixed in 0.6.6 by binding the refresh to `onResume()`, which fires on return from a dialog *and*
+from a full screen, so it is correct for every candidate `settingsIntentFor()` can pick rather than
+for the one that happens to be full-screen.
+
+Two verification lessons, both of the house's own dominant failure class:
+
+* **The guard is a source scan, and the naive version measures nothing.** "The file mentions
+  `onResume`" passes a file that overrides it for an unrelated reason. The check reads the body of
+  `onResume` up to the next `override` and requires `refreshStatus()` inside it, and it is
+  calibrated on three inputs, not one: 0.6.5's actual binding (must fail), an `onResume` that
+  refreshes nothing (must fail — this is the half that catches the check degrading into a
+  name match), and the fix (must pass).
+* **The reading that said the tap had failed was one stale row sampled three times.** The state
+  watcher logs *its own poll time*, not `device_state.updated_at`, so three consecutive lines at
+  11:20, 11:21 and 11:22 all reported a row last written at 11:19:38Z — before the update had even
+  finished installing. It was used here to tell the owner the grant had not happened, which was not
+  a measurement at all. **A sampler that stamps its own clock onto someone else's data cannot
+  distinguish fresh from frozen**; print the authority's timestamp and the age beside every value,
+  and treat an age beyond one expected interval as NOT MEASURED.
+
 ### 21.5 Calibration
 
 Nine new cases in `DeviceStatusTest`, all on the pure function. The three that matter are not the
