@@ -15,6 +15,10 @@ import (
 
 const listFrame = `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}` + "\n"
 
+const listFrame3 = `{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}` + "\n"
+
+const initializedFrame = `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}` + "\n"
+
 const initFrame = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":` +
 	`{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}` + "\n"
 
@@ -52,6 +56,25 @@ func (w *lockedBuffer) String() string {
 	defer w.mu.Unlock()
 	return w.b.String()
 }
+
+// countingWriter closes done once the output carries want responses, so a test can wait for the
+// server to have answered rather than sleeping and hoping.
+type countingWriter struct {
+	lockedBuffer
+	want int
+	done chan struct{}
+	once sync.Once
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	n, err := w.lockedBuffer.Write(p)
+	if w.count() >= w.want {
+		w.once.Do(func() { close(w.done) })
+	}
+	return n, err
+}
+
+func (w *countingWriter) count() int { return strings.Count(w.String(), `"result"`) }
 
 type errReader struct{ err error }
 
@@ -116,5 +139,48 @@ func TestRunMCPStillReportsATransportFailure(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("the reported error is not the one the transport raised, so this proves nothing "+
 			"about the read failure propagating: %v", err)
+	}
+}
+
+// A real MCP client holds the pipe open for the life of the session, and every request it sends has
+// to be answered. Nothing covered that: the two tests above assert how runMCP EXITS, not that it
+// ever serves anybody, and both would pass against a server that answered nothing at all.
+//
+// It matters more than it looks. The SDK drops responses still in flight when stdin reaches EOF --
+// measured at 0 responses in 20 of 22 runs, see IMPLEMENTATION_PLAN.md 20.3 -- so "answers
+// everything" is a property of the CONNECTED case only, and a regression into that behaviour would
+// look exactly like the drop that is already documented and expected. Pinning the connected case is
+// what keeps the two distinguishable.
+func TestRunMCPAnswersEveryRequestWhileTheClientStaysConnected(t *testing.T) {
+	in, clientSide := io.Pipe()
+	const want = 3 // initialize, and two tools/list
+	out := &countingWriter{want: want, done: make(chan struct{})}
+
+	exited := make(chan error, 1)
+	go func() {
+		exited <- runMCP(context.Background(), fgclient.New("https://example.invalid", "fgk_unused"), in, out)
+	}()
+
+	if _, err := io.WriteString(clientSide, initFrame+initializedFrame+listFrame+listFrame3); err != nil {
+		t.Fatalf("writing the frames: %v", err)
+	}
+	select {
+	case <-out.done:
+	case <-time.After(15 * time.Second):
+		t.Fatalf("only %d of %d responses arrived while the client was still connected:\n%s",
+			out.count(), want, out.String())
+	}
+
+	// Closed only after every answer is in, so this asserts the connected case and not the
+	// documented EOF drop.
+	clientSide.Close()
+	if err := <-exited; err != nil {
+		t.Fatalf("runMCP returned after a clean close: %v", err)
+	}
+	for _, id := range []string{`"id":1`, `"id":2`, `"id":3`} {
+		if !strings.Contains(out.String(), id) {
+			t.Fatalf("no response carried %s, so the count above was made up of something else:\n%s",
+				id, out.String())
+		}
 	}
 }

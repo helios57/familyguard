@@ -5400,6 +5400,17 @@ each pair:
 | at EOF immediately (`fgctl mcp < frames.jsonl`) | **0** in 20 of 22 runs, 1–2 in the other 2, never 3 |
 | held open ~2 s after the last frame | **3 of 3, in 22 of 22 runs** |
 
+**Replicated through a second, independent harness**, which is what promoted this from a shell
+observation to something worth guarding: `TestRunMCPAnswersEveryRequestWhileTheClientStaysConnected`
+drives the same three requests over an in-process `io.Pipe` and, when calibrated by closing the pipe
+immediately after the write, reports `only 0 of 3`, `only 0 of 3`, `only 1 of 3` — the same
+distribution the command line gave. Two harnesses with nothing in common but the SDK.
+
+That test exists because nothing asserted the property real clients depend on. The two tests either
+side of it assert how `runMCP` *exits*, and both would pass against a server that answered nothing
+at all. Pinning the connected case is also what keeps a future regression distinguishable from this
+already-documented drop, since the two look identical from outside.
+
 So "hold stdin open" is the right advice, but the failure it avoids is total loss, not partial. A
 peer's Rust MCP server drains fully under a file-redirect shape (10/10 at three responses), so this
 is the Go SDK's teardown rather than redirection as such — stated as a cross-implementation
