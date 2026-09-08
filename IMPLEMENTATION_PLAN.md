@@ -5164,15 +5164,22 @@ that will actually settle it.
 
 ### 19.8 The control set, and the test — written down before the A/B is run
 
-Nine consecutive reconnect gaps with **every sample verified screen-off** (the state series ran from
-23:29:37Z with `screen_on=true` on 0 of 170 polls, and heartbeats landed within a second or two of
-several of the opens), both switches `false`:
+Twelve consecutive reconnect gaps with **every sample verified screen-off** (the state series ran
+from 23:29:37Z to 03:35:21Z with `screen_on=true` on 0 of 239 polls, and each gap window contains at
+least one poll inside it — an uncovered window is *not measured*, not *asleep*), both switches
+`false`:
 
 ```
-2.7   49.5   125.9   130.0   174.0   187.0   233.0   319.6   482.0      (seconds)
+2.7   49.5   82.0   125.9   130.0   174.0   187.0   233.0   302.3   319.6   482.0   520.9   (seconds)
 
-n=9    median 174.0    mean 189.3    over 60 s: 7 of 9    under 10 s: 1 of 9
+n=12   median 180.5   over 60 s: 10 of 12   under 10 s: 1 of 12   max 520.9
 ```
+
+> Three of these (82.0, 302.3, 520.9) were recovered after the `kubectl logs` follow dropped at
+> 03:24Z. The pod was **not** replaced — same name, `restarts=0`, same digest `dd076e5d…` — so the
+> container log still held them and a re-pull recovered the window with the row we already had as
+> the positive control. Nothing was lost. The watcher was re-armed seeded at the last known close,
+> so no gap is double-counted and none is dropped for want of a predecessor.
 
 **2.7 s, asleep and restricted.** That is inside the awake range (1.5 s, 1.7 s), so at the fast end
 the two conditions are not merely overlapping but indistinguishable. Any single fast reading after
@@ -5181,13 +5188,72 @@ the switches are flipped is therefore uninformative, and so is a small handful o
 **The test, fixed now rather than after the data arrives.** The A/B passes if, over a comparable
 idle stretch with samples confirmed screen-off:
 
-- the **median** falls from 174 s to under 10 s, **and**
-- the **fraction under 10 s** rises from 1 of 9 to substantially all of them.
+- the **median** falls from 180.5 s to under 10 s, **and**
+- the **fraction under 10 s** rises from 1 of 12 to substantially all of them.
 
 It fails if the median stays in the hundreds, whatever individual fast samples appear. It is
-**inconclusive** — not a pass — if fewer than about nine confirmed-asleep samples are collected, or
-if the state series shows the phone was handled during the window.
+**inconclusive** — not a pass — if fewer than about a dozen confirmed-asleep samples are collected,
+or if the state series shows the phone was handled during the window.
 
 Writing the criterion down first is the point. With a control containing a 2.7 s sample, a
 post-hoc reading of the after-data could support almost any conclusion, and Phase 18 already
 demonstrated what happens when a fix is believed before it is measured.
+
+
+### 19.9 The upper bound the app cannot exceed — and four samples that do
+
+Everything above argues from *co-occurrence*: two independently scheduled alarms delivered together,
+which battery-restriction predicts and a slow network does not. That argument is sound but indirect,
+and it took two replications to make.
+
+There is a direct one, and it is stronger, because it is a property of the code rather than of a
+measurement. `EventStream`'s loop is:
+
+```kotlin
+wait(backoff.nextDelayMillis())   // EventStream.kt:84, bottom of the reconnect loop
+```
+
+so a reconnect gap is exactly *the wait the app asked for* plus the time to open a socket. And
+`Backoff` (`net/Backoff.kt`) bounds what can ever be asked for:
+
+```kotlin
+class Backoff(baseMillis: Long = 1_000, maxMillis: Long = 300_000, …)
+    val ceiling = (baseMillis shl exponent).coerceAtMost(maxMillis)
+    return random.nextLong(ceiling + 1)
+```
+
+**`nextDelayMillis()` can never return more than 300 000 ms.** Not after one failure, not after
+sixty-four — the exponent is clamped at `EXPONENT_CAP` and the ceiling at `maxMillis`, and both were
+written precisely so that a long outage cannot produce an absurd delay. Four of the twelve measured
+gaps are above that ceiling:
+
+```
+302.3   319.6   482.0   520.9      seconds — against a 300.0 s hard maximum
+```
+
+The app cannot have requested those waits. The only remaining step between the request and the
+observation is the platform's delivery of the `RTC_WAKEUP` alarm that backs `wait`, so the platform
+delayed it. **This does not depend on the co-occurrence, on the `connected`-frame reset, on the
+network, or on the server** — it is arithmetic against a constant in the source.
+
+The second, tighter argument does depend on the reset, and sharpens the scale of the deferral.
+`backoff.reset()` is called from exactly one place, the `connected` frame (`EventStream.kt:103`), and
+every one of these streams received that frame — it is what the 15-minute server-side close is
+measured from. So at each close `attempt == 0`, and the requested wait was drawn uniformly from
+**[0, 1000] ms**. Against a sub-second request, a 520.9 s gap is a deferral of roughly **500×**.
+
+Two consequences worth stating plainly:
+
+- **A gap above 300 s is self-evidently a platform deferral**, and needs no control, no state
+  series, and no screen-off classification to be read that way. Of the four, 302.3 s is close enough
+  to the ceiling to be uninteresting; 482.0 s and 520.9 s are not.
+- **The A/B criterion in §19.8 stands unchanged.** This argument establishes *that* the platform is
+  deferring; it says nothing about whether flipping the two switches stops it. That is still the
+  thing to measure, and the criterion is still the one fixed before the data.
+
+One observation from the 03:24Z window that is *not* yet evidence and is recorded so it is not
+mistaken for some later: at 03:28:07–03:28:15Z the phone sent a heartbeat, an apk-info check, a
+policy fetch and a second heartbeat within eight seconds, after four minutes of complete silence and
+while the event stream stayed shut. It has the shape of a third co-occurrence, but heartbeat and
+policy are plausibly one sync path, and that rebuttal has not been checked in the source the way the
+first two were. Until it is, it counts for nothing.
