@@ -5251,9 +5251,38 @@ Two consequences worth stating plainly:
   deferring; it says nothing about whether flipping the two switches stops it. That is still the
   thing to measure, and the criterion is still the one fixed before the data.
 
-One observation from the 03:24Z window that is *not* yet evidence and is recorded so it is not
-mistaken for some later: at 03:28:07–03:28:15Z the phone sent a heartbeat, an apk-info check, a
-policy fetch and a second heartbeat within eight seconds, after four minutes of complete silence and
-while the event stream stayed shut. It has the shape of a third co-occurrence, but heartbeat and
-policy are plausibly one sync path, and that rebuttal has not been checked in the source the way the
-first two were. Until it is, it counts for nothing.
+#### A third co-occurrence, and how much of it survives the rebuttals
+
+At 03:28:07–03:28:15Z the phone sent a heartbeat, an apk-info check, a policy fetch and a second
+heartbeat within eight seconds, after four minutes of complete silence and while the event stream
+stayed shut. Three rebuttals had to be ruled out before any of it counts, and one of them lands:
+
+- **Rebuttal that lands — heartbeat and policy are one path.** `Synchronizer.sync()` is "fetches,
+  caches, computes, applies, heartbeats": `api.policy()` then `heartbeat()`. So the pair at
+  :14.93/:15.67 is a *single* call, and reading it as two coinciding events would be the poll-
+  coalescing mistake in §19.6 all over again. It is worth nothing on its own.
+- **Rebuttal ruled out — the poll loop.** `pollWhileAwake` parks on `awaitScreenOn()` and does
+  nothing at all with the screen off (NFR-10). The state series has `screen_on=false` across the
+  whole window, so the loop was not the source of any of it.
+- **Rebuttal ruled out — a service restart.** A restart would produce all four calls from one cause.
+  But startup runs `syncAndDrain(…, "start")` *first* — policy before heartbeat — and ends by
+  opening the stream. The observed order is inverted, and **no stream opened**. It was not a restart.
+
+What survives is two legs:
+
+| time | call | scheduler |
+|---|---|---|
+| 03:28:07.58Z | bare heartbeat, no policy GET | enforcement alarm → `enforceFromCache()` → `heartbeat()` |
+| 03:28:08.44Z | apk-info | update-check alarm → `check("alarm")` (`ConnectionService.kt:412`) |
+
+**0.9 s apart, after four minutes of silence**, from two alarms with distinct actions and distinct
+request codes (`REQUEST_ENFORCE`, `REQUEST_UPDATE_CHECK`) — the same signature as the first two
+co-occurrences.
+
+**It is weaker than those two, and the reason is worth keeping.** There, both legs were identified
+directly. Here only the apk-info leg is: `check("alarm")` has exactly one caller, the
+`ACTION_UPDATE_CHECK` handler. The heartbeat leg is identified **by elimination** — `sync()` always
+fetches policy first so it cannot produce a bare heartbeat, the poll loop was parked, and the one
+remaining in-code path that heartbeats without a policy GET is `enforceFromCache()`. Elimination over
+a set of paths I enumerated by reading is not the same as observing the alarm fire, and without a
+device log I cannot close that gap. Counted as supporting, not as a third independent replication.
