@@ -141,4 +141,14 @@
     <string name="filter_off_because">Ad filter off — %1$s</string>
     <string name="filter_not_permitted">this phone has not allowed the connection yet</string>
     <string name="filter_carried_nothing">it carried no traffic, so it was switched off</string>
+    <!--
+      FR-6.11, the four cases that used to report nothing at all. A tunnel that is not running and
+      has no words for it is indistinguishable from one that is about to start, which is the state
+      the family phone sat in for a day while the console said the filter was on.
+    -->
+    <string name="filter_off_not_started">the phone was asked to start the filter and it has not started</string>
+    <string name="filter_off_refused">Android refused to start the filter service (%1$s)</string>
+    <string name="filter_off_revoked">the connection was switched off on the phone</string>
+    <string name="filter_off_service_stopped">the filter stopped on the phone</string>
+    <string name="filter_off_no_forwarder">the filter could not open the socket it forwards queries through</string>
 </resources>

@@ -187,6 +187,10 @@ class AdFilterVpnService : VpnService() {
         when (intent?.action) {
             ACTION_STOP -> {
                 stopTunnel("asked to stop")
+                // Nothing to explain: a parent switched the filter off, and the console draws the
+                // switch. "" is what clears the line; leaving the previous stand-down standing
+                // would explain the absence of a tunnel nobody asked for.
+                standReason = ""
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -211,11 +215,19 @@ class AdFilterVpnService : VpnService() {
      */
     override fun onRevoke() {
         Log.i(TAG, "the tunnel was revoked")
+        // Before stopTunnel, because that clears the flag this reads. A revoke that left the reason
+        // at "" reported "not running" with nothing to explain it — the same empty answer as a
+        // service that never started, which is the ambiguity FR-6.11 exists to remove.
+        if (tunnelUp) standReason = getString(R.string.filter_off_revoked)
         stopTunnel("revoked")
         stopSelf()
     }
 
     override fun onDestroy() {
+        // Only when a tunnel was actually up: if it was already down, whatever reason is standing
+        // is the better explanation and must not be overwritten by the fact that the service is
+        // now going away too.
+        if (tunnelUp) standReason = getString(R.string.filter_off_service_stopped)
         stopTunnel("the service is going away")
         try {
             connectivity?.unregisterNetworkCallback(networkCallback)
@@ -256,14 +268,25 @@ class AdFilterVpnService : VpnService() {
         if (descriptor == null) {
             // `establish` returns null when this app is not prepared as the VPN, which for a device
             // owner means always-on has not been set yet. Nothing to do but wait for the next sync.
-            standReason = getString(R.string.filter_not_permitted)
-            note(getString(R.string.filter_off_because, standReason))
+            val why = getString(R.string.filter_not_permitted)
+            standReason = why
+            note(getString(R.string.filter_off_because, why))
             return
         }
 
         val live = Live(descriptor, run, state.engine)
         this.live = live
-        live.start()
+        if (!live.start()) {
+            // The forwarder would not bind. Everything below this point claims a tunnel is up, and
+            // it was run unconditionally: a filter that had stopped itself on the way up reported
+            // "running" to the console and drew "Ad filter on" in the shade, which is the one
+            // failure mode this whole report exists to prevent.
+            this.live = null
+            val why = getString(R.string.filter_off_no_forwarder)
+            standReason = why
+            note(getString(R.string.filter_off_because, why))
+            return
+        }
         tunnelUp = true
         // Cleared only here, where a tunnel is actually up. A reason left standing after the thing
         // it explained is over is how a console teaches a parent to ignore it (FR-6.11).
@@ -327,8 +350,9 @@ class AdFilterVpnService : VpnService() {
                 Log.w(TAG, "standing down: two windows with nothing carried")
                 stoodDown = true
                 stopTunnel("stood down by the watchdog")
-                standReason = getString(R.string.filter_carried_nothing)
-                note(getString(R.string.filter_off_because, standReason))
+                val why = getString(R.string.filter_carried_nothing)
+                standReason = why
+                note(getString(R.string.filter_off_because, why))
             }
         }
     }
@@ -372,11 +396,12 @@ class AdFilterVpnService : VpnService() {
 
         private val reader = Thread(::pump, "familyguard-tunnel")
 
-        fun start() {
+        /** True when the tunnel is carrying traffic. False means it stopped itself on the way up. */
+        fun start(): Boolean {
             if (!forwarder.start()) {
                 Log.w(TAG, "the DNS forwarder would not start; the tunnel is not safe to run")
                 stop()
-                return
+                return false
             }
             router = PacketRouter(
                 engine = engine,
@@ -388,6 +413,7 @@ class AdFilterVpnService : VpnService() {
             )
             reader.isDaemon = true
             reader.start()
+            return true
         }
 
         fun stop() {
@@ -523,27 +549,76 @@ class AdFilterVpnService : VpnService() {
         /**
          * Why no tunnel is running, in the words [TunnelPlan] chose, for the console (FR-6.11).
          *
-         * "" is nothing to explain — a tunnel that is up, or a service that has not decided yet —
-         * and is what clears the line a parent is shown. Beside [tunnelUp] rather than derived from
-         * it: *whether* a tunnel is up and *why* it is not are different questions, and only the
-         * second one has a remedy attached.
+         * Three-valued, and the third value is the one this cost a day to learn. **null is "nothing
+         * has been recorded"** — no decision has been taken since this process started — while ""
+         * is "there is nothing to explain": a tunnel that is up, or a filter a parent switched off.
+         *
+         * It was initialised to "" and the two states were one. So a phone reporting
+         * `running=false, reason=""` could mean the tunnel had stood down, or that the service had
+         * never run at all, and those have opposite remedies. The family phone sat in exactly that
+         * state on 0.6.11 — filter on, 180423 rules compiled, tunnel down, nothing said — and the
+         * console had nothing to show but a guess.
+         *
+         * Beside [tunnelUp] rather than derived from it: *whether* a tunnel is up and *why* it is
+         * not are different questions, and only the second one has a remedy attached.
          */
         @Volatile
-        private var standReason: String = ""
+        private var standReason: String? = null
 
         /** Null on a build where the filter cannot run at all — "not reported", not "off". */
         fun running(): Boolean? = if (BuildConfig.AD_FILTER_AVAILABLE) tunnelUp else null
 
-        /** Null on a build with no filter, for the same reason as [running]. */
+        /**
+         * Null on a build with no filter, and null on a build that has one and has recorded
+         * nothing. [FilterReport] turns the second null into words — it is the one that knows
+         * whether the filter is available at all.
+         */
         fun reason(): String? = if (BuildConfig.AD_FILTER_AVAILABLE) standReason else null
 
-        /** Bring the tunnel up, or re-decide whether it should be up. Safe to call repeatedly. */
+        /**
+         * Record a reason discovered OUTSIDE this service, for the console (FR-6.11).
+         *
+         * Only while no tunnel is up: a running tunnel is the answer to the question this text
+         * exists to answer, and a stand-down written over it would tell a parent their working
+         * filter is broken.
+         */
+        fun explain(reason: String) {
+            if (!BuildConfig.AD_FILTER_AVAILABLE) return
+            if (!tunnelUp) standReason = reason
+        }
+
+        /**
+         * Bring the tunnel up, or re-decide whether it should be up. Safe to call repeatedly.
+         *
+         * The ask is RECORDED, and that is not bookkeeping: starting a service is asynchronous and
+         * can fail in ways that never reach this process — a foreground start Android refuses, a
+         * service the platform declines to bring up — and every one of those ends with a phone
+         * whose filter is off and whose console has nothing to say. The sync path is the only place
+         * that knows the filter was asked for at all, so it writes that down here, and whatever the
+         * service decides milliseconds later overwrites it.
+         */
         fun apply(context: Context) {
             if (!BuildConfig.AD_FILTER_AVAILABLE) return
-            ContextCompat.startForegroundService(
-                context,
-                Intent(context, AdFilterVpnService::class.java).setAction(ACTION_POLICY_CHANGED),
-            )
+            try {
+                ContextCompat.startForegroundService(
+                    context,
+                    Intent(context, AdFilterVpnService::class.java).setAction(ACTION_POLICY_CHANGED),
+                )
+                // Only while nothing else explains the absence. What is left standing after the
+                // service has had its chance is the case that had no words at all: asked, and never
+                // heard from. Harmless if the service wins the race — a heartbeat with the tunnel
+                // up reports no reason whatever this says.
+                if (!tunnelUp && standReason.isNullOrEmpty()) {
+                    standReason = context.getString(R.string.filter_off_not_started)
+                }
+            } catch (e: Exception) {
+                // Android 12 and later refuse some background foreground-service starts outright,
+                // and the throw is the only notice. Caught rather than propagated because the sync
+                // that called this has a phone to finish configuring, and named rather than
+                // swallowed because it is the answer to "why is the filter off".
+                Log.w(TAG, "could not start the filter service: ${e.javaClass.simpleName}: ${e.message}")
+                standReason = context.getString(R.string.filter_off_refused, e.javaClass.simpleName)
+            }
         }
 
         fun stop(context: Context) {

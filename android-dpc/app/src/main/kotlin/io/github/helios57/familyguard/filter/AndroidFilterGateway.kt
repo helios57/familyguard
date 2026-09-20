@@ -33,6 +33,8 @@ class AndroidFilterGateway(
     override fun setRunning(running: Boolean) {
         if (running) AdFilterVpnService.apply(context) else AdFilterVpnService.stop(context)
     }
+
+    override fun explain(reason: String) = AdFilterVpnService.explain(reason)
 }
 
 /**

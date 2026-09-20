@@ -239,6 +239,16 @@ interface FilterGateway {
 
     /** Start the tunnel, or stop it. Both are idempotent. */
     fun setRunning(running: Boolean)
+
+    /**
+     * Record why the filter is not running, in words the console shows a parent (FR-6.11).
+     *
+     * The applier learns things the tunnel never can. The platform refusing this app as the
+     * always-on VPN happens here, in the sync path, and the service is not started to find out —
+     * so without this the phone reports a filter that is off with nothing to say about it, and the
+     * console falls back to guessing. A failure nobody can name is one nobody fixes.
+     */
+    fun explain(reason: String)
 }
 
 /**
@@ -293,7 +303,15 @@ class FilterApplier(
         }
 
         val alwaysOn = gateway.setAlwaysOn(true)
-        alwaysOn.failure?.let { problems["always_on"] = it }
+        alwaysOn.failure?.let {
+            problems["always_on"] = it
+            // Said out loud on the phone's own report, not just in this outcome. Always-on is what
+            // grants the tunnel its consent, so this failing means the tunnel will not come up —
+            // and it fails here, where the service is never started and therefore has nothing to
+            // record. Before the tunnel is asked to start, so that a service that does start and
+            // decides something replaces this with its own words.
+            gateway.explain("this phone would not accept the filter as its always-on connection: $it")
+        }
         gateway.setRunning(true)
 
         return ApplyOutcome("on rules=${listState.rules} (${alwaysOn.summary})", problems)

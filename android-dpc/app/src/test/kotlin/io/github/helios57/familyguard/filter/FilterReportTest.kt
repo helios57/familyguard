@@ -94,10 +94,32 @@ class FilterReportTest {
     }
 
     @Test
-    fun `a phone with nothing to explain reports an empty reason, never a null one`() {
-        // "" clears the line the server is holding; null means "this build does not report it" and
-        // leaves it standing. A tunnel that is simply waiting must clear it.
-        assertEquals("", FilterReport.of(true, list(), running = false, reason = null).reason)
+    fun `a tunnel that is off and has recorded nothing says so, rather than saying nothing`() {
+        // This is the defect FR-6.11 was extended for, and it was measured on the family phone.
+        //
+        // The service initialised its reason to "" — the value that means "there is nothing to
+        // explain" — so a tunnel that had never run and a tunnel that was up reported the same
+        // empty string. The phone reported `running=false, reason=""` for a day with the filter
+        // switched on, 180423 rules compiled and a resolver on the network, and the console had
+        // nothing to show but a guess, which was wrong.
+        //
+        // Both spellings of silence are covered: no record at all, and a record that is blank.
+        assertEquals(FilterReport.NOTHING_RECORDED,
+            FilterReport.of(true, list(), running = false, reason = null).reason)
+        assertEquals(FilterReport.NOTHING_RECORDED,
+            FilterReport.of(true, list(), running = false, reason = "").reason)
+    }
+
+    @Test
+    fun `a reason is never blank while the tunnel is not running`() {
+        // The general form of the assertion above, stated as the invariant the console depends on:
+        // it draws the phone's own words when there are any and guesses when there are not, so a
+        // blank is what sends a parent to fix something that is not broken.
+        for (reason in listOf(null, "", "   ")) {
+            val report = FilterReport.of(true, list(), running = false, reason = reason)
+            assertEquals("a filter that is off must always say why (reason=${reason.orEmpty()})",
+                false, report.reason.isNullOrBlank())
+        }
     }
 
     @Test

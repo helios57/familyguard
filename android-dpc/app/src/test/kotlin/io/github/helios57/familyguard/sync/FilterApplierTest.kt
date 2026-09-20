@@ -160,6 +160,40 @@ class FilterApplierTest {
     }
 
     @Test
+    fun `a platform that refuses always-on says so on the phone's own report`() {
+        val gateway = object : FakeGateway() {
+            override fun setAlwaysOn(enabled: Boolean): AlwaysOnVpnOutcome {
+                transcript += "alwaysOn($enabled)"
+                return AlwaysOnVpnOutcome("always-on", failure = "always-on is not supported")
+            }
+        }
+
+        applier(gateway).apply(on())
+
+        // The outcome above is read by the sync log and by nobody else. FR-6.11 is what a parent
+        // sees, and it is fed by the service — which is never started here, so it has nothing to
+        // say and the console shows a filter that is off for no stated reason. This is the one
+        // place that knows.
+        val explained = gateway.transcript.single { it.startsWith("explain(") }
+        assertTrue(explained, explained.contains("always-on is not supported"))
+        assertTrue(
+            gateway.transcript.toString(),
+            gateway.transcript.indexOf(explained) < gateway.transcript.indexOf("start"),
+        )
+    }
+
+    @Test
+    fun `a filter that comes up cleanly explains nothing`() {
+        val gateway = FakeGateway()
+
+        applier(gateway).apply(on())
+
+        // A reason written where there is no failure is worse than none: the service would find it
+        // waiting and a parent would read a working filter as broken.
+        assertTrue(gateway.transcript.toString(), gateway.transcript.none { it.startsWith("explain(") })
+    }
+
+    @Test
     fun `failing to clear always-on when switching off is reported too`() {
         val gateway = object : FakeGateway() {
             override fun setAlwaysOn(enabled: Boolean): AlwaysOnVpnOutcome {
@@ -223,6 +257,10 @@ class FilterApplierTest {
 
         override fun setRunning(running: Boolean) {
             transcript += if (running) "start" else "stop"
+        }
+
+        override fun explain(reason: String) {
+            transcript += "explain($reason)"
         }
     }
 }

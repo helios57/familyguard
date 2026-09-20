@@ -245,6 +245,14 @@ Applied at provisioning and re-applied on every boot:
   shade — the console showed a switch that was on and a tunnel that was not, with no way to learn
   which of three unrelated faults it was.
 
+  **And never blank while no tunnel is running**, which is the half the first attempt missed. The
+  phone that was measured had recorded nothing at all: its service had never run, so there were no
+  words to send, and "nothing recorded" and "nothing to explain" were the same empty string on the
+  wire. They have opposite remedies. A filter that was asked for and never started now says so, as
+  do the four cases that reach no running service — the platform refusing the foreground start, the
+  platform refusing this app as the always-on connection, a revoked connection, and a forwarder that
+  would not bind.
+
 ### FR-7 YouTube killswitch
 One toggle per child that blocks YouTube across every layer available to us:
 - FR-7.1 Suspend and hide the YouTube app family (YouTube, YouTube Kids, YouTube Music, and known
