@@ -6685,3 +6685,128 @@ Cumulative: **60 probes, 59 red and one deliberate green.**
   the control plane is deployed; the device half ships in the APK.
 - **A network whose only resolvers are IPv6 still stands the tunnel down**, deliberately, and that
   is asserted rather than left to be discovered.
+
+## Phase 29 — a budget written for strangers, spent by the parent (FR-5.4, FR-6.11)
+
+> `i just got an error on the website "too many requests on your family" as i was approving the
+> apps. thats SHIT, i want to be able to approve 100 apps within one minute`
+
+Phase 27 gave a parent a queue of waiting apps and four answers for each. The first time anyone used
+it on a real family's backlog, the page stopped part way through — and it was the server refusing,
+not the phone.
+
+### 29.1 — one limiter, in front of everything, keyed by the wrong thing
+
+`Router()` installed a single `RateLimit` in `r.Use(...)`, keyed by client address, budget
+`RATE_LIMIT_PER_MINUTE` = 120. Gin runs root middleware before group middleware, so no per-group
+budget could ever have relaxed it: a limiter installed at the root is a ceiling on everything
+underneath, and a second one further down can only tighten it. The value was written for
+unauthenticated callers — sign-in attempts, enrollment, the download endpoints — and a signed-in
+parent spent that same budget.
+
+The other half was the console, and it is the half that set the number:
+
+| what one tap did | requests |
+|---|---|
+| `PUT /children/{id}/app-rules` | 1 |
+| `refresh()` → `loadApps()` — rules, devices, catalog, managed apps, the family blocklist, each device's inventory, each device's desired state | 7 |
+
+**8 per answer, measured in a real browser** rather than counted from the source, by wrapping
+`window.fetch` before the first click. 120 ÷ 8 = 15 apps. The owner has more than fifteen.
+
+### 29.2 — four limiters, keyed by who is asking
+
+| limiter | env | default | key | where |
+|---|---|---|---|---|
+| flood | `RATE_LIMIT_FLOOD_PER_MINUTE` | 1200 | address | every route, before authentication |
+| public | `RATE_LIMIT_PER_MINUTE` | 120 | address | the unauthenticated surface only, `NoRoute` included |
+| parent | `RATE_LIMIT_PARENT_PER_MINUTE` | 600 | parent id | `requireParent()` group |
+| device | `RATE_LIMIT_DEVICE_PER_MINUTE` | 240 | device id | `requireDevice()` group |
+
+The flood limiter stays at the root because *something* has to bound what one address can cost
+before it is known who it is — every authenticated request makes a credential lookup, and a limiter
+that runs after authentication cannot bound that.
+
+`RateLimitBy` **refuses an empty key** rather than sharing a bucket named `""`. A per-principal
+limiter can only see a nil principal if it was wired ahead of the authentication that sets one, and
+a shared bucket would hide that behind a limit that still looks like it is working.
+
+Keying the authenticated surfaces by principal also closed two defects nobody had reported, because
+a household leaves through one address: **every phone in a family shared one bucket with the
+console**, so the more phones a family enrolled the closer all of them came to being refused; and
+**two parents on one network shared a bucket** with each other.
+
+### 29.3 — the console now spends one request per answer
+
+`setRule` ended in `refresh()`. It now updates `state.data` in place, redraws from it, and schedules
+**one** authoritative re-read on the same coalescing timer the SSE nudge uses — so a burst of
+answers plus the events they cause costs one refresh, not one per answer. `api()` returns null on a
+204, so the write's return value cannot distinguish success from failure; `tried()` reports what
+actually landed, and a write that did not land still falls back to a full refresh rather than
+leaving the optimistic row on screen.
+
+**8 requests per tap → 1.**
+
+### 29.4 — the phone that had nothing to say, and said it as "" (FR-6.11)
+
+Phase 28 put the phone's own reason on the heartbeat. The family phone then reported
+`ad_filter_running=false`, `ad_filter_rules=180423`, and `ad_filter_reason` **empty** — so the
+console fell straight back to the guess Phase 28 had written that field to replace.
+
+`standReason` was initialised to `""`, and FR-6.11 defines `""` as *nothing to explain*. A service
+that had never run reported the same empty string as a tunnel that is up. Three values were needed:
+
+| value | means |
+|---|---|
+| `null` | nothing has been recorded — no decision since this process started |
+| `""` | nothing to explain — a tunnel is up, or a parent switched the filter off |
+| text | the reason |
+
+`FilterReport.of` turns the first into words, because it is the only place that knows whether this
+build has a filter at all — a Play build must keep reporting nulls, not "off".
+
+Four failures that never reach a running service now name themselves, and none of them could
+before: the platform refusing `startForegroundService` outright (Android 12+ throws, and
+`ChainApplier` swallowed the throw into an `ApplyOutcome` nobody reads); the platform refusing this
+app as the always-on VPN, which is learned in the **sync** path where the service is never started
+to find out, so `FilterGateway` gained `explain(reason)` to carry it across; a revoked connection;
+and a service being destroyed.
+
+**`Live.start()` returned `Unit`, and that was a live defect rather than a missing message.**
+`startTunnel` set `tunnelUp = true` after a start that had already stopped itself, so a phone whose
+forwarder would not bind reported a *running* filter and drew "Ad filter on" in its shade with no
+tunnel behind it — the one failure this entire report exists to prevent. It returns `Boolean` now.
+
+### 29.5 — calibration: 6 probes, 6 red, and one test that passed against its own defect
+
+| # | file | the one value | measured |
+|---|---|---|---|
+| 1 | `server.go` | the parent group keeps no limiter of its own — the old wiring | **RED** — *a signed-in parent was refused 90 of 200 requests while answering 100 apps, first at app 55 (0.7s in)* |
+| 2 | `middleware.go` | `RateLimitBy` keys every request to one constant | **RED** on the second caller — one caller's budget must not be another's |
+| 3 | `app.js` | `setRule` ends in `refresh()`, the old shape | **RED** in a real browser — *one answer cost 8 requests before the page even redrew* |
+| 4 | `StateApplier.kt` | `explain()` is told the filter is off, without the failure | **RED** — `explain(the filter is off)` |
+| 5 | `StateApplier.kt` | `explain()` runs whether or not always-on failed | **RED** — the happy path's transcript carries a reason nobody needed |
+| 6 | `FilterReport.kt` | a tunnel that is off with `"   "` recorded reports the whitespace | **RED** — found, not planted: the first version used `isNullOrEmpty` and the new blank test caught it |
+
+**The first version of probe 1's test passed against the defect it was written for.** It spent 118
+requests against an anonymous budget of 120 — 100 answers, a `/family` every tenth, and setup — so
+it measured nothing. It now reads `/family` after **every** answer (200 requests) and carries a
+self-guard: a run that does not cross the anonymous budget fails outright, naming both numbers,
+because a test that sits just under the threshold cannot tell a fixed server from a broken one.
+
+Probe 1's negative control is in the same test: after the hundred answers, an anonymous caller from
+the same address on the same server must still be refused. Without it, a limiter that had simply
+been switched off would pass everything.
+
+Cumulative: **66 probes, 65 red and one deliberate green.**
+
+### 29.6 — what is NOT proven
+
+- **Which of the four the family phone hit is not determined**, and cannot be from here: there is no
+  device or emulator attached and no logcat access to that phone. The heartbeat is the only channel,
+  which is what 29.4 writes to. The next report after 0.6.12 names it.
+- **`RATE_LIMIT_PER_MINUTE=1200` was deployed as a stopgap** before this phase existed and is
+  reverted with the same argocd commit that pins 0.6.12. Until that lands, the cluster is running
+  the wide anonymous budget and not the four limiters.
+- **The other tabs still refresh everything on a write.** Only the path a parent uses a hundred
+  times in a row was changed.
