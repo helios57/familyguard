@@ -60,6 +60,18 @@ func TestLoadAcceptsAValidEnvironment(t *testing.T) {
 	if c.RateLimitPerMinute != 120 || c.MaxBodyBytes != 1<<20 {
 		t.Fatalf("numeric defaults not applied: %d %d", c.RateLimitPerMinute, c.MaxBodyBytes)
 	}
+	// Asserted as an ordering, not just as three numbers: a deployment whose parent budget is not
+	// well above the anonymous one is back to the shape that made the console refuse a parent
+	// working through a queue of waiting apps, and a flood ceiling below the budgets it is supposed
+	// to sit above would refuse them first and make the other two unreachable.
+	if !(c.RateLimitFloodPerMinute > c.RateLimitParentPerMinute &&
+		c.RateLimitParentPerMinute > c.RateLimitPerMinute &&
+		c.RateLimitDevicePerMinute > c.RateLimitPerMinute) {
+		t.Fatalf("the default rate limits are not ordered flood > parent > anonymous and device > anonymous: "+
+			"flood=%d parent=%d device=%d anonymous=%d",
+			c.RateLimitFloodPerMinute, c.RateLimitParentPerMinute,
+			c.RateLimitDevicePerMinute, c.RateLimitPerMinute)
+	}
 	if c.SessionTTL <= 0 || c.CommandTTL <= 0 || c.DeviceOfflineAfter <= 0 {
 		t.Fatal("a duration defaulted to zero, which would make the corresponding check vacuous")
 	}
@@ -215,6 +227,10 @@ func TestLoadAcceptsOptionalSettings(t *testing.T) {
 		"AUDIT_RETENTION_DAYS":    "90",
 		"LOCATION_RETENTION_DAYS": "7",
 		"TRUSTED_PROXIES":         "10.1.0.0/16, 192.168.1.1",
+
+		"RATE_LIMIT_FLOOD_PER_MINUTE":  "5000",
+		"RATE_LIMIT_PARENT_PER_MINUTE": "900",
+		"RATE_LIMIT_DEVICE_PER_MINUTE": "300",
 	})
 	c, err := Load()
 	if err != nil {
@@ -228,6 +244,10 @@ func TestLoadAcceptsOptionalSettings(t *testing.T) {
 	}
 	if c.RateLimitPerMinute != 600 || c.MaxBodyBytes != 2097152 {
 		t.Fatalf("numeric overrides not applied: %d %d", c.RateLimitPerMinute, c.MaxBodyBytes)
+	}
+	if c.RateLimitFloodPerMinute != 5000 || c.RateLimitParentPerMinute != 900 || c.RateLimitDevicePerMinute != 300 {
+		t.Fatalf("the per-principal rate limits ignored their environment: flood=%d parent=%d device=%d",
+			c.RateLimitFloodPerMinute, c.RateLimitParentPerMinute, c.RateLimitDevicePerMinute)
 	}
 	if c.APKURL == nil || c.APKURL.Scheme != "https" {
 		t.Fatalf("apk url not parsed: %+v", c.APKURL)

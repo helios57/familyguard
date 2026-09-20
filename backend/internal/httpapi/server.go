@@ -145,45 +145,73 @@ func (s *Server) Router() (*gin.Engine, error) {
 		return nil, err
 	}
 
-	limiter := NewRateLimiter(s.cfg.RateLimitPerMinute, DefaultRateLimitKeys)
+	// Four limiters, and which one a request meets is decided by WHO IS ASKING rather than by
+	// where the middleware happens to sit.
+	//
+	// Until 2026-09-20 there was one, keyed by client address, in front of everything. That made
+	// the budget for an anonymous caller the same budget a signed-in parent spent — and the console
+	// spends several requests per tap — so approving a queue of waiting apps started answering
+	// "too many requests" at around the fifteenth one. Raising the single number would have been
+	// the wrong fix twice over: it loosens the anonymous surface, which is the one place a strict
+	// address-keyed bucket belongs, and it still counts a family's phones and both parents against
+	// one bucket because a household leaves through one address.
+	//
+	// flood    every route, by address, before authentication. The bound on what one address can
+	//          make this server do at all — including the credential lookup each authenticated
+	//          request costs before any per-principal budget can be consulted.
+	// public   the unauthenticated surface, by address. Strict, because nothing behind it knows
+	//          who is calling.
+	// parent   the parent surface, by parent id. Generous: this is a person working.
+	// device   the device surface, by device id. One bucket per phone, not per household.
+	flood := NewRateLimiter(s.cfg.RateLimitFloodPerMinute, DefaultRateLimitKeys)
+	public := NewRateLimiter(s.cfg.RateLimitPerMinute, DefaultRateLimitKeys)
+	parents := NewRateLimiter(s.cfg.RateLimitParentPerMinute, DefaultRateLimitKeys)
+	devices := NewRateLimiter(s.cfg.RateLimitDevicePerMinute, DefaultRateLimitKeys)
 	r.Use(
 		gin.Recovery(),
 		RequestID(),
 		SecurityHeaders(),
 		BodyLimit(s.cfg.MaxBodyBytes, map[string]int64{uploadAppRoute: s.cfg.MaxUploadBytes}),
 		CORS(s.cfg.AllowedOrigins),
-		RateLimit(limiter),
+		RateLimit(flood),
 		s.accessLog(),
 	)
 
-	r.NoRoute(func(c *gin.Context) {
+	// A request that matched no route is an anonymous request whatever it carried, and most of them
+	// are scanners: it gets the strict bucket rather than the flood ceiling.
+	r.NoRoute(RateLimit(public), func(c *gin.Context) {
 		failWith(c, http.StatusNotFound, "not_found", "no such endpoint")
 	})
 
-	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
-	r.GET("/readyz", s.ready)
+	r.GET("/healthz", RateLimit(public), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
+	r.GET("/readyz", RateLimit(public), s.ready)
 
 	// The DPC download, outside /api/v1 and outside every auth group — see serveAPK for why it
 	// cannot have a credential, and why that is safe.
-	r.GET(APKDownloadPath, s.serveAPK)
+	r.GET(APKDownloadPath, RateLimit(public), s.serveAPK)
 
 	// The CLI: its manifest and its binaries, both unauthenticated for the reasons on
 	// FgctlManifestPath. Outside /api/v1 because they are deployment artefacts rather than family
 	// data, which is the same line /dpc.apk sits on.
-	r.GET(FgctlManifestPath, s.fgctlManifest)
-	r.GET(FgctlDownloadPath, s.serveFgctl)
+	r.GET(FgctlManifestPath, RateLimit(public), s.fgctlManifest)
+	r.GET(FgctlDownloadPath, RateLimit(public), s.serveFgctl)
 
 	v1 := r.Group("/api/v1")
 	// Two ways to a session, one decision. POST /auth/google takes an ID token from a client that
 	// already has one; the redirect pair below is how a browser gets one without this origin ever
 	// loading the provider's script. Both end in issueSession.
-	v1.POST("/auth/google", s.googleLogin)
-	v1.GET("/auth/google/start", s.oauthStart)
-	v1.GET("/auth/google/callback", s.oauthCallback)
-	v1.POST("/enroll", s.enroll)
+	// The strict bucket, and this is the surface it was written for: these four are how an
+	// unauthenticated caller reaches this deployment at all. A wrong ID token and a guessed
+	// enrollment token both arrive here.
+	v1.POST("/auth/google", RateLimit(public), s.googleLogin)
+	v1.GET("/auth/google/start", RateLimit(public), s.oauthStart)
+	v1.GET("/auth/google/callback", RateLimit(public), s.oauthCallback)
+	v1.POST("/enroll", RateLimit(public), s.enroll)
 
-	// Parent surface.
-	p := v1.Group("", s.requireParent())
+	// Parent surface. The per-parent budget is installed AFTER requireParent, because the key it
+	// buckets by is the identity that middleware resolves — and RateLimitBy refuses outright rather
+	// than falling back to a shared bucket if the two are ever wired the other way round.
+	p := v1.Group("", s.requireParent(), RateLimitBy(parents, parentKey))
 	p.GET("/me", s.me)
 	p.GET("/family", s.getFamily)
 	// Which DPC this deployment hosts (FR-15.6). Deployment state, not family state, which is why
@@ -261,7 +289,7 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.GET("/events", s.parentEvents)
 
 	// Device surface. Every route here authenticates with the device token issued at enrollment.
-	d := v1.Group("/device", s.requireDevice())
+	d := v1.Group("/device", s.requireDevice(), RateLimitBy(devices, deviceKey))
 	d.POST("/heartbeat", s.heartbeat)
 	d.GET("/policy", s.devicePolicy)
 	// Fetching commands is what records their delivery. The stream only says "there is something to

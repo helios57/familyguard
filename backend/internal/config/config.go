@@ -94,8 +94,33 @@ type Config struct {
 
 	DPCComponent string
 
+	// RateLimitPerMinute bounds ONE CLIENT ADDRESS on the UNAUTHENTICATED surface: sign-in,
+	// enrollment, the APK and CLI downloads, the health probes and every request that matched no
+	// route. It is the strict one, and it is strict because nothing behind it knows who is calling.
+	//
+	// It used to be the only limiter and it sat in front of everything, which made it the budget a
+	// signed-in parent spent too. A parent answering a queue of pending apps spends several
+	// requests per tap, so the console started refusing at roughly the fifteenth app with "too many
+	// requests" — the owner hit exactly that on 2026-09-20. A limit whose reason is "we cannot tell
+	// who you are" has no business being applied to a request that arrived with a credential.
 	RateLimitPerMinute int
-	MaxBodyBytes       int64
+	// RateLimitFloodPerMinute bounds one client address across EVERY route, including the
+	// authenticated ones, and is the only limiter a request meets before authentication. It exists
+	// so that one address cannot make this server do unbounded work — each authenticated request
+	// costs a credential lookup in the database before any per-principal budget can be consulted —
+	// and it is deliberately far above anything a console or a phone produces.
+	RateLimitFloodPerMinute int
+	// RateLimitParentPerMinute bounds one SIGNED-IN PARENT, keyed by their id rather than by their
+	// address. Two parents on the same home network no longer share a bucket, and a parent working
+	// through a hundred waiting apps is measured against their own budget instead of against a
+	// number chosen for anonymous callers.
+	RateLimitParentPerMinute int
+	// RateLimitDevicePerMinute bounds one ENROLLED PHONE, keyed by its device id. Every phone in a
+	// household leaves through one address, so an address-keyed budget made the family's phones
+	// compete with each other and with the console — the more phones a family enrolled, the closer
+	// they all got to being refused.
+	RateLimitDevicePerMinute int
+	MaxBodyBytes             int64
 	// MaxUploadBytes applies to the one endpoint that receives a file (FR-16.2). It is separate
 	// from MaxBodyBytes rather than a raise of it: the general cap exists so an unauthenticated
 	// request is cheap to refuse, and an APK is three orders of magnitude larger than any JSON this
@@ -308,6 +333,25 @@ func Load() (*Config, error) {
 		fail("RATE_LIMIT_PER_MINUTE: %v", err)
 	} else if c.RateLimitPerMinute < 1 {
 		fail("RATE_LIMIT_PER_MINUTE must be positive, got %d", c.RateLimitPerMinute)
+	}
+
+	// The three below are separate variables rather than multiples of the one above, because they
+	// answer different questions and a deployment that tightens the anonymous budget must not
+	// silently tighten what a parent may do at the same time.
+	if c.RateLimitFloodPerMinute, err = envInt("RATE_LIMIT_FLOOD_PER_MINUTE", 1200); err != nil {
+		fail("RATE_LIMIT_FLOOD_PER_MINUTE: %v", err)
+	} else if c.RateLimitFloodPerMinute < 1 {
+		fail("RATE_LIMIT_FLOOD_PER_MINUTE must be positive, got %d", c.RateLimitFloodPerMinute)
+	}
+	if c.RateLimitParentPerMinute, err = envInt("RATE_LIMIT_PARENT_PER_MINUTE", 600); err != nil {
+		fail("RATE_LIMIT_PARENT_PER_MINUTE: %v", err)
+	} else if c.RateLimitParentPerMinute < 1 {
+		fail("RATE_LIMIT_PARENT_PER_MINUTE must be positive, got %d", c.RateLimitParentPerMinute)
+	}
+	if c.RateLimitDevicePerMinute, err = envInt("RATE_LIMIT_DEVICE_PER_MINUTE", 240); err != nil {
+		fail("RATE_LIMIT_DEVICE_PER_MINUTE: %v", err)
+	} else if c.RateLimitDevicePerMinute < 1 {
+		fail("RATE_LIMIT_DEVICE_PER_MINUTE must be positive, got %d", c.RateLimitDevicePerMinute)
 	}
 
 	maxBody, err := envInt("MAX_BODY_BYTES", 1<<20)

@@ -157,18 +157,61 @@ func CORS(allowed []string) gin.HandlerFunc {
 // X-Forwarded-For only for proxies the router trusts, which is configured explicitly at startup —
 // otherwise any client could pick its own bucket by setting a header.
 func RateLimit(limiter *RateLimiter) gin.HandlerFunc {
+	return RateLimitBy(limiter, clientAddressKey)
+}
+
+// RateLimitBy applies a limiter keyed by whatever key says.
+//
+// The key is the whole design. An address is the only thing available before authentication, and
+// for anonymous callers it is the right bucket — but it is the WRONG bucket for anyone who arrived
+// with a credential: a household leaves through one address, so keying an authenticated request by
+// address makes a family's phones compete with each other and with the console, and makes one
+// parent's work count against the other's. Once a request is authenticated there is a better key,
+// and it is the identity the server just resolved.
+//
+// A key function that cannot answer returns "", and this refuses the request rather than letting
+// every unidentifiable caller share one bucket named "". That is the fail-closed direction: a
+// per-principal limiter installed behind an authentication middleware can only see a nil principal
+// if the two were wired in the wrong order, and a shared bucket would hide that wiring bug behind
+// a limit that still looks like it is working.
+func RateLimitBy(limiter *RateLimiter, key func(*gin.Context) string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		key := c.ClientIP()
-		if key == "" {
-			key = "unknown"
-		}
-		if !limiter.Allow(key) {
+		k := key(c)
+		if k == "" || !limiter.Allow(k) {
 			c.Header("Retry-After", strconv.Itoa(1))
 			abortWith(c, http.StatusTooManyRequests, "rate_limited", "too many requests")
 			return
 		}
 		c.Next()
 	}
+}
+
+// clientAddressKey buckets by the socket peer, or by a forwarding header from a trusted proxy.
+func clientAddressKey(c *gin.Context) string {
+	if ip := c.ClientIP(); ip != "" {
+		return "ip:" + ip
+	}
+	// Not "": an address gin could not parse is still one client, and the fail-closed contract of
+	// RateLimitBy would otherwise turn an unparseable peer into a 429 for every request.
+	return "ip:unknown"
+}
+
+// parentKey buckets by the signed-in parent, whether they arrived with a session or an API key.
+func parentKey(c *gin.Context) string {
+	p := parentOf(c)
+	if p == nil {
+		return ""
+	}
+	return "parent:" + p.ID.String()
+}
+
+// deviceKey buckets by the enrolled phone.
+func deviceKey(c *gin.Context) string {
+	d := deviceOf(c)
+	if d == nil {
+		return ""
+	}
+	return "device:" + d.ID.String()
 }
 
 // errorBody is the single error shape the API returns. Messages are deliberately generic on the

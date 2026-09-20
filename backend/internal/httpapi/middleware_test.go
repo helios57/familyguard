@@ -278,3 +278,65 @@ func TestRateLimitCannotBeEscapedByAForgedHeader(t *testing.T) {
 		t.Fatal("a forged X-Forwarded-For gave the caller unlimited buckets")
 	}
 }
+
+// TestRateLimitByKeepsOneCallerOutOfAnothersBucket is the whole point of the per-principal
+// limiters: two parents on the same home network, or two phones behind one NAT, must not spend
+// each other's budget.
+//
+// Both halves are asserted. Without the second one this test would also pass against a limiter
+// keyed by nothing at all, which is the shape that made the single address-keyed limiter look fine
+// for months.
+func TestRateLimitByKeepsOneCallerOutOfAnothersBucket(t *testing.T) {
+	limiter := NewRateLimiter(2, 100)
+	r := gin.New()
+	_ = r.SetTrustedProxies(nil)
+	// The key comes from a header here only so the test can drive it; in the router it comes from
+	// the parent or device the authentication middleware just resolved.
+	r.Use(RateLimitBy(limiter, func(c *gin.Context) string { return c.GetHeader("X-Who") }))
+	r.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "pong") })
+
+	ask := func(who string) int {
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		req.Header.Set("X-Who", who)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	// One caller spends its whole budget.
+	if ask("a") != http.StatusOK || ask("a") != http.StatusOK {
+		t.Fatal("requests inside the budget were rejected")
+	}
+	if got := ask("a"); got != http.StatusTooManyRequests {
+		t.Fatalf("the third request from one caller was %d; the budget is two", got)
+	}
+	// The other one still has its own.
+	if got := ask("b"); got != http.StatusOK {
+		t.Fatalf("a second caller was refused with %d because the first had spent its budget", got)
+	}
+}
+
+// TestRateLimitByRefusesACallerItCannotIdentify: a per-principal limiter behind an authentication
+// middleware can only see an empty key if the two were wired in the wrong order. Falling back to a
+// shared bucket would hide that wiring bug behind a limit that still looks like it works, so the
+// empty key is refused.
+func TestRateLimitByRefusesACallerItCannotIdentify(t *testing.T) {
+	r := newTestRouter(RateLimitBy(NewRateLimiter(1000, 100), func(*gin.Context) string { return "" }))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ping", nil))
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("an unidentifiable caller got %d with a budget of 1000; it must be refused", w.Code)
+	}
+}
+
+// TestClientAddressKeyNeverAnswersEmpty guards the one interaction between the two paragraphs
+// above: RateLimitBy fails closed on an empty key, so the address key function must always produce
+// one or a peer gin cannot parse would be a 429 for every request rather than a shared bucket.
+func TestClientAddressKeyNeverAnswersEmpty(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/ping", nil)
+	c.Request.RemoteAddr = "not-an-address"
+	if got := clientAddressKey(c); got == "" {
+		t.Fatal("an unparseable peer address produced an empty key, which RateLimitBy refuses")
+	}
+}

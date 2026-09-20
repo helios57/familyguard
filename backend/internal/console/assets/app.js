@@ -188,6 +188,21 @@ async function act(label, fn) {
   }
 }
 
+/* Did the write land? `act` answers with the response body, and an endpoint that answers 204
+ * returns null through it — which is the same value it returns when the request FAILED. A caller
+ * that is about to redraw the page from what it just wrote has to know the difference, so it asks
+ * this instead. */
+async function tried(label, fn) {
+  try {
+    await fn();
+    toast(label);
+    return true;
+  } catch (err) {
+    if (!(err instanceof ApiError && err.status === 401)) toast(label + ' failed: ' + err.message, true);
+    return false;
+  }
+}
+
 const fmtTime = (iso) => {
   if (!iso) return 'never';
   const d = new Date(iso);
@@ -431,6 +446,22 @@ async function refresh() {
   }
 }
 
+/* redraw re-renders the current view from the data already in hand, with no network at all.
+ *
+ * The companion to `refresh`, and the difference is the whole reason a parent can answer a hundred
+ * waiting apps: `refresh` re-reads everything the tab is built from — for the Apps tab that is
+ * seven or eight requests — and the console called it after EVERY tap. Answering an app then cost
+ * nine requests instead of one, and the owner met a "too many requests" page around the fifteenth
+ * app. The answer a parent just gave is already known here: it is what was sent. So the page is
+ * drawn from it at once, and the authoritative re-read is left to `nudgeRefresh`, which coalesces.
+ */
+function redraw() {
+  if (!state.data) { refresh(); return; }
+  const view = VIEWS[state.view];
+  document.getElementById('view').replaceChildren(
+    ...view.render(state.data).filter((n) => n !== null && n !== undefined && n !== false));
+}
+
 /* ---- live updates ------------------------------------------------------- */
 
 /* openStream subscribes to the server's event stream.
@@ -494,8 +525,19 @@ function handleFrame(frame) {
   if (type === 'connected' || !data) return;
   // Coalesced: a policy change fans out one event per device, and re-rendering five times in a row
   // would make the page flicker for no extra information.
+  nudgeRefresh(400);
+}
+
+/* nudgeRefresh asks for ONE authoritative re-read once things stop happening.
+ *
+ * The same timer as the event stream's, on purpose: a burst of writes produces both a burst of
+ * local redraws and a burst of server events about those same writes, and every one of them is a
+ * request to re-read the page that is already being re-read. Sharing the timer makes the whole
+ * burst cost one refresh instead of one per write plus one per event.
+ */
+function nudgeRefresh(delay) {
   clearTimeout(nudge);
-  nudge = setTimeout(maybeRefresh, 400);
+  nudge = setTimeout(maybeRefresh, delay);
 }
 
 /* A refresh replaces every child of #view, which takes the field the parent is typing in with it.
@@ -1234,6 +1276,10 @@ async function loadApps() {
     apps: [...byPackage.values()].sort(sortApps),
     ruleFor,
     pending,
+    // The queue as the server reported it, kept separate from `pending` because `pending` is
+    // edited in place as a parent answers. Taking an answer back has to know whether the app was
+    // waiting before the answer was given, and after the first edit `pending` can no longer say.
+    pendingAtLoad: new Set(pending),
     enrolled: list.some((d) => d.enrolled),
     catalog: catalog.apps || [],
     catalogConfigured: catalog.configured === true,
@@ -1622,16 +1668,41 @@ function renderApps(data) {
 
   const f = state.appFilter;
 
+  /* One tap: one request, then the page is drawn from the answer that was just given.
+   *
+   * This used to end in `refresh()`, which re-reads everything the tab is built from — rules, the
+   * devices, each device's inventory and desired state, the catalog, the declared set and the
+   * family blocklist. Nine requests per tap, and a parent working through a queue of waiting apps
+   * met "too many requests" a dozen apps in. Nothing about the rule needs re-reading: the rule is
+   * what was just sent. The re-read still happens, once, when the tapping stops. */
   const setRule = async (pkg, category, minutes) => {
     const c = CATEGORIES.find((x) => x.key === category);
-    await act(category === null ? 'Waiting for a decision again' : c.done, () =>
+    const landed = await tried(category === null ? 'Waiting for a decision again' : c.done, () =>
       category === null
         ? api('/children/' + state.childId + '/app-rules?package_name=' + encodeURIComponent(pkg), { method: 'DELETE' })
         : api('/children/' + state.childId + '/app-rules', {
           method: 'PUT',
           body: { package_name: pkg, action: c.action, limit_minutes: c.action === 'LIMIT' ? (minutes || 0) : 0 },
         }));
-    refresh();
+    // A write that did not land must never be drawn as if it had: re-read instead, so the page
+    // shows what the server holds rather than what was attempted.
+    if (!landed) { refresh(); return; }
+    if (category === null) {
+      data.ruleFor.delete(pkg);
+      // Back to waiting, but only if it was waiting to begin with. An app the phone never held
+      // for a decision does not join the queue by having its rule removed, and the server is the
+      // authority on that — which is why this reads the set as it arrived rather than guessing.
+      if (data.pendingAtLoad.has(pkg)) data.pending.add(pkg);
+    } else {
+      data.ruleFor.set(pkg, {
+        package_name: pkg,
+        action: c.action,
+        limit_minutes: c.action === 'LIMIT' ? (minutes || 0) : 0,
+      });
+      data.pending.delete(pkg);
+    }
+    redraw();
+    nudgeRefresh(1200);
   };
 
   const familyBlocked = new Set(data.blocklist.map((e) => e.package_name));

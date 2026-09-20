@@ -171,11 +171,36 @@ func TestTheConsoleShowsTheApprovalQueueAndCategorisesFromIt(t *testing.T) {
 	}
 
 	// ---- answering from the queue ----
+	//
+	// Counted, because what one tap COSTS is the difference between a parent answering a queue and
+	// a parent meeting "too many requests" half way through it. The console used to re-read
+	// everything the tab is built from after every answer — rules, devices, each device's
+	// inventory and desired state, the catalog, the declared set, the family blocklist — so one tap
+	// was nine requests, and the owner was refused around the fifteenth app on 2026-09-20.
+	b.eval(`(() => {
+      window.__fetches = 0;
+      const real = window.fetch;
+      window.fetch = (...args) => { window.__fetches += 1; return real(...args); };
+      return true;
+    })()`, nil)
+
 	b.eval(clickCategory(pkgChat, "Daily limit"), nil)
 	b.waitFor("(() => { const cards = Array.from(document.querySelectorAll('#view .card'));"+
 		"return !cards.some((c) => { const h = c.querySelector('h2');"+
 		"return h && h.textContent.indexOf('Waiting for your decision') >= 0; }); })()",
 		15*time.Second, "the queue to empty once the last app is answered")
+
+	var immediate int
+	b.eval("window.__fetches", &immediate)
+	if immediate > 2 {
+		t.Errorf("one answer cost %d requests before the page even redrew; a parent answering a "+
+			"hundred apps would spend %d requests and be refused part way through", immediate, immediate*100)
+	}
+	// The other half, and without it the assertion above would be satisfied by a console that
+	// simply stopped re-reading: the authoritative re-read must still happen once the tapping
+	// stops, or the page drifts from the server and nobody finds out.
+	b.waitFor("window.__fetches > "+fmt.Sprint(immediate), 15*time.Second,
+		"the coalesced re-read that follows a burst of answers")
 
 	rules := listRules(t, h, parent.Token, child.ID)
 	if got := rules[pkgChat]; got.Action != "LIMIT" || got.LimitMinutes != 0 {

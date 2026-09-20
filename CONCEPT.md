@@ -404,7 +404,10 @@ one restart per mistake is how a misconfiguration survives a maintenance window.
 | `APK_URL`, `APK_PATH`, `APK_CERT_PATH` | — | see below |
 | `ALLOWED_ORIGINS` | same-origin only | exact origins; `*` is rejected |
 | `TRUSTED_PROXIES` | none | client IPs are not believed without it |
-| `RATE_LIMIT_PER_MINUTE`, `MAX_BODY_BYTES` | 120, 1 MiB | |
+| `RATE_LIMIT_PER_MINUTE`, `MAX_BODY_BYTES` | 120, 1 MiB | the anonymous budget: one client address, on the routes where nothing behind the limiter knows who is calling |
+| `RATE_LIMIT_FLOOD_PER_MINUTE` | 1200 | one client address, every route, before authentication — the bound on what one address can make this server do at all |
+| `RATE_LIMIT_PARENT_PER_MINUTE` | 600 | one signed-in parent, keyed by their id. Two parents on one home network no longer share a bucket, and answering a queue of waiting apps is measured against a person's own budget rather than an anonymous caller's |
+| `RATE_LIMIT_DEVICE_PER_MINUTE` | 240 | one enrolled phone, keyed by its device id. A household leaves through one address, so an address-keyed budget made a family's phones compete with each other and with the console |
 | `AUDIT_RETENTION_DAYS`, `LOCATION_RETENTION_DAYS` | 365, 30 | a child's location history is the most sensitive thing here, so it expires soon and by default; the audit log is the record of what the adults did and is kept for a year. Zero is rejected — it would mean "delete everything older than now" |
 | `FAMILY_NAME`, `ADDR`, `LOG_LEVEL`, `DPC_COMPONENT` | | |
 
