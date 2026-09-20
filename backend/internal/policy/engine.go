@@ -90,6 +90,39 @@ var DefaultCriticalPackages = []string{
 	"com.samsung.android.messaging",
 }
 
+// AlwaysUsablePackages can never be suspended or hidden either (FR-5.9), for a different reason
+// from DefaultCriticalPackages. Those are on the list because the *phone* stops working without
+// them — a suspended dialer is a phone that cannot call for help. These are on it because the
+// family decided that reaching each other is not a privilege that any schedule gets to withdraw.
+//
+// The branch this list is really aimed at is the free-installation hold (FR-5.4), not bedtime.
+// Measured on the family phone 2026-09-20: WhatsApp, Threema, Signal and Audible were all
+// installed after the device filed its first inventory, so all four sat suspended in
+// `pending_approval` waiting for an approval nobody knew to give. Turning bedtime off changed
+// nothing, because bedtime was never the branch holding them — which is exactly what makes this
+// failure hard to report: the parent sees four dead apps and no reason for any of them.
+//
+// Two consequences, both deliberate and both consequences of the word "always":
+//   - bedtime and an exhausted quota no longer reach these apps;
+//   - a BLOCK rule against one of them does nothing, the same way a BLOCK against the dialer
+//     already does nothing.
+//
+// If either becomes unwanted for a given app, take it off this list rather than adding a toggle:
+// a carve-out a parent has to remember to re-apply is not an "always".
+//
+// Variants are listed one by one rather than matched by prefix. A prefix rule on "ch.threema."
+// would exempt anything at all published under a lookalike id, and this is a whitelist — the one
+// place where being slightly too narrow is the safe direction to be wrong in.
+var AlwaysUsablePackages = []string{
+	"ch.threema.app",             // Threema
+	"ch.threema.app.libre",       // Threema Libre (the F-Droid build, a separate package id)
+	"ch.threema.app.work",        // Threema Work
+	"com.audible.application",    // Audible
+	"com.whatsapp",               // WhatsApp
+	"com.whatsapp.w4b",           // WhatsApp Business
+	"org.thoughtcrime.securesms", // Signal
+}
+
 // YouTubePackages is the app family the killswitch suspends and hides (FR-7.1).
 var YouTubePackages = []string{
 	"app.revanced.android.youtube",
@@ -270,6 +303,16 @@ type Settings struct {
 	// every sync, so an install that failed retries by itself and an app a child managed to remove
 	// comes back, without a parent noticing anything went wrong.
 	ManagedApps []ManagedApp `json:"managed_apps"`
+
+	// LimitedPackages are the apps a parent has approved *without* exempting them from anything
+	// (store.ActionLimit), each with an optional allowance of its own.
+	//
+	// Kept apart from AllowedPackages rather than folded into it, because the two differ in
+	// exactly the way that matters: an allowed app is outside bedtime and the daily limit, and a
+	// limited one is inside both. Before this field existed there was no way to say the second
+	// thing, so approving an app and exempting it from every schedule were the same keystroke —
+	// see migration 0013 for the phone that was measured in that state.
+	LimitedPackages []AppLimit `json:"limited_packages"`
 }
 
 // ManagedApp is one entry of that set: which application, which exact build, and everything the
@@ -290,6 +333,18 @@ type ManagedApp struct {
 	URL      string `json:"url"`
 }
 
+// AppLimit is one approved app and, optionally, its own daily allowance (FR-5.8).
+//
+// It is what ActionLimit carries. Minutes == 0 is the ordinary case and the one that matters most:
+// the app is APPROVED — it is not waiting for anybody, so it drops out of PendingApproval — and it
+// is otherwise governed like every other app, counted against the family's shared daily limit and
+// paused at bedtime. Minutes > 0 adds a second, independent allowance on top of that, so an app
+// can run out while the child still has screen time left for everything else.
+type AppLimit struct {
+	PackageName string `json:"package_name"`
+	Minutes     int    `json:"minutes"`
+}
+
 // Input is everything the engine needs. Nothing else is consulted.
 type Input struct {
 	Settings  Settings `json:"settings"`
@@ -301,6 +356,12 @@ type Input struct {
 	// CriticalPackages widens the whitelist with what the device resolved at runtime (its actual
 	// dialer, SMS and emergency-info packages, which vary by OEM). It can only add.
 	CriticalPackages []string `json:"critical_packages"`
+
+	// UsedMinutesByPackage is this device's foreground minutes per package, for the same local day
+	// UsedMinutesToday covers. Only packages with an allowance of their own are ever read out of
+	// it, so a device that does not report it simply enforces no per-app cap — which is the right
+	// failure direction for a map that can be absent.
+	UsedMinutesByPackage map[string]int `json:"used_minutes_by_package"`
 	// Now is the instant to evaluate, RFC 3339 with an offset.
 	Now string `json:"now"`
 }
@@ -375,7 +436,19 @@ func Compute(in Input) (DesiredState, error) {
 	local := instant.In(loc)
 
 	critical := newSet(DefaultCriticalPackages)
+	critical.addAll(AlwaysUsablePackages)
 	critical.addAll(in.CriticalPackages)
+
+	// Approved-and-governed, with each app's own allowance. Built before anything is decided
+	// because two different branches below consult it, and for opposite purposes: presence alone
+	// is what ends the approval hold, and the value is what can re-suspend the app later the same
+	// day.
+	limited := map[string]int{}
+	for _, l := range in.Settings.LimitedPackages {
+		if p := strings.TrimSpace(l.PackageName); p != "" {
+			limited[p] = l.Minutes
+		}
+	}
 
 	// ---- content filtering and hardening: in effect in every mode, including tracking-only ----
 
@@ -530,15 +603,25 @@ func Compute(in Input) (DesiredState, error) {
 			continue
 		}
 		// FR-5.4: with free-installation off, an app the child added after enrollment waits for a
-		// parent's decision.
+		// parent's decision. Any of the three answers ends the wait — including LIMIT, which is
+		// the whole reason that action exists: a parent saying "yes, and it counts like everything
+		// else" was previously unable to say anything at all.
+		_, isLimited := limited[app.Package]
 		if !in.Settings.AllowChildInstalls && app.NewSinceBaseline && !app.System &&
-			!allowed.has(app.Package) && !blocked.has(app.Package) {
+			!allowed.has(app.Package) && !blocked.has(app.Package) && !isLimited {
 			suspended.add(app.Package)
 			pending.add(app.Package)
 		}
 		// Bedtime or an exhausted quota suspends everything non-exempt (FR-3.4, FR-4.2). An
-		// explicit ALLOW rule is the exemption a parent can grant.
+		// explicit ALLOW rule is the exemption a parent can grant — and a LIMIT rule deliberately
+		// is not one, which is the difference between the two actions.
 		if out.SuspendReason != ReasonNone && !allowed.has(app.Package) {
+			suspended.add(app.Package)
+		}
+		// FR-5.8: an app with an allowance of its own, spent. Independent of the shared quota, so
+		// this can suspend one app on a phone with screen time left — and it is deliberately not a
+		// SuspendReason: the phone is not in a quota state, one app is.
+		if n := limited[app.Package]; n > 0 && in.UsedMinutesByPackage[app.Package] >= n {
 			suspended.add(app.Package)
 		}
 	}

@@ -4001,6 +4001,8 @@ proven.
 | FR-5 apps | 5.4, 5.5, 3.3 | `RestrictionPlannerTest`, `AppSuspensionManagerTest`, `StateApplierTest`; `TestAppRulesSplitByAction`, `TestCriticalPackagesAreNeverSuspended`, `TestUninstalledAppsAreNotSuspended`, `TestHiddenPackagesAreAlsoSuspended`, `TestSystemAppsStayEnabledByRequest`; e2e `TestPolicyEnforcementJourney`; and its two preconditions, which fail silently rather than loudly — `ManifestAndPlatformCallsTest` *the permissions the shipped app asks for are exactly the ones it needs* (`QUERY_ALL_PACKAGES`, without which every blocked package reads "not installed") and *the install watcher is registered at runtime, not declared in the manifest* (without which a newly installed app is unrestrained until the next poll) |
 | FR-5.6 developer options / adb | 16.3 | e2e `TestDeveloperOptionsCanBeAllowedPerChild` — the switch on withholds `no_debugging_features` and **nothing else**, asserted against the whole restriction set rather than one membership test, with the switch-off case as the positive control so the test cannot pass on an engine that never applies the restriction at all. Two shared vectors (with and without a resolver) replay it on both engines. **Not proven:** that adb actually comes back on a phone — no device has run with the switch on
 | FR-5.7 uninstalling apps | 23 | e2e `TestUninstallingCanBeAllowedPerChild` — the switch on withholds `no_uninstall_apps` and nothing else, with the switch-off case as the positive control, plus the discriminating pair: free-installation **off** while uninstalling is **on**, so an engine that had conflated the two switches is red. Two shared vectors replay it on both engines. `UninstallSwitchAndTheBootFloorTest` pins the part the vectors structurally cannot reach — the pre-sync floor keeps the restriction whatever the switch says, and the next authoritative sync clears it again. **Calibrated four ways:** the Go engine ignoring the switch (2 vectors red), `resolve.go` dropping the field so the PATCH sticks and the phone is told otherwise (e2e red), the Kotlin engine ignoring it (3 red), and each restored to green. **Not proven:** that `adb uninstall` actually succeeds on a phone with the switch on — no device has run with it yet
+| FR-5.8 four answers for an app | 27 | e2e `TestAnAppHasFourAnswers` — all five states on one device: the four answers each end FR-5.4's wait, an unanswered app stays in it, ALLOW survives bedtime while LIMIT does not, and an app's own allowance stops that app while the shared quota still has 210 minutes in it. `TestTheConsoleShowsTheApprovalQueueAndCategorisesFromIt` drives the same four from a real browser. Four shared vectors replay the arithmetic on both engines; three `SynchronizerTest` cases pin the phone's half (the device's own measurement spends the allowance, is never added to what it already reported, and never zeroes a package it did not measure). **Calibrated:** the LIMIT branch removed from the engine (queue never empties), `limit_minutes` zeroed on the way to the engine (allowance never binds), the per-package usage SQL divided wrong (same), the console's own button sending 0 (browser red) — each restored byte-identical. **Not proven:** nothing has spent an allowance on hardware |
+| FR-5.9 always-usable apps | 27 | e2e `TestAlwaysUsableAppsSurviveEveryPolicyPath` — bedtime, an exhausted quota, the family blocklist, a per-child BLOCK and the approval hold all live at once, with an ordinary app suspended in the same answer as the positive control, and the set is asserted in the policy **input** as well so the phone recomputing offline still has it. **Calibrated:** emptying the list reddens it; removing the union from `resolve.go` alone reddens only the input half, and removing it from the engine alone reddens **nothing** — the server is defended twice over, which is recorded here because that green is a fact about the code, not about the test. **Not proven:** that WhatsApp/Threema/Audible actually open on the family phone — that needs 0.6.11 deployed and the apps tapped |
 | FR-6 filtering | 5.5, 16.6 | `ChromePolicyManagerTest`, `DnsPolicyManagerTest`; `TestNormalizeDomainMatchesTheStore`; e2e `TestNoFilteringResolverIsConfiguredByDefault`. FR-6.1 was **rewritten** in 16.6: there is no filtering resolver by default, and `disallow_config_private_dns` is applied only when a parent has named one. Both halves of that coupling are asserted, which matters because either alone passes on a broken engine — "no resolver by default" is also true of an engine that has lost the lock entirely, and the lock's presence is also true of one that pins a resolver nobody asked for. `TestPolicyEnforcementJourney` carries the default-state snapshot and used to assert the opposite; it is the test the sweep caught. **Not proven:** what a phone does with an empty private-DNS host — OPPORTUNISTIC is the documented behaviour and no device has been read back |
 | FR-6.6 … FR-6.9 in-app ad filtering | 25 | **217 JVM tests** over `filter/` and `policy/AlwaysOnVpnManager` — the rule parser and the 181k-rule index, the packet layer, `TcpFlow`, the ClientHello and `Host:` readers, the DNS path, the router, `TunnelPlan`, `TunnelWatchdog`, `FilterListStore`. Plus the layer a fixture structurally cannot reach: `tests/run_all.sh android-realtun` runs the same code against a **real TUN device, a real `curl` and a real TLS server**, both arms with a rules-removed calibration ([25.6](#256--the-tests-that-are-not-fixtures)). **Calibrated 39/39** across four batches ([25.7](#257--calibration-39-probes-39-red)). **Not proven:** anything on a handset — no phone has run the tunnel, so battery, throughput and OEM VPN supervision are unmeasured |
 | FR-6.10 the parent's switch and the phone's report | 25 | Server: `TestFilterListURLIsRefusedUnlessItIsHTTPS`, `TestClampRuleCountKeepsNothingApartFromZero`, `TestParseReportedTimeDropsWhatItCannotRead`, four shared vectors on both engines (`ad filter: a switch and a list url turn the tunnel on`, and the three that must NOT turn it on). Console: `TestTheAdFilterIsReportedOnlyFromMeasurements` pins the three-valued rule — a truthy read of `ad_filter_running` would warn on every Play-build phone — and `TestTheConsoleCanSetEveryPolicyFieldTheApiAccepts` pins the join between the API's settable set and the controls a parent can reach, which is what found `timezone` accepted for months and settable by nobody. Device: `FilterApplierTest` (13, transcript-based, asserting call ORDER), `FilterReportTest` (8, every assertion about a null) |
@@ -6430,3 +6432,151 @@ Cumulative across the project: **42 probes, 42 red.**
   phone heartbeats every 60 s over the same TLS to the same host and did so throughout. A transient
   network failure is the expected case, which is the whole reason it must not be reported as a
   refusal.
+
+## Phase 27 — four answers for an app, and the apps that are never the question (FR-5.4, FR-5.8, FR-5.9, FR-3.5)
+
+The owner started using this with their family and sent four messages in a row:
+
+> `threema and whatsapp is not usable, they should ALWAYS be usablke`
+> `also audible should always be usable`
+> `its disabled`
+> `and after i disabled bedtime the apps are still not usable`
+> `and I dont see which app was used how long today , i want to see which app was used how long.`
+> `wel if they are Pending, in need a list with pending apps in the website to approve them and
+> categorize them -> always free, daily limit, always blocked, individual limit`
+
+Five defects, in three layers, and not one of them had a test that could have gone red. The phone was
+doing exactly what it had been told; the console could not say so, and the vocabulary a parent had
+could not express what they meant.
+
+### 27.1 — nothing a parent had set was holding those apps
+
+Measured against the live database before anything was changed, because four different mechanisms
+can end with an app that will not open and they are indistinguishable from the child's side:
+
+| suspect | measured | verdict |
+|---|---|---|
+| the ad filter | `ad_filter_running = f`, no rules loaded | not it |
+| the family blocklist | one entry, Spotify | not it |
+| this child's app rules | `app_rules` **empty** | not it |
+| bedtime | the owner turned it off and nothing changed | not it |
+| **FR-5.4's approval hold** | installed after the baseline inventory, free installation off, no rule | **this** |
+
+The hold is a branch that never consults bedtime:
+`!allowChildInstalls && newSinceBaseline && !system && pkg ∉ allowed && pkg ∉ blocked` → suspended
+**and** pending. So "I disabled bedtime and they are still not usable" is not a second defect, it is
+the correct behaviour of a rule the parent could not see and had no way to answer.
+
+### 27.2 — approving an app and exempting it from every schedule were the same word (FR-5.8)
+
+There were two answers, `ALLOW` and `BLOCK`, and `ALLOW` is the FR-5.5 whitelist: an allowed app is
+outside bedtime and outside the daily limit, permanently. A parent who merely wanted to say *yes*
+had to choose between granting a permanent exemption and leaving the app suspended for ever. The
+owner's four categories name the missing middle exactly, so the fix is their vocabulary:
+
+| the owner's word | stored | what it means |
+|---|---|---|
+| always free | `ALLOW` | exempt from bedtime and from the daily limit |
+| daily limit | `LIMIT`, `limit_minutes = 0` | approved, and governed like every other app |
+| individual limit | `LIMIT`, `limit_minutes = n` | as above, plus an allowance of its own |
+| always blocked | `BLOCK` | suspended and hidden |
+
+"Undecided" — no rule — is the fifth state and is what keeps an app in the queue. It is a real
+answer, so it has a button of its own rather than being the hidden meaning of tapping a lit one.
+
+A per-app allowance deliberately sets **no** suspend reason: the phone is not in a quota state, one
+app is. That is the difference a parent sees when an app stops with two hours of screen time left.
+
+### 27.3 — some apps are never the question (FR-5.9)
+
+`AlwaysUsablePackages` — the messengers in use and Audible — is unioned into the critical whitelist
+on the server **and** compiled into the DPC, and it travels in the policy **input**, so it reaches a
+phone on the next sync rather than on the next app update. That last part is what makes it a fix
+rather than a plan: Play Protect blocks the unattended update path, so anything that needed a new
+APK would have reached the family whenever the phone was next plugged in and sideloaded by hand.
+
+Two consequences are deliberate and are written down so they can be narrowed rather than discovered:
+**bedtime does not reach these apps**, and **an explicit BLOCK on one does not either**. The trade
+is a mis-tap that takes the messenger off a child's phone against a schedule that silences it; for
+this family the first is the one that matters.
+
+### 27.4 — the queue had no surface, and the console was reading the wrong level of the answer
+
+`/devices/:id/desired-state` answers `{"desired": …, "input": …}`. The console read it flat, in both
+places it fetched it. Nothing was red, because a missing field is `undefined` and `undefined || 0`
+is a plausible number:
+
+- the home card printed **"Screen time today: 0 min (no daily limit)"** over a phone that had
+  reported 99 minutes;
+- **"Apps are paused right now: bedtime"** could never be drawn;
+- **"N app(s) are waiting for your decision"** could never be drawn — which is why the family
+  learned the queue existed from somewhere other than the console.
+
+That last line is the whole mechanism behind the owner's first message. The apps were suspended, the
+console had the reason in hand, and it rendered a zero.
+
+The Apps tab now opens with **Waiting for your decision** — the apps the phone is actually holding,
+each with the four buttons — above the full list, which also gained a *Waiting* filter. Both draw
+the same row, so an answer given in the queue and one given in the list cannot become two controls
+that offer different choices.
+
+One more, found by the same test: a view section with nothing to say returns `null`, and
+`replaceChildren(null)` appends the **text** `null` to the page. `el` had always dropped empty
+children; the mount point had not.
+
+### 27.5 — the minutes were measured all along, and shown to nobody
+
+`usage_samples` had **43 packages and 99 minutes** for that day. The console printed the top five
+rows as bare package ids, and that day's top five were YouTube, the launcher, the gallery, the
+screenshot handler and Settings — so the four apps a parent would look for were at ranks 7 to 10,
+under names like `com.sec.android.app.launcher`. The query now joins the device's own inventory for
+the label and the system flag, the list shows every app that ran for at least a minute, and what is
+under a minute is counted in one line rather than dropped.
+
+### 27.6 — the phone's half: an allowance has to bind with no network
+
+The device recomputes policy locally (FR-9), so the server's per-package minutes are only ever as
+fresh as the last report that got through. `Synchronizer` merges them with what the phone measured
+itself, key by key, with `max` — never a sum, which would spend an allowance twice, and never a
+replacement, which would zero a package the phone did not happen to measure.
+
+### 27.7 — calibration: 14 probes, 13 red and one green that is the finding
+
+Each probe leaves the structure intact and changes one value, so a red can only come from an
+assertion. Snapshotted with `cp` and restored with `cp` — never `git checkout --`, which would have
+discarded the whole uncommitted feature. Every restore was verified byte-identical with `cmp`, and
+the changed-line count is printed so a no-op probe cannot pass for a calibration.
+
+| # | file | the one value | expected red | measured |
+|---|---|---|---|---|
+| 1–4 | `vectors.json` inputs | each new vector's own discriminating field | the four new shared vectors | **RED**, each reddening only its own vector on both engines |
+| 5 | `engine.go` | `critical.addAll(AlwaysUsablePackages)` → `addAll(nil)` | the always-usable e2e | **GREEN — and that is the finding.** `resolve.go` also puts the list in the policy input, which the engine unions too, so the server path is defended twice and neither half alone is load-bearing. Recorded because a green here is a fact about the code, not a test that binds to nothing |
+| 6 | `resolve.go` | the union dropped from the policy **input** | the offline half | **RED** — *the phone recomputes offline and must be handed the always-usable set* |
+| 7 | `engine.go` | the list itself emptied to one unused package | the always-usable e2e | **RED** — *an always-usable app must never be suspended* |
+| 8 | `engine.go` | `_, isLimited := limited[…]` reads an empty map | the four answers | **RED** — *an answered app must leave the queue* |
+| 9 | `resolve.go` | `Minutes: r.LimitMinutes` → `0 * …` | the own-allowance case | **RED** — *31 minutes against a 30 minute allowance must stop that app* |
+| 10 | `telemetry.go` | `foreground_ms / 60000` → `/ 600000` | the same case, through SQL | **RED** — the allowance never binds when the minutes are wrong |
+| 11 | `telemetry.go` | the label `COALESCE(i.label, '')` → `COALESCE(NULL, '')` | the usage list | **RED** — *a parent has to see the name they know* |
+| 12 | `app.js` | the home fetch stops unwrapping `.desired` | the console, in a real browser | **RED** on both lines — the screen time and the waiting-for-a-decision hint |
+| 13 | `app.js` | the queue filters on a package nothing installs | the console | **RED** — *the Apps tab draws no queue for an app that is waiting* |
+| 14 | `app.js` | the "own limit" button always sends 0 | the console | **RED**, at the assertion *before* the one predicted: a stored 0 reads back as "Daily limit", so the minutes field never appears at all. Recorded as it happened rather than as it was expected |
+
+And the strongest evidence is not in the table: **probes 12 and 13 describe defects the new browser
+test found while being written.** It was red on a console that had never drawn the queue, and green
+after the two fixes, on assertions written before either was understood.
+
+Cumulative across the project: **56 probes, 55 red and one deliberate green.**
+
+### 27.8 — what is NOT proven
+
+- **Nothing here has run on the family phone.** The console half is live the moment the control
+  plane is deployed; the DPC half ships in 0.6.11. The always-usable carve-out is the exception and
+  it is deliberate: it travels in the policy input, so it takes effect on the next sync with the
+  0.6.10 build already installed.
+- **No allowance has been spent on hardware.** The arithmetic is proven on both engines and through
+  real SQL; a child actually running out of Brawl Stars at 30 minutes is not measured.
+- **The four-category control has been driven by a script, not by a parent.** The browser test
+  clicks it at 360 px and reads back what was stored; whether the row is legible with fifteen apps
+  in the queue is a question for the owner, not for the suite.
+- **Why those four apps were installed after the baseline is not determined** and does not matter:
+  the same state arises for every app a child adds, which is what FR-5.4 is for.

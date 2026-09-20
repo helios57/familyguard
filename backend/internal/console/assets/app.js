@@ -417,7 +417,10 @@ async function refresh() {
     const data = await view.load();
     if (mine !== refreshToken) return;   // a newer refresh already won
     state.data = data;
-    main.replaceChildren(...view.render(data));
+    // Filtered, because a section with nothing to say returns null — the approval queue when
+    // nothing is waiting — and `replaceChildren(null)` appends the TEXT "null" to the page.
+    // `el` already drops empty children; this is the one mount point that did not.
+    main.replaceChildren(...view.render(data).filter((n) => n !== null && n !== undefined && n !== false));
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) return;
     if (mine !== refreshToken) return;
@@ -513,8 +516,17 @@ function maybeRefresh() {
 async function loadHome() {
   const devices = await api('/devices?child_id=' + encodeURIComponent(state.childId));
   const list = devices.devices || [];
+  /* `.desired` is not a detail: the endpoint answers `{desired, input}` and every consumer below
+     reads a desired state. Reading the envelope as if it were flat is not a visible error — every
+     field simply comes back undefined — so the card printed "Screen time today: 0 min (no daily
+     limit)" over a phone that had reported 99 minutes, the "apps are paused right now" line never
+     appeared, and neither did the one saying apps were waiting for a decision. That last one is
+     why a parent had no way to learn the queue existed. Unwrapped here rather than at each use, so
+     there is one place to be wrong about. */
   const states = await Promise.all(list.map((d) =>
-    d.enrolled ? api('/devices/' + d.id + '/desired-state').catch(() => null) : Promise.resolve(null)));
+    d.enrolled
+      ? api('/devices/' + d.id + '/desired-state').then((r) => (r && r.desired) || null).catch(() => null)
+      : Promise.resolve(null)));
   return { devices: list, states };
 }
 
@@ -780,7 +792,8 @@ function deviceCard(dev, desired) {
       body.push(el('p', { class: 'muted', text: 'Apps are paused right now: ' + desired.suspend_reason.toLowerCase() + '.' }));
     }
     if ((desired.pending_approval || []).length) {
-      body.push(el('p', { class: 'muted', text: desired.pending_approval.length + ' app(s) waiting for your approval — see Apps.' }));
+      body.push(el('p', { class: 'muted', text: desired.pending_approval.length
+        + ' app(s) are paused waiting for your decision — Apps, at the top.' }));
     }
   } else if (dev.enrolled) {
     body.push(el('p', { class: 'muted', text: 'No state reported yet.' }));
@@ -1156,6 +1169,13 @@ async function loadApps() {
     d.enrolled
       ? api('/devices/' + d.id + '/apps?include_system=1').catch(() => ({ apps: [] }))
       : Promise.resolve({ apps: [] })));
+  // The same envelope as `loadHome` — see the note there. `pending_approval` lives inside
+  // `desired`, and read a level too high it is undefined, which is an empty queue that looks
+  // exactly like a family with nothing waiting.
+  const desired = await Promise.all(list.map((d) =>
+    d.enrolled
+      ? api('/devices/' + d.id + '/desired-state').then((r) => (r && r.desired) || null).catch(() => null)
+      : Promise.resolve(null)));
 
   // One row per package, not per install: a family with two phones should not see Chrome twice, and
   // the rule is a property of the child anyway.
@@ -1189,10 +1209,21 @@ async function loadApps() {
       }
     }
   });
-  const ruleFor = new Map((rules.rules || []).map((r) => [r.package_name, r.action]));
+  // The whole rule, not just its action. `limit_minutes` is half the answer for a LIMIT rule and
+  // dropping it here is what would make the console show "Daily limit" over an app that in fact
+  // has 20 minutes of its own.
+  const ruleFor = new Map((rules.rules || []).map((r) => [r.package_name, r]));
+  // Which apps are still waiting for a decision, from the authority that decides it rather than
+  // inferred from "suspended and has no rule" — those two come apart at bedtime, when every app is
+  // suspended and none of them is pending.
+  const pending = new Set();
+  for (const st of desired) {
+    for (const pkg of ((st && st.pending_approval) || [])) pending.add(pkg);
+  }
   return {
     apps: [...byPackage.values()].sort(sortApps),
     ruleFor,
+    pending,
     enrolled: list.some((d) => d.enrolled),
     catalog: catalog.apps || [],
     catalogConfigured: catalog.configured === true,
@@ -1495,6 +1526,71 @@ function familyBlocklistCard(data) {
   return card;
 }
 
+/* The four answers a parent can give about an app (FR-5.8), in the order they trade freedom for
+   control. `key` is this file's name for the answer and `action` is the server's: "Daily limit" and
+   "Own limit" are both LIMIT and differ only by whether an allowance rides along, because the
+   difference a parent cares about ("does this app have its own clock") is not the difference the
+   schema draws ("is this app approved").
+
+   Before these existed there were two, Allow and Block, and Allow is the whitelist — it puts an app
+   outside bedtime and outside the daily limit for good. So the ordinary answer, "yes, you may have
+   this, and it counts like everything else", could not be given at all: approving an app and
+   exempting it from every schedule were the same tap. */
+const CATEGORIES = [
+  {
+    key: 'ALLOW', action: 'ALLOW', label: 'Always free', done: 'Always free',
+    hint: 'No bedtime, no daily limit. Use it for the apps that must work at any hour.',
+  },
+  {
+    key: 'LIMIT', action: 'LIMIT', label: 'Daily limit', done: 'Approved, with the daily limit',
+    hint: 'Approved. Counts against the daily limit and pauses at bedtime, like every other app.',
+  },
+  {
+    key: 'OWN', action: 'LIMIT', label: 'Own limit', done: 'Approved, with its own limit',
+    hint: 'Approved, with a daily allowance for this app alone, on top of the daily limit.',
+  },
+  {
+    key: 'BLOCK', action: 'BLOCK', label: 'Always blocked', done: 'Blocked',
+    hint: 'Suspended and hidden on the phone.',
+  },
+];
+
+/* Where "Own limit" starts when it is first chosen. A number had to be picked, and starting at zero
+   would store a rule meaning "no allowance" under a button that says there is one. */
+const DEFAULT_OWN_LIMIT_MINUTES = 60;
+
+/* null means undecided — no rule at all — which with free installation off is what keeps an app
+   waiting (FR-5.4). It is a real answer and not a missing one. */
+function categoryOf(rule) {
+  if (!rule) return null;
+  if (rule.action !== 'LIMIT') return rule.action;
+  return rule.limit_minutes > 0 ? 'OWN' : 'LIMIT';
+}
+
+/* The apps waiting for a decision, drawn above everything else.
+ *
+ * They were always in the list below — among about five hundred rows, sorted alphabetically, with
+ * nothing marking them — and the only thing that said so was one line of grey text on the Home tab
+ * pointing at a tab with no way to filter for them. A queue nobody can see is a queue that does not
+ * get worked: measured on the family phone on 2026-09-20, four apps had been sitting in it long
+ * enough for the parent to conclude the phone was broken.
+ *
+ * Rendered only when it is non-empty. An empty "waiting for approval" card on every visit is how a
+ * real one stops being read. */
+function pendingApprovalCard(data) {
+  const waiting = data.apps.filter((a) => data.pending.has(a.package_name));
+  if (!waiting.length) return null;
+  return el('div', { class: 'card full' },
+    el('div', { class: 'card-head' },
+      el('h2', { text: 'Waiting for your decision' }),
+      el('span', { class: 'badge', text: String(waiting.length) })),
+    el('p', { class: 'muted', text:
+      'These arrived after the phone was set up and are paused until you answer. '
+      + 'Until then the child sees them installed and unable to open — so an app left here looks '
+      + 'like a broken phone rather than like a question.' }),
+    el('ul', { class: 'list applist' }, waiting.map(data.pendingRow)));
+}
+
 function renderApps(data) {
   const managed = managedAppsCard(data);
 
@@ -1516,32 +1612,71 @@ function renderApps(data) {
 
   const f = state.appFilter;
 
-  const setRule = async (pkg, action) => {
-    await act(action === null ? 'Rule cleared' : (action === 'BLOCK' ? 'Blocked' : 'Allowed'), () =>
-      action === null
+  const setRule = async (pkg, category, minutes) => {
+    const c = CATEGORIES.find((x) => x.key === category);
+    await act(category === null ? 'Waiting for a decision again' : c.done, () =>
+      category === null
         ? api('/children/' + state.childId + '/app-rules?package_name=' + encodeURIComponent(pkg), { method: 'DELETE' })
-        : api('/children/' + state.childId + '/app-rules', { method: 'PUT', body: { package_name: pkg, action } }));
+        : api('/children/' + state.childId + '/app-rules', {
+          method: 'PUT',
+          body: { package_name: pkg, action: c.action, limit_minutes: c.action === 'LIMIT' ? (minutes || 0) : 0 },
+        }));
     refresh();
   };
 
-  /* Three states, named. The previous control was two buttons where tapping the lit one again
-     cleared the rule — a hidden third state whose only documentation was a line of prose above the
-     list, and which is indistinguishable from a mis-tap. */
   const familyBlocked = new Set(data.blocklist.map((e) => e.package_name));
+
+  /* The category control: four answers plus "undecided", which is a real state and not the absence
+     of one. Tapping the lit button again does NOT clear the rule — that was the old two-button
+     control's hidden third state, indistinguishable from a mis-tap — so undecided has a button of
+     its own and only appears once a decision has been made. */
+  const categoryControl = (app) => {
+    const rule = data.ruleFor.get(app.package_name) || null;
+    const cat = categoryOf(rule);
+    const own = (rule && rule.limit_minutes) || DEFAULT_OWN_LIMIT_MINUTES;
+
+    const seg = el('div', { class: 'seg' }, CATEGORIES.map((c) => el('button', {
+      class: 'btn', type: 'button', text: c.label, title: c.hint,
+      'aria-pressed': String(cat === c.key),
+      onclick: () => setRule(app.package_name, c.key, c.key === 'OWN' ? own : 0),
+    })).concat(cat === null ? [] : [el('button', {
+      class: 'btn', type: 'button', text: 'Undecided',
+      title: 'Put it back to waiting for a decision.',
+      'aria-pressed': 'false',
+      onclick: () => setRule(app.package_name, null, 0),
+    })]));
+
+    /* The number only exists while the answer it belongs to is selected. A minutes field sitting
+       next to an app that is always free reads as a limit nobody is enforcing — and the server
+       refuses that pair outright rather than storing it, so the two agree. */
+    const minutes = cat !== 'OWN' ? null : el('label', { class: 'own-limit' },
+      el('span', { class: 'switch-label' }, 'Minutes a day, for this app alone'),
+      el('input', {
+        type: 'number', min: '1', max: '1440', step: '5', value: String(own),
+        'aria-label': 'Daily minutes for ' + (app.label || app.package_name),
+        onchange: (e) => {
+          const n = Math.round(Number(e.target.value));
+          if (!Number.isFinite(n) || n < 1 || n > 1440) {
+            // Put the stored value back rather than sending one the server will refuse: a field
+            // that keeps a rejected number looks saved.
+            e.target.value = String(own);
+            toast('Minutes must be between 1 and 1440.');
+            return;
+          }
+          setRule(app.package_name, 'OWN', n);
+        },
+      }));
+    return minutes ? el('div', { class: 'app-choice' }, seg, minutes) : seg;
+  };
 
   const row = (app) => {
     const rule = data.ruleFor.get(app.package_name) || null;
-    const choice = (label, value) => el('button', {
-      class: 'btn', type: 'button', text: label,
-      'aria-pressed': String(rule === value),
-      onclick: () => setRule(app.package_name, value),
-    });
     /* An app the family blocklist covers shows "Default" here, which is true of this child's rule
        and false about the phone — the app is hidden. Saying so is the difference between a parent
        understanding why it is missing and concluding the block did not work. Allow is the documented
        exemption, so the note names it. */
     const family = familyBlocked.has(app.package_name)
-      ? el('small', { class: 'muted', text: rule === 'ALLOW'
+      ? el('small', { class: 'muted', text: (rule && rule.action) === 'ALLOW'
         ? 'Blocked for the family — allowed for this child'
         : 'Blocked for the whole family. Allow to make an exception for this child.' })
       : null;
@@ -1562,16 +1697,17 @@ function renderApps(data) {
         el('small', { text: app.package_name + (app.system_app ? ' · system' : '') }),
         family,
         restrained),
-      el('div', { class: 'seg' },
-        choice('Allow', 'ALLOW'), choice('Block', 'BLOCK'), choice('Default', null)));
+      categoryControl(app));
   };
 
   const matches = (app) => {
     if (!f.system && app.system_app) return false;
     const rule = data.ruleFor.get(app.package_name) || null;
-    if (f.rule === 'allowed' && rule !== 'ALLOW') return false;
-    if (f.rule === 'blocked' && rule !== 'BLOCK') return false;
+    const action = rule && rule.action;
+    if (f.rule === 'allowed' && action !== 'ALLOW') return false;
+    if (f.rule === 'blocked' && action !== 'BLOCK') return false;
     if (f.rule === 'none' && rule !== null) return false;
+    if (f.rule === 'waiting' && !data.pending.has(app.package_name)) return false;
     const q = f.q.trim().toLowerCase();
     if (!q) return true;
     return (app.label || '').toLowerCase().includes(q) || app.package_name.toLowerCase().includes(q);
@@ -1600,7 +1736,7 @@ function renderApps(data) {
   });
 
   const filter = el('div', { class: 'seg' }, [
-    ['all', 'All'], ['blocked', 'Blocked'], ['allowed', 'Allowed'], ['none', 'No rule'],
+    ['all', 'All'], ['waiting', 'Waiting'], ['blocked', 'Blocked'], ['allowed', 'Allowed'], ['none', 'No rule'],
   ].map(([value, label]) => el('button', {
     class: 'btn', type: 'button', text: label,
     'aria-pressed': String(f.rule === value),
@@ -1621,7 +1757,11 @@ function renderApps(data) {
 
   paint();
 
-  return [managed, familyBlocklistCard(data), el('div', { class: 'card full' },
+  // The same row builder, so a decision made in the queue and one made in the list below cannot
+  // drift apart into two controls that offer different answers.
+  data.pendingRow = row;
+
+  return [pendingApprovalCard(data), managed, familyBlocklistCard(data), el('div', { class: 'card full' },
     el('div', { class: 'card-head' }, el('h2', { text: 'Apps on the phone' })),
     el('p', { class: 'muted', text: 'What the phone reports it has. Allowing or blocking one here does not install or remove it.' }),
     el('div', { class: 'toolbar' }, search, filter, system),
@@ -1641,6 +1781,46 @@ async function loadActivity() {
     api('/children/' + state.childId + '/policy'),
   ]);
   return { devices: list, usage, locations, audit: audit.entries || [], policy };
+}
+
+/**
+ * The day's usage, one row per app, longest first.
+ *
+ * Two things were wrong with the list this replaces, and together they made the card answer a
+ * different question from the one a parent asks it. It printed `s.package_name`, so the row read
+ * "com.sec.android.app.launcher" rather than "One UI Home"; and it took `.slice(0, 5)`.
+ *
+ * Five is not a small sample of this list, it is the wrong five. Measured on the family phone on
+ * 2026-09-20: 43 packages, 99 minutes, and the top five were YouTube, the launcher, the gallery,
+ * the screenshot tool and Settings — four of them things nobody chose to open. Brawl Stars,
+ * WhatsApp, LEGO and Hay Day sat at ranks 7 to 10 and could not appear at all. "Which app was used
+ * how long" was recorded correctly all along and simply never shown.
+ *
+ * Sub-minute rows are counted rather than listed. They round to "0 min", and a screenful of apps
+ * all reporting zero is how a real list gets learned as noise — but dropping them silently would
+ * understate the day, so the count says how many there are.
+ */
+function appUsageList(packages) {
+  if (!packages.length) {
+    return el('p', { class: 'muted', text: 'No app-level detail reported for today.' });
+  }
+  const minutes = (s) => Math.round(s.foreground_ms / 60000);
+  const shown = packages.filter((s) => minutes(s) >= 1);
+  const brief = packages.length - shown.length;
+  if (!shown.length) {
+    return el('p', { class: 'muted', text: packages.length + ' app(s) were opened today, none of them for a full minute.' });
+  }
+  return el('div', {},
+    el('ul', { class: 'list' }, shown.map((s) => el('li', {},
+      el('span', { class: 'label' },
+        // The label is joined on from the phone's inventory and is empty for an app that has since
+        // been uninstalled — the package name is the honest fallback there, not a placeholder.
+        el('b', { text: s.label || s.package_name }),
+        el('small', { text: s.package_name + (s.system_app ? ' \u00b7 system' : '') })),
+      el('span', { class: 'badge', text: fmtMinutes(minutes(s)) })))),
+    brief
+      ? el('p', { class: 'muted', text: brief + ' more app(s) were opened for under a minute.' })
+      : null);
 }
 
 function renderActivity(data) {
@@ -1674,11 +1854,7 @@ function renderActivity(data) {
               + dev.name + ', so every app reports zero. Turn it on in the phone\u2019s Settings '
               + '\u2192 Apps \u2192 Special app access \u2192 Usage access.' })
           : null,
-        (usage.packages || []).length
-          ? el('ul', { class: 'list' }, usage.packages.slice(0, 5).map((s) => el('li', {},
-            el('span', { class: 'label' }, el('b', { text: s.package_name })),
-            el('span', { class: 'badge', text: fmtMinutes(Math.round(s.foreground_ms / 60000)) }))))
-          : el('p', { class: 'muted', text: 'No app-level detail reported for today.' })));
+        appUsageList(usage.packages || [])));
     }
 
     const locs = data.locations[i];

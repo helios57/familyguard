@@ -145,6 +145,30 @@ Applied at provisioning and re-applied on every boot:
 - FR-5.5 **Critical whitelist**: dialer, SMS/messaging, contacts, emergency information, settings
   and the package installer can never be suspended or hidden by any rule, quota, bedtime, or
   command. Emergency calling must work at every moment of every policy state.
+- FR-5.8 **A parent has four answers for an app, not two.** Until 2026-09-20 there were two,
+  ALLOW and BLOCK, and ALLOW is the FR-5.5 whitelist — an allowed app is outside bedtime and
+  outside the daily limit, permanently. Combined with FR-5.4 that left no way to say the ordinary
+  thing: a parent who merely wanted to approve an app had to exempt it from every schedule, and
+  the only alternative was to leave it suspended. Measured on family hardware that day: WhatsApp,
+  Threema, Signal and Audible all sat suspended awaiting approval for exactly this reason, and
+  turning bedtime off changed nothing because bedtime was never what held them. The four:
+  - **always free** (ALLOW) — exempt from bedtime and from the daily limit;
+  - **daily limit** (LIMIT, no allowance) — approved, and governed like every other app: it counts
+    against the daily limit and it pauses at bedtime;
+  - **individual limit** (LIMIT with an allowance) — as above, plus a daily allowance of its own,
+    spent independently of the shared one, so an app can run out while screen time remains;
+  - **always blocked** (BLOCK) — suspended and hidden.
+  No rule at all remains a fifth state, "undecided", and is what keeps an app in FR-5.4's queue.
+  A per-app allowance binds at the next evaluation rather than to the second, and it never sets a
+  suspend reason: the phone is not in a quota state, one app is.
+- FR-5.9 **Some apps are never suspended, whatever any rule says.** FR-5.5 covers the packages the
+  *phone* needs to keep working. This covers the ones the *family* decided reaching each other does
+  not depend on a schedule: the messengers in use (WhatsApp, Threema, Signal) and Audible. They
+  survive bedtime, a spent quota, the family blocklist, an explicit BLOCK and FR-5.4's approval
+  hold. The list is carried by the server as well as compiled into the DPC, and travels to the
+  device in the policy input, so a change to it takes effect on the next sync rather than on the
+  next app update. Two consequences are deliberate: bedtime does not reach these apps, and a BLOCK
+  rule against one does nothing — the same way a BLOCK against the dialer already does nothing.
 - FR-5.6 **Developer options and adb are a per-child switch**, defaulting to off (the restriction
   applied). `no_debugging_features` is the one restriction whose cost falls on whoever administers
   the phone rather than on the child: applying it as Device Owner switches adb off, the setting

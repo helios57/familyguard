@@ -89,11 +89,15 @@ func (s *Store) BumpPolicyVersion(ctx context.Context, childID uuid.UUID) (int64
 // ---- app rules ------------------------------------------------------------
 
 // SetAppRule records an allow or block decision for one package.
-func (s *Store) SetAppRule(ctx context.Context, childID uuid.UUID, pkg, action string) error {
+func (s *Store) SetAppRule(ctx context.Context, childID uuid.UUID, pkg, action string, limitMinutes int) error {
+	// limit_minutes is overwritten on every upsert rather than preserved, because it is part of
+	// the answer and not a separate setting: moving an app from "45 minutes of its own" to
+	// "always free" and back must not silently restore the 45.
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO app_rules (child_id, package_name, action) VALUES ($1, $2, $3)
-		 ON CONFLICT (child_id, package_name) DO UPDATE SET action = EXCLUDED.action, updated_at = NOW()`,
-		childID, pkg, action)
+		`INSERT INTO app_rules (child_id, package_name, action, limit_minutes) VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (child_id, package_name) DO UPDATE
+		    SET action = EXCLUDED.action, limit_minutes = EXCLUDED.limit_minutes, updated_at = NOW()`,
+		childID, pkg, action, limitMinutes)
 	return mapErr(err)
 }
 
@@ -113,7 +117,7 @@ func (s *Store) DeleteAppRule(ctx context.Context, childID uuid.UUID, pkg string
 // ListAppRules returns every rule for a child.
 func (s *Store) ListAppRules(ctx context.Context, childID uuid.UUID) ([]AppRule, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT child_id, package_name, action, updated_at FROM app_rules
+		`SELECT child_id, package_name, action, limit_minutes, updated_at FROM app_rules
 		  WHERE child_id = $1 ORDER BY package_name`, childID)
 	if err != nil {
 		return nil, err
@@ -122,7 +126,7 @@ func (s *Store) ListAppRules(ctx context.Context, childID uuid.UUID) ([]AppRule,
 	out := []AppRule{}
 	for rows.Next() {
 		var r AppRule
-		if err := rows.Scan(&r.ChildID, &r.PackageName, &r.Action, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ChildID, &r.PackageName, &r.Action, &r.LimitMinutes, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

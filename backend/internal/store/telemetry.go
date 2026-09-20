@@ -39,10 +39,17 @@ func (s *Store) RecordUsage(ctx context.Context, deviceID uuid.UUID, day string,
 
 // UsageForDay returns the per-package totals a device reported for one day.
 func (s *Store) UsageForDay(ctx context.Context, deviceID uuid.UUID, day string) ([]UsageSample, error) {
+	// LEFT JOIN, never an inner one: a package the child has since uninstalled still has the
+	// minutes it burned today, and dropping those rows would quietly shrink the day's total below
+	// the number the same table reports as screen time.
 	rows, err := s.pool.Query(ctx,
-		`SELECT device_id, day::text, package_name, foreground_ms
-		   FROM usage_samples WHERE device_id = $1 AND day = $2::date
-		  ORDER BY foreground_ms DESC`, deviceID, day)
+		`SELECT u.device_id, u.day::text, u.package_name, u.foreground_ms,
+		        COALESCE(i.label, ''), COALESCE(i.system_app, false)
+		   FROM usage_samples u
+		   LEFT JOIN installed_apps i
+		          ON i.device_id = u.device_id AND i.package_name = u.package_name
+		  WHERE u.device_id = $1 AND u.day = $2::date
+		  ORDER BY u.foreground_ms DESC`, deviceID, day)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +57,7 @@ func (s *Store) UsageForDay(ctx context.Context, deviceID uuid.UUID, day string)
 	out := []UsageSample{}
 	for rows.Next() {
 		var u UsageSample
-		if err := rows.Scan(&u.DeviceID, &u.Day, &u.PackageName, &u.ForegroundMs); err != nil {
+		if err := rows.Scan(&u.DeviceID, &u.Day, &u.PackageName, &u.ForegroundMs, &u.Label, &u.SystemApp); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -70,6 +77,35 @@ func (s *Store) UsageMinutesForDay(ctx context.Context, deviceID uuid.UUID, day 
 		return 0, err
 	}
 	return int(ms / 60000), nil
+}
+
+// UsageMinutesByPackageForDay is the per-package foreground time a device recorded on one day, in
+// whole minutes.
+//
+// Floor division in SQL, matching UsageMinutesForDay above and the device's own conversion, so a
+// per-app allowance is spent at the same instant whichever of the two engines is asked.
+//
+// The whole day is returned rather than only the packages that have an allowance: filtering here
+// would make this result depend on policy, and the engine is the one place that should decide
+// anything.
+func (s *Store) UsageMinutesByPackageForDay(ctx context.Context, deviceID uuid.UUID, day string) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT package_name, foreground_ms / 60000 FROM usage_samples
+		  WHERE device_id = $1 AND day = $2::date`, deviceID, day)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var pkg string
+		var minutes int64
+		if err := rows.Scan(&pkg, &minutes); err != nil {
+			return nil, err
+		}
+		out[pkg] = int(minutes)
+	}
+	return out, rows.Err()
 }
 
 // UsageHistory returns daily totals in minutes for the last n days, oldest first.

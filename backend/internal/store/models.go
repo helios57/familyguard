@@ -58,9 +58,19 @@ var ValidCommandTypes = map[string]bool{
 }
 
 // App rule actions.
+//
+// The three are not a scale from permissive to strict; they answer different questions.
+// ActionAllow is the whitelist — an allowed app is exempt from bedtime and from the daily limit.
+// ActionLimit is approval WITHOUT that exemption, which is the ordinary case and which had no way
+// to be expressed until migration 0013: before it, approving an app and exempting it from every
+// schedule were the same keystroke. ActionBlock suspends and hides.
+//
+// No rule at all is a fourth state and is not one of these: with free installation off it is what
+// keeps a newly installed app in pending_approval.
 const (
 	ActionAllow = "ALLOW"
 	ActionBlock = "BLOCK"
+	ActionLimit = "LIMIT"
 )
 
 type Family struct {
@@ -221,7 +231,12 @@ type AppRule struct {
 	ChildID     uuid.UUID `json:"child_id"`
 	PackageName string    `json:"package_name"`
 	Action      string    `json:"action"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	// LimitMinutes is this app's own daily allowance, and is meaningful only with ActionLimit.
+	// Zero means the app is governed by the family's shared daily limit and nothing more; a
+	// positive value is spent independently of that shared one, so an app can run out while the
+	// child still has screen time left.
+	LimitMinutes int       `json:"limit_minutes"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // FamilyBlockedPackage is one entry on the family-wide blocklist (FR-18): a package no child in
@@ -310,6 +325,13 @@ type UsageSample struct {
 	Day          string    `json:"day"`
 	PackageName  string    `json:"package_name"`
 	ForegroundMs int64     `json:"foreground_ms"`
+	// Label and SystemApp come from the device's inventory, not from the usage row itself, and are
+	// empty/false for a package that has since been uninstalled. They are joined on rather than
+	// stored per sample because the label is a property of the install, not of a day's usage — and
+	// because without them the console can only print "com.sec.android.app.launcher" at a parent,
+	// which is the state this field was added to end.
+	Label     string `json:"label"`
+	SystemApp bool   `json:"system_app"`
 }
 
 type Command struct {

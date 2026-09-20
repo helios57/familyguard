@@ -42,6 +42,7 @@ type Source interface {
 	ListBlockedDomains(ctx context.Context, childID uuid.UUID) ([]string, error)
 	ListInstalledApps(ctx context.Context, deviceID uuid.UUID, includeSystem bool) ([]store.InstalledApp, error)
 	UsageMinutesForDay(ctx context.Context, deviceID uuid.UUID, day string) (int, error)
+	UsageMinutesByPackageForDay(ctx context.Context, deviceID uuid.UUID, day string) (map[string]int, error)
 	ManagedAppsForChild(ctx context.Context, childID uuid.UUID) ([]store.App, error)
 	FamilyBlockedPackageNames(ctx context.Context) ([]string, error)
 }
@@ -137,6 +138,10 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 	}
 	day := now.In(loc).Format("2006-01-02")
 
+	usedByPackage, err := r.src.UsageMinutesByPackageForDay(ctx, deviceID, day)
+	if err != nil {
+		return nil, nil, fmt.Errorf("usage by package: %w", err)
+	}
 	used, err := r.src.UsageMinutesForDay(ctx, deviceID, day)
 	if err != nil {
 		return nil, nil, fmt.Errorf("usage: %w", err)
@@ -166,7 +171,7 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 		return nil, nil, fmt.Errorf("family blocklist: %w", err)
 	}
 
-	blocked, allowed := splitRules(rules)
+	blocked, allowed, limited := splitRules(rules)
 	in := policy.Input{
 		Settings: policy.Settings{
 			TrackingOnly:          pol.TrackingOnly,
@@ -186,13 +191,29 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 			BlockedPackages:       blocked,
 			FamilyBlockedPackages: familyBlocked,
 			AllowedPackages:       allowed,
+			LimitedPackages:       limited,
 			BlockedDomains:        domains,
 			ManagedApps:           r.managedApps(managed),
 		},
-		Installed:        installedApps(apps),
-		UsedMinutesToday: used,
-		ParentLock:       dev.Locked,
-		CriticalPackages: dev.CriticalPackages,
+		Installed:            installedApps(apps),
+		UsedMinutesToday:     used,
+		UsedMinutesByPackage: usedByPackage,
+		ParentLock:           dev.Locked,
+		// The device's own resolved packages (its actual dialer, launcher and IMEs) *plus* the
+		// family's always-usable list, unioned here rather than left to the engine.
+		//
+		// This looks redundant — policy.Compute already unions AlwaysUsablePackages into the
+		// whitelist — and it is not, because this Input does not only feed the computation on this
+		// server. It is also handed to the phone, which caches it and *recomputes locally* so that
+		// bedtime and the quota keep working with no network (FR-9). The phone's own copy of the
+		// whitelist is compiled into the APK. So a package added only to this server's list would be
+		// honoured by the console and ignored by the phone until every phone took an update — and
+		// under Play Protect a self-hosted update is exactly the thing that cannot be relied on to
+		// arrive. Sending it in the Input closes that gap on the next sync instead.
+		//
+		// Unioned per request; the stored critical_packages column still holds only what the device
+		// itself reported, so this can never grow the device's own record.
+		CriticalPackages: append(append([]string{}, dev.CriticalPackages...), policy.AlwaysUsablePackages...),
 		Now:              now.In(loc).Format(time.RFC3339),
 	}
 
@@ -215,17 +236,27 @@ func DayKey(pol *store.Policy, at time.Time) (string, error) {
 	return at.In(loc).Format("2006-01-02"), nil
 }
 
-func splitRules(rules []store.AppRule) (blocked, allowed []string) {
-	blocked, allowed = []string{}, []string{}
+// splitRules turns one table of rules into the three lists the engine reads.
+//
+// Three and not two since migration 0013. A LIMIT rule belongs in neither of the original lists:
+// putting it in `allowed` would exempt the app from bedtime and the daily limit, which is the
+// opposite of what it means, and leaving it out of all of them would leave the app waiting for an
+// approval it has already been given.
+//
+// ListAppRules orders by package name, so all three come out sorted without sorting them.
+func splitRules(rules []store.AppRule) (blocked, allowed []string, limited []policy.AppLimit) {
+	blocked, allowed, limited = []string{}, []string{}, []policy.AppLimit{}
 	for _, r := range rules {
 		switch r.Action {
 		case store.ActionBlock:
 			blocked = append(blocked, r.PackageName)
 		case store.ActionAllow:
 			allowed = append(allowed, r.PackageName)
+		case store.ActionLimit:
+			limited = append(limited, policy.AppLimit{PackageName: r.PackageName, Minutes: r.LimitMinutes})
 		}
 	}
-	return blocked, allowed
+	return blocked, allowed, limited
 }
 
 // installedApps maps the inventory the device reported onto the engine's view of it.

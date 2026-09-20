@@ -566,6 +566,8 @@ class ConnectionService : Service() {
             // The quota has to bite on a phone with no signal, and the only number that is current
             // there is the one this device measured itself. See Synchronizer.localUsedMinutes.
             localUsedMinutes = { input -> reports.usedMinutesToday(input) },
+            // Same measurement, per package, for the per-app allowances (FR-5.8).
+            localUsedMinutesByPackage = { input -> reports.usedMinutesByPackageToday(input) },
         )
         journal = recoveryJournal
         // Published before the first sync, so an alarm that fires during it waits on `syncLock`
@@ -1923,6 +1925,21 @@ private class Reporting(
         // Floor, matching the server's own millis-to-minutes conversion. The two numbers are
         // combined with max, so a rounding difference of under a minute cannot change enforcement.
         return (ledger.totals(day).values.sum() / 60_000L).toInt()
+    }
+
+    /**
+     * The same measurement, per package, for the per-app allowances (FR-5.8).
+     *
+     * Reads the same ledger and the same day as [usedMinutesToday] and floors the same way, so an
+     * allowance is spent at the instant the two engines agree it is. Empty when the zone cannot be
+     * read, for the reason given above: filing minutes under a day nobody reads is worse than
+     * measuring nothing.
+     */
+    fun usedMinutesByPackageToday(input: Input): Map<String, Int> {
+        val policyZone = DayAttribution.zoneOf(input.settings.timezone) ?: return emptyMap()
+        zone.current = policyZone
+        val day = DayAttribution.key(wallClock(), policyZone)
+        return ledger.totals(day).mapValues { (_, ms) -> (ms / 60_000L).toInt() }
     }
 }
 

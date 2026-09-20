@@ -1919,6 +1919,266 @@
         "suspend_reason": "",
         "suspended_packages": []
       }
+    },
+    {
+      "name": "always-usable apps survive bedtime, a spent quota, a family block, an explicit block and the approval hold",
+      "requirements": [
+        "FR-5.4",
+        "FR-5.5",
+        "FR-5.9",
+        "FR-18"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": false,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 30,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 12,
+          "blocked_packages": [
+            "com.example.blocked",
+            "com.whatsapp"
+          ],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "family_blocked_packages": [
+            "ch.threema.app"
+          ]
+        },
+        "installed": [
+          {
+            "package": "ch.threema.app",
+            "system": false,
+            "new_since_baseline": true
+          },
+          {
+            "package": "com.audible.application",
+            "system": false,
+            "new_since_baseline": true
+          },
+          {
+            "package": "com.whatsapp",
+            "system": false,
+            "new_since_baseline": true
+          },
+          {
+            "package": "org.thoughtcrime.securesms",
+            "system": false,
+            "new_since_baseline": true
+          },
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": true
+          },
+          {
+            "package": "com.example.blocked",
+            "system": false,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 400,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T23:30:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "BEDTIME",
+        "suspended_packages": [
+          "com.example.blocked",
+          "com.example.game"
+        ],
+        "hidden_packages": [
+          "com.example.blocked"
+        ],
+        "pending_approval": [
+          "com.example.game"
+        ]
+      }
+    },
+    {
+      "name": "approval without exemption: a LIMIT rule ends the wait, and no rule does not",
+      "requirements": [
+        "FR-5.4",
+        "FR-5.8"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": false,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 13,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "limited_packages": [
+            {
+              "package_name": "com.example.chat",
+              "minutes": 0
+            }
+          ]
+        },
+        "installed": [
+          {
+            "package": "com.example.chat",
+            "system": false,
+            "new_since_baseline": true
+          },
+          {
+            "package": "com.example.newgame",
+            "system": false,
+            "new_since_baseline": true
+          }
+        ],
+        "used_minutes_today": 12,
+        "parent_lock": false,
+        "critical_packages": [],
+        "used_minutes_by_package": {},
+        "now": "2026-08-17T14:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [
+          "com.example.newgame"
+        ],
+        "pending_approval": [
+          "com.example.newgame"
+        ],
+        "hidden_packages": []
+      }
+    },
+    {
+      "name": "approval is not exemption: bedtime reaches a LIMIT rule and never an ALLOW",
+      "requirements": [
+        "FR-3.4",
+        "FR-5.8"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": false,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 13,
+          "blocked_packages": [],
+          "allowed_packages": [
+            "com.example.free"
+          ],
+          "blocked_domains": [],
+          "limited_packages": [
+            {
+              "package_name": "com.example.chat",
+              "minutes": 0
+            }
+          ]
+        },
+        "installed": [
+          {
+            "package": "com.example.chat",
+            "system": false,
+            "new_since_baseline": true
+          },
+          {
+            "package": "com.example.free",
+            "system": false,
+            "new_since_baseline": true
+          }
+        ],
+        "used_minutes_today": 12,
+        "parent_lock": false,
+        "critical_packages": [],
+        "used_minutes_by_package": {},
+        "now": "2026-08-17T23:30:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "BEDTIME",
+        "suspended_packages": [
+          "com.example.chat"
+        ],
+        "pending_approval": []
+      }
+    },
+    {
+      "name": "an app's own allowance is spent while the phone still has screen time left",
+      "requirements": [
+        "FR-5.8"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 120,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 13,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "limited_packages": [
+            {
+              "package_name": "com.example.capped",
+              "minutes": 45
+            },
+            {
+              "package_name": "com.example.undercap",
+              "minutes": 45
+            }
+          ]
+        },
+        "installed": [
+          {
+            "package": "com.example.capped",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.example.undercap",
+            "system": false,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 60,
+        "parent_lock": false,
+        "critical_packages": [],
+        "used_minutes_by_package": {
+          "com.example.capped": 45,
+          "com.example.undercap": 44
+        },
+        "now": "2026-08-17T14:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [
+          "com.example.capped"
+        ],
+        "pending_approval": [],
+        "hidden_packages": [],
+        "remaining_minutes": 60
+      }
     }
   ]
 }

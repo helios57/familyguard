@@ -107,7 +107,25 @@ class Synchronizer(
      * Returns 0 when nothing is measured — never a guess. See `UsageTracker`.
      */
     private val localUsedMinutes: (Input) -> Int = { 0 },
+
+    /**
+     * The same measurement as [localUsedMinutes], per package, for the per-app allowances (FR-5.8).
+     *
+     * Merged key by key with `max`, for exactly the reasons above: neither side can roll the other
+     * backwards, a device that cannot measure returns an empty map and changes nothing, and summing
+     * would spend an allowance the child had not used. A package the server knows about and the
+     * device does not keeps the server's number rather than dropping to zero.
+     */
+    private val localUsedMinutesByPackage: (Input) -> Map<String, Int> = { emptyMap() },
 ) {
+
+    /** Per package, the larger of the two. See [localUsedMinutesByPackage] for why it is a max. */
+    private fun mergeByMax(server: Map<String, Int>, local: Map<String, Int>): Map<String, Int> {
+        if (local.isEmpty()) return server
+        val out = HashMap(server)
+        for ((pkg, minutes) in local) out[pkg] = maxOf(out[pkg] ?: 0, minutes)
+        return out
+    }
 
     /**
      * Fetches, caches, computes, applies, heartbeats.
@@ -190,6 +208,10 @@ class Synchronizer(
                     now = now(),
                     // See `localUsedMinutes`: max, never sum, and never a replacement.
                     usedMinutesToday = maxOf(input.usedMinutesToday, localUsedMinutes(input)),
+                    usedMinutesByPackage = mergeByMax(
+                        input.usedMinutesByPackage,
+                        localUsedMinutesByPackage(input),
+                    ),
                 )
             )
         } catch (e: InvalidPolicyInput) {

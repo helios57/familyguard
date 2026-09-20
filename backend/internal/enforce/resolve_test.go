@@ -21,16 +21,20 @@ import (
 // resolver that swallowed one read would compute a desired state from partial data — a child whose
 // usage query failed would silently get their quota back.
 type fakeSource struct {
-	device    store.Device
-	policy    store.Policy
-	rules     []store.AppRule
-	domains   []string
-	apps      []store.InstalledApp
-	usage     map[string]int
-	managed   []store.App
-	blocklist []string
-	fail      map[string]error
-	usageDay  string // the day key the resolver actually asked for
+	device  store.Device
+	policy  store.Policy
+	rules   []store.AppRule
+	domains []string
+	apps    []store.InstalledApp
+	usage   map[string]int
+	// Per day, then per package. Separate from `usage` above rather than derived from it: a fake
+	// that computed the total from the parts could never reproduce a device whose two numbers
+	// disagree, which is exactly the state a rounding difference produces.
+	usageByPackage map[string]map[string]int
+	managed        []store.App
+	blocklist      []string
+	fail           map[string]error
+	usageDay       string // the day key the resolver actually asked for
 }
 
 func (f *fakeSource) GetDevice(context.Context, uuid.UUID) (*store.Device, error) {
@@ -82,6 +86,13 @@ func (f *fakeSource) FamilyBlockedPackageNames(context.Context) ([]string, error
 		return nil, err
 	}
 	return f.blocklist, nil
+}
+
+func (f *fakeSource) UsageMinutesByPackageForDay(_ context.Context, _ uuid.UUID, day string) (map[string]int, error) {
+	if err := f.fail["usage"]; err != nil {
+		return nil, err
+	}
+	return f.usageByPackage[day], nil
 }
 
 func (f *fakeSource) UsageMinutesForDay(_ context.Context, _ uuid.UUID, day string) (int, error) {

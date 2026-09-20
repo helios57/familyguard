@@ -1,6 +1,7 @@
 package io.github.helios57.familyguard.sync
 
 import io.github.helios57.familyguard.enforce.App
+import io.github.helios57.familyguard.enforce.AppLimit
 import io.github.helios57.familyguard.enforce.DesiredState
 import io.github.helios57.familyguard.enforce.EnforcementEngine
 import io.github.helios57.familyguard.enforce.Input
@@ -58,6 +59,7 @@ class SynchronizerTest {
     private fun synchronizer(
         now: String = DEVICE_NOW,
         localUsedMinutes: (Input) -> Int = { 0 },
+        localUsedMinutesByPackage: (Input) -> Map<String, Int> = { emptyMap() },
     ) = Synchronizer(
         api,
         cache,
@@ -66,6 +68,7 @@ class SynchronizerTest {
         telemetry = { TELEMETRY },
         now = { now },
         localUsedMinutes = localUsedMinutes,
+        localUsedMinutesByPackage = localUsedMinutesByPackage,
     )
 
     // ---- the happy path ---------------------------------------------------------------------
@@ -250,6 +253,65 @@ class SynchronizerTest {
 
         assertEquals(EnforcementEngine.REASON_NONE, result.state.suspendReason)
         assertEquals(40, result.state.usedMinutes)
+    }
+
+    /**
+     * FR-5.8, and the same staleness argument one level down. An app's own allowance is spent in
+     * minutes this phone measures; the server only knows what the last successful report carried.
+     * A phone in a tunnel would otherwise let a 30-minute allowance run all afternoon, and nothing
+     * anywhere would be red — the shared quota is nowhere near its limit, so no other rule catches
+     * it either.
+     */
+    @Test
+    fun `an app's own allowance is spent from the device's own measurement`() {
+        answerWithAppLimit(minutes = 30, serverUsedByPackage = mapOf("com.example.game" to 5))
+
+        val result = synchronizer(
+            localUsedMinutesByPackage = { mapOf("com.example.game" to 45) },
+        ).sync() as SyncResult.Applied
+
+        assertTrue(
+            "the app's allowance is spent and it is still running: ${result.state.suspendedPackages}",
+            result.state.suspendedPackages.contains("com.example.game"),
+        )
+        // And the phone is NOT in a quota state. One app stopping must not read to a parent — or to
+        // any other branch of the engine — as the child being out of screen time.
+        assertEquals(EnforcementEngine.REASON_NONE, result.state.suspendReason)
+    }
+
+    /** The per-package half of the double-count guard: `max`, never a sum. */
+    @Test
+    fun `the device's per-app minutes are not added to the ones it already reported`() {
+        answerWithAppLimit(minutes = 30, serverUsedByPackage = mapOf("com.example.game" to 20))
+
+        val result = synchronizer(
+            localUsedMinutesByPackage = { mapOf("com.example.game" to 20) },
+        ).sync() as SyncResult.Applied
+
+        assertFalse(
+            "20 measured minutes plus the same 20 already reported spent a 30 minute allowance",
+            result.state.suspendedPackages.contains("com.example.game"),
+        )
+    }
+
+    /**
+     * The direction that is easy to get wrong: the device measures SOME packages and the server
+     * knows about another. Merging key by key keeps the server's number; replacing the map with the
+     * device's would drop that app to zero and hand back an allowance the child had already spent.
+     */
+    @Test
+    fun `a package the device did not measure keeps the server's minutes`() {
+        answerWithAppLimit(minutes = 30, serverUsedByPackage = mapOf("com.example.game" to 40))
+
+        val result = synchronizer(
+            localUsedMinutesByPackage = { mapOf("com.example.other" to 3) },
+        ).sync() as SyncResult.Applied
+
+        assertTrue(
+            "the device measured a different app and the spent allowance was forgotten: " +
+                "${result.state.suspendedPackages}",
+            result.state.suspendedPackages.contains("com.example.game"),
+        )
     }
 
     /** A device whose usage storage was cleared falls back to the server's number, not to zero. */
@@ -646,6 +708,8 @@ class SynchronizerTest {
         version: Long = 7,
         dailyLimitMinutes: Int = 0,
         usedMinutesToday: Int = 0,
+        limitedPackages: List<AppLimit> = emptyList(),
+        usedMinutesByPackage: Map<String, Int> = emptyMap(),
     ): Input = Input(
         settings = Settings(
             bedtimeEnabled = true,
@@ -653,12 +717,40 @@ class SynchronizerTest {
             bedtimeEnd = "07:00",
             timezone = "Europe/Zurich",
             dailyLimitMinutes = dailyLimitMinutes,
+            limitedPackages = limitedPackages,
             version = version,
         ),
         installed = listOf(App(pkg = "com.example.game")),
         usedMinutesToday = usedMinutesToday,
+        usedMinutesByPackage = usedMinutesByPackage,
         now = now,
     )
+
+    /** The server's answer for a child whose game has an allowance of its own (FR-5.8). */
+    private fun answerWithAppLimit(minutes: Int, serverUsedByPackage: Map<String, Int>) {
+        server.answerWith { request ->
+            if (request.path.endsWith("/heartbeat")) {
+                HttpResponse(200, body = """{"policy_version":99,"pending_commands":2}""")
+            } else {
+                HttpResponse(
+                    200,
+                    body = policyBody(
+                        inputAt(
+                            SERVER_NOW,
+                            // 240 minutes of shared quota, deliberately far out of reach: every
+                            // assertion below is about ONE app stopping on a phone that still has
+                            // screen time, which is the whole difference between an app's own
+                            // allowance and the family's daily limit.
+                            dailyLimitMinutes = 240,
+                            usedMinutesToday = 30,
+                            limitedPackages = listOf(AppLimit("com.example.game", minutes)),
+                            usedMinutesByPackage = serverUsedByPackage,
+                        )
+                    ),
+                )
+            }
+        }
+    }
 
     private companion object {
         /** 20:00 Zurich: before bedtime. */

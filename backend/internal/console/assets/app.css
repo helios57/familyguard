@@ -568,10 +568,43 @@ input[type="checkbox"] { width: auto; min-height: auto; }
 /* The app list carries a three-way control per row, which does not fit beside a package name on a
    360 px screen. It stacks below the label until there is room for both. */
 .applist li { flex-direction: column; align-items: stretch; gap: 8px; }
-.applist .seg { width: 100%; }
+.applist .seg,
+.applist .app-choice { width: 100%; }
+
+/* The category control is five buttons where it used to be three (FR-5.8), so the labels get less
+   room each. They are shortened rather than truncated: a segmented control that clips its own
+   options is one whose choices a parent has to guess at, and the full sentence for each lives in
+   the button's title. */
+.applist .app-choice { display: flex; flex-direction: column; gap: 8px; }
+.applist .seg .btn { font-size: 0.82rem; padding: 10px 4px; }
+
+/* Only rendered while "Own limit" is the selected answer — see categoryControl for why a minutes
+   field must not sit next to an app that has no allowance. */
+.own-limit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: var(--tap);
+}
+.own-limit input {
+  flex: 0 0 auto;
+  width: 96px;
+  min-height: var(--tap);
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: right;
+}
+.own-limit input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 @media (min-width: 560px) {
   .applist li { flex-direction: row; align-items: center; }
-  .applist .seg { width: auto; flex: 0 0 260px; }
+  .applist .seg,
+  .applist .app-choice { width: auto; flex: 0 0 380px; }
 }
 
 .toolbar { display: grid; gap: 8px; margin-bottom: 10px; }

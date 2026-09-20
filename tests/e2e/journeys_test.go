@@ -166,16 +166,25 @@ type policyInputDTO struct {
 		// this offline. A device given only the computed answer reveals the whole list the first
 		// time it loses the network.
 		FamilyBlockedPackages []string `json:"family_blocked_packages"`
+		// FR-5.8, and in the INPUT for the same reason the family blocklist is: an allowance that
+		// existed only in the computed answer would stop binding the moment the phone lost the
+		// network and recomputed for itself.
+		LimitedPackages []struct {
+			PackageName string `json:"package_name"`
+			Minutes     int    `json:"minutes"`
+		} `json:"limited_packages"`
 	} `json:"settings"`
 	Installed []struct {
 		Package            string `json:"package"`
 		System             bool   `json:"system"`
 		NewSinceEnrollment bool   `json:"new_since_enrollment"`
 	} `json:"installed"`
-	UsedMinutesToday int      `json:"used_minutes_today"`
-	ParentLock       bool     `json:"parent_lock"`
-	CriticalPackages []string `json:"critical_packages"`
-	Now              string   `json:"now"`
+	UsedMinutesToday int `json:"used_minutes_today"`
+	// The other half of that arithmetic: what each app has spent of its own allowance today.
+	UsedMinutesByPackage map[string]int `json:"used_minutes_by_package"`
+	ParentLock           bool           `json:"parent_lock"`
+	CriticalPackages     []string       `json:"critical_packages"`
+	Now                  string         `json:"now"`
 }
 
 type policyResponseDTO struct {

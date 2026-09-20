@@ -334,6 +334,9 @@ func (s *Server) listAppRules(c *gin.Context) {
 type appRuleRequest struct {
 	PackageName string `json:"package_name"`
 	Action      string `json:"action"`
+	// LimitMinutes is read only for ActionLimit. A pointer would buy nothing here: absent and 0
+	// mean the same thing — "governed by the family's daily limit and nothing more".
+	LimitMinutes int `json:"limit_minutes"`
 }
 
 func (s *Server) putAppRule(c *gin.Context) {
@@ -350,16 +353,30 @@ func (s *Server) putAppRule(c *gin.Context) {
 		failWith(c, http.StatusBadRequest, "invalid_input", "package_name is required")
 		return
 	}
-	if req.Action != store.ActionAllow && req.Action != store.ActionBlock {
-		failWith(c, http.StatusBadRequest, "invalid_input", "action must be ALLOW or BLOCK")
+	if req.Action != store.ActionAllow && req.Action != store.ActionBlock && req.Action != store.ActionLimit {
+		failWith(c, http.StatusBadRequest, "invalid_input", "action must be ALLOW, LIMIT or BLOCK")
 		return
 	}
-	if err := s.store.SetAppRule(c.Request.Context(), childID, pkg, req.Action); err != nil {
+	// Refused rather than clamped. A per-app cap on an app that is always free, or on one that is
+	// blocked outright, is a request that cannot be honoured — and silently storing a number that
+	// never binds is how a console comes to show a limit nobody is enforcing.
+	limit := req.LimitMinutes
+	if req.Action != store.ActionLimit && limit != 0 {
+		failWith(c, http.StatusBadRequest, "invalid_input", "limit_minutes only applies to LIMIT")
+		return
+	}
+	if limit < 0 || limit > 1440 {
+		failWith(c, http.StatusBadRequest, "invalid_input", "limit_minutes must be between 0 and 1440")
+		return
+	}
+	if err := s.store.SetAppRule(c.Request.Context(), childID, pkg, req.Action, limit); err != nil {
 		s.fail(c, err)
 		return
 	}
-	s.bumpAndNotify(c, childID, "APP_RULE_SET", map[string]any{"package": pkg, "action": req.Action})
-	c.JSON(http.StatusOK, gin.H{"package_name": pkg, "action": req.Action})
+	s.bumpAndNotify(c, childID, "APP_RULE_SET", map[string]any{
+		"package": pkg, "action": req.Action, "limit_minutes": limit,
+	})
+	c.JSON(http.StatusOK, gin.H{"package_name": pkg, "action": req.Action, "limit_minutes": limit})
 }
 
 func (s *Server) deleteAppRule(c *gin.Context) {

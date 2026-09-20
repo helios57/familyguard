@@ -57,6 +57,37 @@ object EnforcementEngine {
         "com.samsung.android.messaging",
     )
 
+    /**
+     * Packages that can never be suspended or hidden either (FR-5.9), for a different reason.
+     *
+     * [DEFAULT_CRITICAL_PACKAGES] is about the *phone* still working: a suspended dialer is a phone
+     * that cannot call for help. This list is about the family still reaching each other, which the
+     * owner decided is not a privilege any schedule gets to withdraw.
+     *
+     * The branch it is really aimed at is the free-installation hold below (FR-5.4), not bedtime.
+     * Measured on the family phone 2026-09-20: WhatsApp, Threema, Signal and Audible had all been
+     * installed after the device filed its first inventory, so all four sat suspended in
+     * `pendingApproval` waiting for an approval nobody knew to give. Turning bedtime off changed
+     * nothing, because bedtime was never the branch holding them — which is what makes this failure
+     * hard to report: the parent sees four dead apps and no reason for any of them.
+     *
+     * This is the Kotlin copy of `policy.AlwaysUsablePackages`, and the shared vector
+     * "always-usable apps survive bedtime, a spent quota, a family block and the approval hold"
+     * is what keeps the two from drifting apart.
+     *
+     * The server also sends this list in [Input.criticalPackages], so a phone that syncs honours it
+     * without taking an app update. This copy is the floor for one that does not.
+     */
+    val ALWAYS_USABLE_PACKAGES = listOf(
+        "ch.threema.app", // Threema
+        "ch.threema.app.libre", // Threema Libre (the F-Droid build, a separate package id)
+        "ch.threema.app.work", // Threema Work
+        "com.audible.application", // Audible
+        "com.whatsapp", // WhatsApp
+        "com.whatsapp.w4b", // WhatsApp Business
+        "org.thoughtcrime.securesms", // Signal
+    )
+
     /** The app family the YouTube killswitch suspends and hides (FR-7.1). */
     val YOUTUBE_PACKAGES = listOf(
         "app.revanced.android.youtube",
@@ -191,7 +222,18 @@ object EnforcementEngine {
         val zone = loadZone(input.settings.timezone)
         val local = parseInstant(input.now).atZoneSameInstant(zone)
 
-        val critical = sortedSetOfPackages(DEFAULT_CRITICAL_PACKAGES) + input.criticalPackages.nonEmpty()
+        val critical = sortedSetOfPackages(DEFAULT_CRITICAL_PACKAGES) +
+            sortedSetOfPackages(ALWAYS_USABLE_PACKAGES) +
+            input.criticalPackages.nonEmpty()
+
+        // Approved-and-governed, with each app's own allowance. Built before anything is decided,
+        // because two branches below read it for opposite purposes: presence alone ends the
+        // approval hold, and the value is what can re-suspend the app later the same day.
+        val limited = HashMap<String, Int>()
+        for (l in input.settings.limitedPackages) {
+            val pkg = l.packageName.trim()
+            if (pkg.isNotEmpty()) limited[pkg] = l.minutes
+        }
 
         // ---- filtering and hardening: in effect in every mode, including tracking-only ----
 
@@ -302,16 +344,24 @@ object EnforcementEngine {
         for (app in input.installed) {
             if (app.pkg.isEmpty()) continue
             // FR-5.4: with free installation off, an app the child added after the device reported
-            // its first inventory waits for a parent's decision.
+            // its first inventory waits for a parent's decision. Any of the three answers ends the
+            // wait — including LIMIT, which is why that action exists: "yes, and it counts like
+            // everything else" was previously not a sentence a parent could say.
             if (!input.settings.allowChildInstalls && app.newSinceBaseline && !app.system &&
-                app.pkg !in allowed && app.pkg !in blocked
+                app.pkg !in allowed && app.pkg !in blocked && app.pkg !in limited
             ) {
                 suspended.add(app.pkg)
                 pending.add(app.pkg)
             }
             // Bedtime or an exhausted quota suspends everything non-exempt (FR-3.4, FR-4.2). An
-            // explicit ALLOW rule is the exemption a parent can grant.
+            // explicit ALLOW rule is the exemption a parent can grant — a LIMIT rule deliberately
+            // is not one, which is the whole difference between the two.
             if (reason != REASON_NONE && app.pkg !in allowed) suspended.add(app.pkg)
+            // FR-5.8: an app with an allowance of its own, spent. Independent of the shared quota,
+            // so this suspends one app on a phone with screen time left — and deliberately not a
+            // suspendReason: the phone is not in a quota state, one app is.
+            val own = limited[app.pkg] ?: 0
+            if (own > 0 && (input.usedMinutesByPackage[app.pkg] ?: 0) >= own) suspended.add(app.pkg)
         }
 
         // The whitelist is applied last and unconditionally, so no branch above can outlive it.
@@ -538,6 +588,16 @@ data class Settings(
      * without a parent having to notice anything went wrong.
      */
     @SerialName("managed_apps") val managedApps: List<ManagedApp> = emptyList(),
+
+    /**
+     * Apps a parent approved *without* exempting them from anything (`store.ActionLimit`).
+     *
+     * Kept apart from [allowedPackages] rather than folded into it, because the two differ exactly
+     * where it matters: an allowed app is outside bedtime and the daily limit, a limited one is
+     * inside both. Until migration 0013 there was no way to say the second thing at all, so
+     * approving an app and exempting it from every schedule were the same keystroke.
+     */
+    @SerialName("limited_packages") val limitedPackages: List<AppLimit> = emptyList(),
 )
 
 /**
@@ -562,6 +622,21 @@ data class ManagedApp(
     @SerialName("url") val url: String = "",
 )
 
+/**
+ * One approved app and, optionally, its own daily allowance (FR-5.8).
+ *
+ * The Kotlin copy of `policy.AppLimit`. [minutes] == 0 is the ordinary case and the important one:
+ * the app is APPROVED — it stops waiting for anybody and drops out of `pendingApproval` — and is
+ * otherwise governed like every other app, counted against the shared daily limit and paused at
+ * bedtime. A positive value adds a second, independent allowance, so an app can run out while the
+ * child still has screen time left for everything else.
+ */
+@Serializable
+data class AppLimit(
+    @SerialName("package_name") val packageName: String = "",
+    @SerialName("minutes") val minutes: Int = 0,
+)
+
 @Serializable
 data class Input(
     @SerialName("settings") val settings: Settings = Settings(),
@@ -569,6 +644,15 @@ data class Input(
     @SerialName("used_minutes_today") val usedMinutesToday: Int = 0,
     @SerialName("parent_lock") val parentLock: Boolean = false,
     @SerialName("critical_packages") val criticalPackages: List<String> = emptyList(),
+
+    /**
+     * This device's foreground minutes per package, for the same local day [usedMinutesToday]
+     * covers.
+     *
+     * Only packages carrying an allowance of their own are ever read out of it, so an absent map
+     * simply enforces no per-app cap — the right direction for something that can be missing.
+     */
+    @SerialName("used_minutes_by_package") val usedMinutesByPackage: Map<String, Int> = emptyMap(),
     @SerialName("now") val now: String = "",
 )
 
