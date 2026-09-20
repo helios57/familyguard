@@ -1,19 +1,25 @@
 package io.github.helios57.familyguard.usage
 
 /**
- * Where the foreground spans for a window come from.
+ * The platform's record of what was in the foreground, as far as this app can see it.
  *
- * `null` from [spans] means **not measured**, and that is a different answer from an empty list.
- * Empty says the screen was on and nothing ran; null says this device cannot see what ran at all.
- * Collapsing the two is the failure this interface exists to prevent: usage that reads zero makes
- * every daily quota unreachable, so the child gets unlimited screen time and the console shows a
- * healthy device with a well-behaved child (FR-3.4).
+ * One interface so the arithmetic can be tested on the JVM against a stream of events, and so the
+ * one implementation that touches Android is a loop over a cursor with no rules in it.
  */
 interface ForegroundReader {
 
-    /** @return the spans the platform reports for `[fromMillis, toMillis)`, or null if not measured. */
-    fun spans(fromMillis: Long, toMillis: Long): List<ForegroundSpan>?
+    /**
+     * Folds the platform's events for `[fromMillis, toMillis)`, or null if nothing could be measured.
+     *
+     * Null is never "no usage". A missing usage-access grant, or a platform that throws, returns
+     * nothing from every query — and reporting that as zero shows a parent a child who spent the day
+     * off their phone while making the daily limit unreachable (FR-3.4).
+     *
+     * @param carried what the previous, contiguous window left open, so a session that outlives a
+     *   poll keeps being measured. See [SpanFolder.fold].
+     */
+    fun read(fromMillis: Long, toMillis: Long, carried: OpenSpan?): ForegroundWindow?
 
-    /** Why [spans] is returning null, for a log line and for the on-device status screen. */
+    /** Why [read] is returning null, for a log line and for the on-device status screen. */
     fun unavailableReason(): String
 }

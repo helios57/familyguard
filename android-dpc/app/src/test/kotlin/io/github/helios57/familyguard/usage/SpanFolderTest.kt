@@ -1,6 +1,7 @@
 package io.github.helios57.familyguard.usage
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -11,6 +12,12 @@ import org.junit.Test
  * `PAUSED`: Android does not promise one before the next `RESUMED`, and a fold that waited for it
  * would leave a span open to the end of the window and credit an app the child closed hours ago —
  * arriving as usage, not as an error.
+ *
+ * **Two cases in this file used to assert the defect, and their names said so plainly** — *"a span
+ * still open at the end of the window is closed there"* and *"no events at all is no usage, not an
+ * open span"*. Both were true statements about the code and wrong statements about the platform:
+ * an app that stays in the foreground emits no event, so closing at the window end threw the rest
+ * of the session away. See [ContinuousForegroundTest] for what that measured.
  */
 class SpanFolderTest {
 
@@ -18,18 +25,19 @@ class SpanFolderTest {
 
     @Test
     fun `a resume followed by a pause is one span`() {
-        val spans = SpanFolder.fold(
+        val window = SpanFolder.fold(
             listOf(resumed(GAME, 1 * minute), paused(GAME, 6 * minute)),
             windowEndMillis = 10 * minute,
         )
 
-        assertEquals(listOf(ForegroundSpan(GAME, 1 * minute, 6 * minute)), spans)
+        assertEquals(listOf(ForegroundSpan(GAME, 1 * minute, 6 * minute)), window.closed)
+        assertNull("nothing is left in the foreground", window.open)
     }
 
     /** The lost-`PAUSED` case: the next resume closes whatever was open. */
     @Test
     fun `a resume closes the span that was open`() {
-        val spans = SpanFolder.fold(
+        val window = SpanFolder.fold(
             listOf(resumed(GAME, 1 * minute), resumed(CHAT, 4 * minute), paused(CHAT, 5 * minute)),
             windowEndMillis = 10 * minute,
         )
@@ -39,7 +47,7 @@ class SpanFolderTest {
                 ForegroundSpan(GAME, 1 * minute, 4 * minute),
                 ForegroundSpan(CHAT, 4 * minute, 5 * minute),
             ),
-            spans,
+            window.closed,
         )
     }
 
@@ -49,46 +57,105 @@ class SpanFolderTest {
      */
     @Test
     fun `a pause for a package that is not the open one is ignored`() {
-        val spans = SpanFolder.fold(
+        val window = SpanFolder.fold(
             listOf(resumed(GAME, 1 * minute), paused(CHAT, 3 * minute), paused(GAME, 8 * minute)),
             windowEndMillis = 10 * minute,
         )
 
-        assertEquals(listOf(ForegroundSpan(GAME, 1 * minute, 8 * minute)), spans)
+        assertEquals(listOf(ForegroundSpan(GAME, 1 * minute, 8 * minute)), window.closed)
     }
 
     /** FR-3.3: the span ends when the screen went off, not when the poll happened to run. */
     @Test
     fun `screen off closes the open span at the moment it went off`() {
-        val spans = SpanFolder.fold(
+        val window = SpanFolder.fold(
             listOf(resumed(GAME, 1 * minute), screenOff(3 * minute)),
             windowEndMillis = 8 * 60 * minute,
         )
 
-        assertEquals(listOf(ForegroundSpan(GAME, 1 * minute, 3 * minute)), spans)
+        assertEquals(listOf(ForegroundSpan(GAME, 1 * minute, 3 * minute)), window.closed)
+        assertNull("the screen going off ends the session, it does not carry it", window.open)
     }
 
     @Test
     fun `a screen off with nothing open produces nothing`() {
-        assertTrue(SpanFolder.fold(listOf(screenOff(3 * minute)), windowEndMillis = 10 * minute).isEmpty())
+        val window = SpanFolder.fold(listOf(screenOff(3 * minute)), windowEndMillis = 10 * minute)
+
+        assertTrue(window.closed.isEmpty())
+        assertNull(window.open)
     }
+
+    // ---- what outlives the window ---------------------------------------------------------------
 
     /**
-     * A session still running when the poll fires is closed at the window end. The next window opens
-     * its own span from its own `RESUMED`, so nothing is double-counted and nothing carries.
+     * A session still running when the poll fires is handed back, not closed.
+     *
+     * The platform reports transitions, so the next window will contain no `RESUMED` for this app
+     * and can only know about it from here.
      */
     @Test
-    fun `a span still open at the end of the window is closed there`() {
-        val spans = SpanFolder.fold(listOf(resumed(GAME, 1 * minute)), windowEndMillis = 10 * minute)
+    fun `a span still open at the end of the window is handed back`() {
+        val window = SpanFolder.fold(listOf(resumed(GAME, 1 * minute)), windowEndMillis = 10 * minute)
 
-        assertEquals(listOf(ForegroundSpan(GAME, 1 * minute, 10 * minute)), spans)
+        assertTrue("nothing ended in this window", window.closed.isEmpty())
+        assertEquals(OpenSpan(GAME, 1 * minute), window.open)
+    }
+
+    /** The other side of it: a window with no events at all continues what was already running. */
+    @Test
+    fun `a window with no events keeps the carried session open`() {
+        val window = SpanFolder.fold(
+            emptyList(),
+            windowEndMillis = 10 * minute,
+            carried = OpenSpan(GAME, 1 * minute),
+        )
+
+        assertTrue(window.closed.isEmpty())
+        assertEquals("still open, and still since the moment it was opened", OpenSpan(GAME, 1 * minute), window.open)
+    }
+
+    /** A carried session that ends in this window reports its TRUE start, not the poll boundary. */
+    @Test
+    fun `a carried session that ends here keeps the start it really had`() {
+        val window = SpanFolder.fold(
+            listOf(paused(GAME, 12 * minute)),
+            windowEndMillis = 15 * minute,
+            carried = OpenSpan(GAME, 1 * minute),
+        )
+
+        assertEquals(listOf(ForegroundSpan(GAME, 1 * minute, 12 * minute)), window.closed)
+        assertNull(window.open)
+    }
+
+    /** A carried session that is replaced by another app is closed at the handover. */
+    @Test
+    fun `a carried session is closed by a resume of a different app`() {
+        val window = SpanFolder.fold(
+            listOf(resumed(CHAT, 12 * minute)),
+            windowEndMillis = 15 * minute,
+            carried = OpenSpan(GAME, 1 * minute),
+        )
+
+        assertEquals(listOf(ForegroundSpan(GAME, 1 * minute, 12 * minute)), window.closed)
+        assertEquals(OpenSpan(CHAT, 12 * minute), window.open)
     }
 
     @Test
-    fun `an app resumed after the window end contributes nothing`() {
-        val spans = SpanFolder.fold(listOf(resumed(GAME, 20 * minute)), windowEndMillis = 10 * minute)
+    fun `no events and nothing carried is no usage`() {
+        val window = SpanFolder.fold(emptyList(), windowEndMillis = 10 * minute)
 
-        assertTrue(spans.isEmpty())
+        assertTrue(window.closed.isEmpty())
+        assertNull(window.open)
+    }
+
+    // ---- the untidy shapes ----------------------------------------------------------------------
+
+    @Test
+    fun `an app resumed after the window end is still open, not discarded`() {
+        val window = SpanFolder.fold(listOf(resumed(GAME, 20 * minute)), windowEndMillis = 10 * minute)
+
+        assertTrue(window.closed.isEmpty())
+        assertEquals(OpenSpan(GAME, 20 * minute), window.open)
     }
 
     /**
@@ -107,27 +174,23 @@ class SpanFolderTest {
 
     @Test
     fun `a zero-length span is not emitted`() {
-        val spans = SpanFolder.fold(
+        val window = SpanFolder.fold(
             listOf(resumed(GAME, 5 * minute), paused(GAME, 5 * minute)),
             windowEndMillis = 10 * minute,
         )
 
-        assertTrue(spans.isEmpty())
+        assertTrue(window.closed.isEmpty())
+        assertNull(window.open)
     }
 
     @Test
     fun `a resume with no package name is ignored and leaves the open span alone`() {
-        val spans = SpanFolder.fold(
+        val window = SpanFolder.fold(
             listOf(resumed(GAME, 1 * minute), resumed("", 4 * minute), paused(GAME, 8 * minute)),
             windowEndMillis = 10 * minute,
         )
 
-        assertEquals(listOf(ForegroundSpan(GAME, 1 * minute, 8 * minute)), spans)
-    }
-
-    @Test
-    fun `no events at all is no usage, not an open span`() {
-        assertTrue(SpanFolder.fold(emptyList(), windowEndMillis = 10 * minute).isEmpty())
+        assertEquals(listOf(ForegroundSpan(GAME, 1 * minute, 8 * minute)), window.closed)
     }
 
     private fun resumed(pkg: String, at: Long) = ForegroundEvent(ForegroundEventKind.RESUMED, pkg, at)

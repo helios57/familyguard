@@ -23,20 +23,38 @@ data class ForegroundEvent(
  *   a long session into a short one every time the user opened a second screen inside the same app.
  * - **Screen off closes the open span** (FR-3.3), at the moment the screen went off rather than at
  *   the end of the window.
- * - **A span still open at the end of the window is closed there**, not carried, because the next
- *   window starts where this one ended and will open its own from its own `RESUMED`. Carrying would
- *   need state that survives a process death for the sake of at most one poll interval.
+ * - **A span still open at the end of the window is HANDED BACK, not closed** — see [carried].
+ *
+ * **That last rule was the opposite until 2026-09-20, and it cost most of the measurement.** The
+ * reasoning it replaced was *"the next window starts where this one ended and will open its own span
+ * from its own `RESUMED`"*, and that is simply not how `UsageStatsManager.queryEvents(from, to)`
+ * behaves: it reports transitions, and an app that stays in the foreground makes none. So the next
+ * window saw an empty stream and folded it to nothing. Measured over six consecutive five-minute
+ * polls with one `RESUMED` and no `PAUSED`: **4 minutes credited for a 29-minute session.** The
+ * shape of the error is worse than its size — app-switching was measured and sitting still was not,
+ * so a child reading one book or watching one video all afternoon registered almost no screen time
+ * and no daily limit could be reached.
  */
 object SpanFolder {
 
-    fun fold(events: List<ForegroundEvent>, windowEndMillis: Long): List<ForegroundSpan> {
-        val spans = mutableListOf<ForegroundSpan>()
-        var openPackage: String? = null
-        var openSince = 0L
+    /**
+     * @param carried what the previous window left in the foreground, or null on the first window
+     *   and whenever the previous window could not be measured. It must be contiguous with this one
+     *   — [UsageTracker] drops it otherwise, because a carry across a gap would report a session
+     *   running through hours nobody observed.
+     */
+    fun fold(
+        events: List<ForegroundEvent>,
+        windowEndMillis: Long,
+        carried: OpenSpan? = null,
+    ): ForegroundWindow {
+        val closed = mutableListOf<ForegroundSpan>()
+        var openPackage: String? = carried?.packageName
+        var openSince: Long = carried?.startMillis ?: 0L
 
         fun close(atMillis: Long) {
             val pkg = openPackage ?: return
-            if (atMillis > openSince) spans += ForegroundSpan(pkg, openSince, atMillis)
+            if (atMillis > openSince) closed += ForegroundSpan(pkg, openSince, atMillis)
             openPackage = null
         }
 
@@ -56,7 +74,11 @@ object SpanFolder {
                 ForegroundEventKind.SCREEN_OFF -> close(event.atMillis)
             }
         }
-        close(windowEndMillis)
-        return spans
+
+        // Deliberately NOT closed at the window end. An app still in the foreground has not ended a
+        // session, and saying it has both truncates the measurement and invents a session boundary
+        // that the child never made.
+        val open = openPackage?.let { OpenSpan(it, openSince) }
+        return ForegroundWindow(closed, open)
     }
 }

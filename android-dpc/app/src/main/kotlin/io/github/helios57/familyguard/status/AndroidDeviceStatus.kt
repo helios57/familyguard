@@ -93,7 +93,7 @@ fun deviceStatusFacts(
  * zero, and so does a phone whose usage access was revoked at breakfast — and on the second one the
  * daily limit will never be reached, all day, with nothing anywhere saying so.
  *
- * The probe window is deliberately short. `spans` returns null for a device that cannot see usage,
+ * The probe window is deliberately short. `read` returns null for a device that cannot see usage,
  * whatever the window, so a minute is enough to ask the question and cheap enough to ask it on a
  * screen somebody is waiting for.
  */
@@ -103,10 +103,13 @@ private fun screenTimeToday(
     today: String,
     nowMillis: Long,
 ): Long? {
-    // An empty list here is a phone that could see usage and found none in the last minute — the
+    // An empty window here is a phone that could see usage and found none in the last minute — the
     // common case on a screen somebody is reading, and not an absence. Only null is the absence,
     // and a throw is treated as one too: a reader that blew up measured nothing either.
-    val probe = runCatching { reader.spans(nowMillis - PROBE_WINDOW_MILLIS, nowMillis) }.getOrNull()
+    //
+    // Nothing is carried in: this is a one-shot probe asking "can this device see usage at all",
+    // not a step in the measurement, and seeding it would make the answer depend on the poll loop.
+    val probe = runCatching { reader.read(nowMillis - PROBE_WINDOW_MILLIS, nowMillis, null) }.getOrNull()
     if (probe == null) return null
     return runCatching { UsageLedger(EncryptedUsageStore(context)).totals(today).values.sum() }
         .getOrNull()

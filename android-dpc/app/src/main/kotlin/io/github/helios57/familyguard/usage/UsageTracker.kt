@@ -48,6 +48,18 @@ class UsageTracker(
 
     private var windowStart: Long? = null
 
+    /**
+     * The app that was in the foreground when the last window closed, if any.
+     *
+     * In memory only, and dropped whenever the next window is not contiguous with the one that
+     * produced it — which is every window after a process restart, because [windowStart] is in
+     * memory too. That is the deliberate bound: a carry that survived a restart would have to be
+     * trusted across hours nobody observed, and the session it reported would run from whenever the
+     * service died to whenever the child next touched the phone. Losing the open session at a
+     * restart costs the minutes until the next app switch; keeping it could invent a night.
+     */
+    private var carried: OpenSpan? = null
+
     /** The screen went on or off; [atMonotonicMillis] must come from the monotonic clock. */
     fun onScreenOn(atMonotonicMillis: Long) {
         screen.onScreenOn(atMonotonicMillis)
@@ -79,12 +91,32 @@ class UsageTracker(
             // The budget for it has already been drained, which is deliberate: that time is spent,
             // not owed, and carrying it into the next window would let a clock nudged backwards
             // repeatedly build up a budget to spend later.
+            //
+            // The carry goes with it: it is anchored to a wall-clock instant, and the next window
+            // will not be contiguous with it in any sense that can be reasoned about.
+            carried = null
             return UsageTick.NotMeasured("the wall clock did not advance between polls")
         }
         if (budget <= 0) return UsageTick.Idle
 
-        val spans = reader.spans(from, now) ?: return UsageTick.NotMeasured(reader.unavailableReason())
-        val byDay = DayAttribution.byDay(spans, zone())
+        val window = reader.read(from, now, carried) ?: run {
+            // Not measured is not zero, and it is also not a session that kept running. Whatever
+            // was open stopped being observable here, so it is dropped rather than resumed later
+            // against a window nobody looked at.
+            carried = null
+            return UsageTick.NotMeasured(reader.unavailableReason())
+        }
+        carried = window.open
+
+        // Two different questions, one fold. The day totals want the time that fell inside *this*
+        // window — a session seeded from the previous one has already been credited up to `from`,
+        // and crediting its true start again would double-count every poll it survives. What a
+        // session RECORD wants is the opposite (the true start), which is why `window.closed` keeps
+        // it and the clamping happens here rather than in the fold.
+        val measured = window.closed.mapNotNull { it.clampedTo(from, now) } +
+            listOfNotNull(window.open?.let { ForegroundSpan(it.packageName, maxOf(it.startMillis, from), now) })
+
+        val byDay = DayAttribution.byDay(measured, zone())
         val changed = ledger.add(byDay, budget)
         if (changed.isEmpty()) return UsageTick.Idle
         return UsageTick.Measured(changed.associateWith { ledger.totals(it) })

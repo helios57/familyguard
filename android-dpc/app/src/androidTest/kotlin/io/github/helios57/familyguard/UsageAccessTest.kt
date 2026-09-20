@@ -71,9 +71,9 @@ class UsageAccessTest {
         // Positive half first. Without it, a reader that always answered null would pass the half
         // that matters and the toggle would be proved to do nothing.
         assertEquals(ALLOW, modeOfUsageAccess())
-        val granted = reader().spans(from(), now())
+        val granted = reader().read(from(), now(), carried = null)
         assertNotNull(
-            "with usage access granted the reader must return a list, even an empty one; " +
+            "with usage access granted the reader must return a window, even an empty one; " +
                 "null here means it cannot tell granted from revoked and neither can this test",
             granted,
         )
@@ -92,9 +92,9 @@ class UsageAccessTest {
         )
 
         assertNull(
-            "a phone that cannot see usage must report not-measured, never an empty list: an empty " +
-                "list is folded to zero minutes and a quota measured against zero is never reached",
-            reader().spans(from(), now()),
+            "a phone that cannot see usage must report not-measured, never an empty window: an " +
+                "empty window is folded to zero minutes and a quota measured against zero is never reached",
+            reader().read(from(), now(), carried = null),
         )
         val line = screenTimeLine()
         assertEquals(

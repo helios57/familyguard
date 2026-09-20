@@ -16,7 +16,7 @@ import android.util.Log
  * app access → Usage access, or with `adb shell appops set io.github.helios57.familyguard GET_USAGE_STATS
  * allow`. DEPLOYMENT.md carries it as a provisioning step.
  *
- * The whole reason [spans] answers `null` rather than an empty list when the grant is missing is
+ * The whole reason [read] answers `null` rather than an empty list when the grant is missing is
  * that this is the single most dangerous silent failure in the product. Without the grant every
  * query returns nothing, every package reads zero minutes, the daily limit is never reached, and the
  * console shows a child who spent the day off their phone. A parent has no way to tell that from the
@@ -24,7 +24,7 @@ import android.util.Log
  */
 class UsageStatsForegroundReader(private val context: Context) : ForegroundReader {
 
-    override fun spans(fromMillis: Long, toMillis: Long): List<ForegroundSpan>? {
+    override fun read(fromMillis: Long, toMillis: Long, carried: OpenSpan?): ForegroundWindow? {
         if (!UsageAccess.granted(context)) return null
         val manager = context.getSystemService(UsageStatsManager::class.java) ?: return null
         val events = try {
@@ -35,7 +35,10 @@ class UsageStatsForegroundReader(private val context: Context) : ForegroundReade
             Log.w(TAG, "queryEvents failed: ${e.message}")
             return null
         }
-        return SpanFolder.fold(events, toMillis)
+        // `carried` is why this window can report an app the platform said nothing about: an app
+        // that stays in the foreground emits no event, so without it every window but the first of a
+        // session folds to nothing. See SpanFolder.
+        return SpanFolder.fold(events, toMillis, carried)
     }
 
     override fun unavailableReason(): String =

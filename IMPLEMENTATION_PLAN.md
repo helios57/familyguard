@@ -3996,7 +3996,7 @@ proven.
 | FR-1.7 / FR-1.8 replacing and re-linking a phone | 15.1, 15.2, 16.2 | e2e `TestANewSetupCodeDoesNotSilentlyRevokeAWorkingPhone` (the credential of a working phone survives a request that did not say it meant to replace it), `TestReplacingAPhoneOnPurposeRevokesTheOldOne` (the other half, without which the guard could be a permanent refusal), `TestAFirstSetupCodeNeedsNoAcknowledgement`, `TestARevokedPhoneCanReLinkWithoutAFactoryReset`; `TestConsoleRendersOnAPhone/replace_phone` for the confirmation as a parent meets it; `EnrollerTest`'s seven re-link cases and `LinkRefusedTest`'s seven. **Calibrated 5/5** ([15.5](#155--calibration)). **16.2 ungated the field**: it was offered only once `ConnectionService` had personally seen a 401, so a phone revoked while switched off held a dead credential and showed no control. It is now offered whenever the phone holds a credential at all, which is the honest precondition; only the explanatory wording still differs. **Not proven:** the re-link screen on a handset — nobody has typed a code into a phone yet, and the phone that needs to cannot get the build that has the screen without the sideload route in DEPLOYMENT.md |
 | FR-2 hardening | 5.2 | `HardeningManagerTest`, `EnforcementEngineHardeningTest`, `RestrictionKeysMatchThePlatformTest`; `TestNoRestrictionCanBlockCallingOrRecovery` |
 | FR-2.2 automatic network time | 5.11 | `ClockPolicyManagerTest` (8 cases over the pure manager) and `HardeningClockTest` (3) — the read-back that catches a device accepting `setAutoTimeEnabled` and staying off, an unreadable clock reported as a failure rather than assumed on, and the two facts about where it runs: a clock that will not be fixed makes the **whole baseline** not-ok even with every restriction in effect, and a sync reports `clock = null` rather than a success for something it never looked at. `ClockGatewayVersionSplitTest` reads `DpmClockGateway.kt` for the API 29/30 split, which no JVM test can execute and whose collapse is invisible — `setAutoTimeRequired` compiles everywhere and means *forbid changing it* on API 30+. **Calibrated 19/19.** Found by 5.10: the requirement was cited by nothing because nothing implemented it |
-| FR-3 screen time | 5.6, 3.3 | both halves. Server: `TestQuotaIsReadForTheLocalDay`, `TestDayKeyMatchesTheDayTheResolverReads`, `TestUnknownTimezoneIsAnErrorNotAFallback`. Device (5.6): `SpanFolderTest`, `DayAttributionTest`, `ScreenOnClockTest`, `UsageLedgerTest`, `UsageTrackerTest`, `UsageReporterTest` — the monotonic ceiling (FR-3.2), the screen-off pause (FR-3.3), the cut at local midnight, and `UsageTick.NotMeasured` rather than a zero when `PACKAGE_USAGE_STATS` was never granted, which is the failure that would otherwise show a parent a child who spent the day off their phone |
+| FR-3 screen time | 5.6, 3.3, 24 | both halves. Server: `TestQuotaIsReadForTheLocalDay`, `TestDayKeyMatchesTheDayTheResolverReads`, `TestUnknownTimezoneIsAnErrorNotAFallback`. Device (5.6): `SpanFolderTest`, `DayAttributionTest`, `ScreenOnClockTest`, `UsageLedgerTest`, `UsageTrackerTest`, `UsageReporterTest`, and **`ContinuousForegroundTest` (24), which is the one that drives the real `SpanFolder` through a reader as unhelpful as the platform** — every other usage test stubs the reader with ready-made spans, and that is what let a 29-minute session be credited 4 minutes for as long as the feature has existed — the monotonic ceiling (FR-3.2), the screen-off pause (FR-3.3), the cut at local midnight, and `UsageTick.NotMeasured` rather than a zero when `PACKAGE_USAGE_STATS` was never granted, which is the failure that would otherwise show a parent a child who spent the day off their phone |
 | FR-4 bedtime | 5.4 | `EnforcementEngineVectorsTest` against the shared vectors; `TestSharedVectors`, `TestVectorsCoverTheEnforcementRequirements`, `TestNextChangeAtIsInTheFuture` |
 | FR-5 apps | 5.4, 5.5, 3.3 | `RestrictionPlannerTest`, `AppSuspensionManagerTest`, `StateApplierTest`; `TestAppRulesSplitByAction`, `TestCriticalPackagesAreNeverSuspended`, `TestUninstalledAppsAreNotSuspended`, `TestHiddenPackagesAreAlsoSuspended`, `TestSystemAppsStayEnabledByRequest`; e2e `TestPolicyEnforcementJourney`; and its two preconditions, which fail silently rather than loudly — `ManifestAndPlatformCallsTest` *the permissions the shipped app asks for are exactly the ones it needs* (`QUERY_ALL_PACKAGES`, without which every blocked package reads "not installed") and *the install watcher is registered at runtime, not declared in the manifest* (without which a newly installed app is unrestrained until the next poll) |
 | FR-5.6 developer options / adb | 16.3 | e2e `TestDeveloperOptionsCanBeAllowedPerChild` — the switch on withholds `no_debugging_features` and **nothing else**, asserted against the whole restriction set rather than one membership test, with the switch-off case as the positive control so the test cannot pass on an engine that never applies the restriction at all. Two shared vectors (with and without a resolver) replay it on both engines. **Not proven:** that adb actually comes back on a phone — no device has run with the switch on
@@ -5956,3 +5956,92 @@ what changed); and the vector-count ratchet, which caught the resource change by
 **Not proven:** that `adb uninstall` succeeds on a phone with the switch on. Everything above is the
 control plane and the two engines agreeing about a list of strings; the platform's own answer to a
 cleared restriction has not been read back from a device.
+
+---
+
+## Phase 24 — the measurement was throwing most of itself away (FR-3.1, FR-3.2)
+
+*"I want the recording and precise tracking what app was running when for how long."*
+
+Reading the usage pipeline to build that turned up something worse than a missing feature.
+`UsageTracker.tick()` asks the platform for `[last poll, now]` and `SpanFolder.fold` closed any span
+still open at the window end, on this reasoning, which was written into the code as a comment:
+
+> *A span still open at the end of the window is closed there, not carried, because the next window
+> starts where this one ended and will open its own from its own `RESUMED`.*
+
+**That is not how `UsageStatsManager.queryEvents(from, to)` behaves.** It reports *transitions*, and
+an app that stays in the foreground makes none — no `RESUMED`, no `PAUSED`. So the next window
+received an empty event stream and folded it to nothing. Measured over six consecutive five-minute
+polls with one `RESUMED` and no pause:
+
+```
+window 1 [0min..5min):   1 span(s), 4 min
+window 2 [5min..10min):  0 span(s), 0 min
+window 3 [10min..15min): 0 span(s), 0 min
+window 4 [15min..20min): 0 span(s), 0 min
+window 5 [20min..25min): 0 span(s), 0 min
+window 6 [25min..30min): 0 span(s), 0 min
+TOTAL CREDITED: 4 min of a 29 min session
+```
+
+**The shape of the error matters more than its size.** Only the tail of the window containing the
+`RESUMED` was credited, so *switching apps* was measured and *sitting still* was not. A child
+reading one book or watching one video all afternoon registered a handful of minutes, and since
+`Reporting.usedMinutesToday` sums exactly these totals, FR-3.4's daily limit was enforced against a
+number that could not reach it. The monotonic `ScreenOnClock` budget could not compensate: it is a
+ceiling that scales measurements *down*, never up.
+
+**Why no test saw it.** Every usage test stubbed `ForegroundReader` with ready-made spans, so the
+seam between the tracker and the folder — which window is asked for, and what the platform does
+*not* say about it — had no coverage at all. Two cases in `SpanFolderTest` asserted the defect and
+said so in their own names: *"a span still open at the end of the window is closed there"* and *"no
+events at all is no usage, not an open span"*. Both were true about the code and false about the
+platform. This is the house defect from CLAUDE.md §3 in its purest form — a test double gentler
+than the artefact, and a control that passed having evaluated nothing.
+
+**The fix.** `SpanFolder.fold` now returns a `ForegroundWindow`: the sessions that *ended* in this
+window, plus the one that did not (`OpenSpan`). `UsageTracker` carries that open span into the next
+window's fold, so a session that outlives a poll keeps being measured, and a session that ends three
+polls later reports the moment it was actually opened rather than the poll boundary it survived.
+
+One fold, two consumers, and conflating them is how this would go wrong in the other direction:
+
+- **The day totals** take only the part of each span that falls inside *this* window
+  (`ForegroundSpan.clampedTo`), because a carried session has already been credited up to `from` and
+  crediting its true start again would double-count every poll it survives.
+- **A session record** wants the opposite — the true start — which is why `ForegroundWindow.closed`
+  keeps it and the clamping happens in the tracker rather than in the fold.
+
+**The carry is in memory only, and dropped whenever the next window is not contiguous** — after a
+process restart, after a backwards wall clock, and after any window the reader could not measure.
+That bound is deliberate and it is the interesting half of the design. A carry that survived a
+restart would be trusted across hours nobody observed: a service killed at 22:00 with a video open
+and restarted at 07:30 would emit one nine-and-a-half-hour session. Losing the open session at a
+restart costs the minutes until the next app switch; keeping it could invent a night.
+
+### 24.1 — calibration
+
+The red was taken **before** the fix, on the real `SpanFolder` driven through
+`ContinuousForegroundTest.EventStreamReader` — a double that is exactly as unhelpful as the
+platform, holding the event stream and handing the fold only the events inside the window asked for.
+A double that returned the whole stream every time would pass over the defect it exists to pin.
+
+| case | before | after |
+|---|---|---|
+| an app left open across six polls is credited every minute of it | **4** of 29 min | 29 min |
+| an app closed inside a window stops being credited there | **4** of 11 min | 11 min |
+| a handover splits the time between the two apps | **4** of 15 min | 15 / 14 min |
+| the screen going off ends the session at the moment it went off | **4** of 6 min | 6 min |
+| a wall clock pushed forward is still bounded by the monotonic budget | 5 min | 5 min |
+
+The last row is a **negative control that stayed green**, which is information rather than evidence:
+FR-3.2's budget ceiling does not bind to what changed here, so it says the carry did not weaken the
+clock guard and nothing more. 564 unit tests green with `--rerun-tasks`, up from 556.
+
+**Not proven:** anything about a real handset. Every number above comes from the JVM against a
+scripted event stream. What a Galaxy S20 actually emits for a long session — whether OEM activity
+churn produces `RESUMED`/`PAUSED` pairs often enough that the old code accidentally measured more
+than 4 minutes in 29 — has not been read back from a device, and the honest way to settle it is to
+compare a day of the phone's own reported totals against Android's Digital Wellbeing for the same
+day.

@@ -214,12 +214,15 @@ class UsageTrackerTest {
 
     private class FakeReader : ForegroundReader {
         var spans: List<ForegroundSpan>? = emptyList()
+        var open: OpenSpan? = null
         var reason: String = "not asked yet"
         val windows = mutableListOf<Pair<Long, Long>>()
+        val carriedSeen = mutableListOf<OpenSpan?>()
 
-        override fun spans(fromMillis: Long, toMillis: Long): List<ForegroundSpan>? {
+        override fun read(fromMillis: Long, toMillis: Long, carried: OpenSpan?): ForegroundWindow? {
             windows += fromMillis to toMillis
-            return spans
+            carriedSeen += carried
+            return spans?.let { ForegroundWindow(it, open) }
         }
 
         override fun unavailableReason(): String = reason

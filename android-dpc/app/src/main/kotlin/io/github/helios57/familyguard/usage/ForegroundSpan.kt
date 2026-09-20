@@ -17,7 +17,43 @@ data class ForegroundSpan(
     val endMillis: Long,
 ) {
     val durationMillis: Long get() = (endMillis - startMillis).coerceAtLeast(0)
+
+    /** The part of this span that lies inside `[fromMillis, toMillis]`, or null if none does. */
+    fun clampedTo(fromMillis: Long, toMillis: Long): ForegroundSpan? {
+        val start = maxOf(startMillis, fromMillis)
+        val end = minOf(endMillis, toMillis)
+        return if (end > start) copy(startMillis = start, endMillis = end) else null
+    }
 }
+
+/**
+ * An app that was in the foreground when a window ended and had not left it.
+ *
+ * **This type exists because the platform does not repeat itself.**
+ * `UsageStatsManager.queryEvents(from, to)` returns the transitions inside that window and nothing
+ * else, so an app that was already in the foreground when the window opened and still there when it
+ * closed emits no event at all. A fold that treated each window independently therefore saw an empty
+ * stream and credited nothing — measured before this type existed: **4 minutes for a 29-minute
+ * session**, so switching apps was measured and sitting still was not.
+ *
+ * [startMillis] is the *real* start, which is usually before the window that reports it. Two
+ * consumers want two different things from that, and conflating them is how this would go wrong
+ * again: the day totals want only the part inside the window just measured (see
+ * [ForegroundSpan.clampedTo]), while a record of what ran when wants the true start.
+ */
+data class OpenSpan(val packageName: String, val startMillis: Long)
+
+/**
+ * What one window of platform events folded to: the sessions that ended in it, and the one that did
+ * not.
+ *
+ * [closed] carries true starts, so a session seeded from a previous window reports the moment the
+ * app was actually opened rather than the poll boundary it survived.
+ */
+data class ForegroundWindow(
+    val closed: List<ForegroundSpan>,
+    val open: OpenSpan?,
+)
 
 /**
  * Splits spans at local midnight and totals them per day and package.
