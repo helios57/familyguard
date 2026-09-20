@@ -60,3 +60,7 @@ backend/fgctl.exe
 # snapshots contain whatever host was open — this repo is destined to go public, so one
 # `git add .` would publish server internals. Nothing in here is ever worth committing.
 /.playwright-mcp/
+
+# Python bytecode from the tools/ scripts.
+__pycache__/
+*.pyc

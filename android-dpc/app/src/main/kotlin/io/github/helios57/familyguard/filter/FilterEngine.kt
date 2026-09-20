@@ -38,7 +38,7 @@ data class FilterCounters(
 )
 
 /**
- * The decision, separated from every way of reaching it.
+ * The decision, separated from every way of reaching it (FR-6.6).
  *
  * DNS and SNI ask the same question about the same kind of name, so they share one engine and one
  * set of counters. What differs is only what the caller does with a [Verdict.Block] — synthesise an

@@ -60,7 +60,14 @@ object TlsClientHello {
     private const val NAME_TYPE_HOST = 0x00
 
     /** A record body is capped at 16 KiB by TLS itself; a hello spanning more than this is junk. */
-    private const val MAX_HANDSHAKE_BYTES = 64 * 1024
+    /**
+     * The most of one handshake this will hold before giving up on it.
+     *
+     * Public because a caller that buffers on this parser's behalf needs the same number: a flow
+     * machine waiting for [ClientHello.Incomplete] to resolve has to know when waiting has become
+     * hanging, and a second constant for it would be a second thing to drift.
+     */
+    const val MAX_HANDSHAKE_BYTES = 64 * 1024
 
     fun parse(data: ByteArray, offset: Int = 0, length: Int = data.size - offset): ClientHello {
         if (offset < 0 || length < 0 || offset + length > data.size) return ClientHello.NotTls

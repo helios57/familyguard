@@ -170,8 +170,8 @@ Applied at provisioning and re-applied on every boot:
   made and does not do the job its name suggests — a DoT resolver sees names, so it cannot remove
   advertising an app fetches over its own connection to its own backend. With no resolver set the
   phone uses opportunistic encrypted DNS, and `disallow_config_private_dns` is **not** applied,
-  because there is then no policy for it to protect. In-app advertising is out of scope until
-  something is built that actually addresses it.
+  because there is then no policy for it to protect. In-app advertising is not addressed at this
+  layer at all and cannot be — FR-6.6 to FR-6.9 are what address it.
 - FR-6.2 The filtering endpoint is configurable per child in the console.
 - FR-6.3 Managed-browser policy: SafeSearch enforced, YouTube restricted mode enforced, and a
   URL blocklist applied to the managed browser.
@@ -179,6 +179,27 @@ Applied at provisioning and re-applied on every boot:
   access — no rule store may be append-only.
 - FR-6.5 Content filtering must never be able to remove the device's ability to reach the control
   plane or place an emergency call.
+- FR-6.6 Advertising and tracker filtering happens **on the device**, from filter lists it fetches
+  and compiles itself — never by pointing the phone at somebody else's filtering resolver. A
+  resolver only ever sees names, so it cannot touch advertising an app fetches over its own
+  connection to its own backend, which is most of what a game shows a child. Lists are held as a
+  URL and a hash; this project ships the fetcher and never the list data, which is licensed
+  separately from this code.
+- FR-6.7 The filter runs as a `VpnService` that **never uses lockdown mode** and fails open in every
+  direction: anything it cannot parse, name or decide is carried. A tunnel that is up and carrying
+  nothing is worse than no tunnel — the phone has no internet, nothing on the screen says why, and
+  the child can report it only as *"the internet is weird"*. Switching the filter off must never
+  need more than a sync, which is why FR-6.5's host can never be filtered whatever a list says.
+- FR-6.8 Connections are **terminated locally** so the name inside one can be read: the server name
+  from a TLS ClientHello, or the `Host:` header of a plain request. This is what reaches the
+  advertising FR-6.1 structurally cannot — an SDK with a hardcoded address, or one resolving its own
+  names over DoH inside its own session, never asks the resolver and is invisible to every
+  DNS-based filter. A blocked connection is **reset**, never dropped: a reset is an error every
+  client already handles, where a drop is a socket that hangs until its own timeout.
+- FR-6.9 QUIC (UDP/443) is dropped, so a client falls back to TLS over TCP within a few hundred
+  milliseconds and the name arrives in clear text. This is the one deliberate breakage in the
+  feature, and it is the price of covering the advertising libraries that reach for QUIC first. It
+  costs the fallback delay on the first connection to a host, once.
 
 ### FR-7 YouTube killswitch
 One toggle per child that blocks YouTube across every layer available to us:

@@ -24,20 +24,48 @@ object PacketBuilder {
      * the query it just made.
      */
     fun udpReply(request: ByteArray, ip: IpHeader, udp: UdpHeader, payload: ByteArray): ByteArray {
-        val headerBytes = if (ip.version == 4) 20 else 40
-        val out = ByteArray(headerBytes + 8 + payload.size)
-        writeIpHeader(out, request, ip, IpHeader.PROTO_UDP, 8 + payload.size)
+        val addressBytes = if (ip.version == 4) 4 else 16
+        return udpDatagram(
+            version = ip.version,
+            sourceAddress = request.copyOfRange(ip.destinationOffset, ip.destinationOffset + addressBytes),
+            destinationAddress = request.copyOfRange(ip.sourceOffset, ip.sourceOffset + addressBytes),
+            sourcePort = udp.destinationPort,
+            destinationPort = udp.sourcePort,
+            payload = payload,
+        )
+    }
+
+    /**
+     * An IP+UDP datagram this filter originates, with the four-tuple stated rather than reflected.
+     *
+     * The relay half needs this: a reply arriving on a socket minutes after the query has no
+     * request packet left to swap addresses out of, and keeping the original bytes alive just to
+     * reverse them would be holding a whole packet to recover twelve of its fields.
+     */
+    fun udpDatagram(
+        version: Int,
+        sourceAddress: ByteArray,
+        destinationAddress: ByteArray,
+        sourcePort: Int,
+        destinationPort: Int,
+        payload: ByteArray,
+        payloadOffset: Int = 0,
+        payloadLength: Int = payload.size - payloadOffset,
+    ): ByteArray {
+        val headerBytes = if (version == 4) 20 else 40
+        val out = ByteArray(headerBytes + 8 + payloadLength)
+        writeIpHeaderFrom(out, version, sourceAddress, destinationAddress, IpHeader.PROTO_UDP, 8 + payloadLength)
 
         val udpAt = headerBytes
-        put16(out, udpAt, udp.destinationPort)
-        put16(out, udpAt + 2, udp.sourcePort)
-        put16(out, udpAt + 4, 8 + payload.size)
+        put16(out, udpAt, sourcePort)
+        put16(out, udpAt + 2, destinationPort)
+        put16(out, udpAt + 4, 8 + payloadLength)
         put16(out, udpAt + 6, 0)
-        System.arraycopy(payload, 0, out, udpAt + 8, payload.size)
+        System.arraycopy(payload, payloadOffset, out, udpAt + 8, payloadLength)
 
-        // The pseudo-header uses the addresses of the packet being SENT, which are the request's
-        // swapped — so they are read back out of `out`, never out of `request`.
-        val sum = transportChecksum(out, ip.version, IpHeader.PROTO_UDP, udpAt, 8 + payload.size)
+        // The pseudo-header uses the addresses of the packet being SENT, so they are read back out
+        // of `out` and never out of whatever this is answering.
+        val sum = transportChecksum(out, version, IpHeader.PROTO_UDP, udpAt, 8 + payloadLength)
         // Zero means "no checksum" in IPv4 UDP and is illegal in IPv6, so it is sent as its other
         // ones-complement spelling instead.
         put16(out, udpAt + 6, if (sum == 0) 0xFFFF else sum)
@@ -93,6 +121,55 @@ object PacketBuilder {
         return out
     }
 
+    /**
+     * An IP+TCP segment this filter ORIGINATES, rather than one it reflects.
+     *
+     * [tcpReset] answers a packet that just arrived and can take every address and port from it.
+     * A flow machine cannot: it speaks for a server the app is trying to reach, and most of what it
+     * sends — the SYN-ACK, a bare ACK, the server's own data on its way back — answers nothing that
+     * arrived in that instant. So the four-tuple is passed in, and it is stated from the point of
+     * view of the packet being written: [sourceAddress]/[sourcePort] is the peer the app thinks it
+     * is talking to, and the packet is addressed to the app.
+     */
+    fun tcpSegment(
+        version: Int,
+        sourceAddress: ByteArray,
+        destinationAddress: ByteArray,
+        sourcePort: Int,
+        destinationPort: Int,
+        sequence: Long,
+        acknowledgement: Long,
+        flags: Int,
+        window: Int,
+        payload: ByteArray = EMPTY,
+        payloadOffset: Int = 0,
+        payloadLength: Int = payload.size - payloadOffset,
+    ): ByteArray {
+        val headerBytes = if (version == 4) 20 else 40
+        val out = ByteArray(headerBytes + 20 + payloadLength)
+        writeIpHeaderFrom(out, version, sourceAddress, destinationAddress, IpHeader.PROTO_TCP, 20 + payloadLength)
+
+        val tcpAt = headerBytes
+        put16(out, tcpAt, sourcePort)
+        put16(out, tcpAt + 2, destinationPort)
+        put32(out, tcpAt + 4, sequence and 0xFFFFFFFFL)
+        put32(out, tcpAt + 8, acknowledgement and 0xFFFFFFFFL)
+        out[tcpAt + 12] = (5 shl 4).toByte()
+        out[tcpAt + 13] = flags.toByte()
+        // Clamped rather than truncated. A window of 70000 written into 16 bits becomes 4464 with
+        // no error anywhere, and the connection then runs at a fraction of its speed for reasons
+        // nothing reports.
+        put16(out, tcpAt + 14, window.coerceIn(0, 0xFFFF))
+        put16(out, tcpAt + 16, 0)
+        put16(out, tcpAt + 18, 0)
+        if (payloadLength > 0) System.arraycopy(payload, payloadOffset, out, tcpAt + 20, payloadLength)
+
+        put16(out, tcpAt + 16, transportChecksum(out, version, IpHeader.PROTO_TCP, tcpAt, 20 + payloadLength))
+        return out
+    }
+
+    private val EMPTY = ByteArray(0)
+
     /** The IP header of a packet going back the way [ip] came, with the addresses swapped. */
     private fun writeIpHeader(
         out: ByteArray,
@@ -101,7 +178,26 @@ object PacketBuilder {
         protocol: Int,
         payloadLength: Int,
     ) {
-        if (ip.version == 4) {
+        val addressBytes = if (ip.version == 4) 4 else 16
+        writeIpHeaderFrom(
+            out,
+            ip.version,
+            request.copyOfRange(ip.destinationOffset, ip.destinationOffset + addressBytes),
+            request.copyOfRange(ip.sourceOffset, ip.sourceOffset + addressBytes),
+            protocol,
+            payloadLength,
+        )
+    }
+
+    private fun writeIpHeaderFrom(
+        out: ByteArray,
+        version: Int,
+        sourceAddress: ByteArray,
+        destinationAddress: ByteArray,
+        protocol: Int,
+        payloadLength: Int,
+    ) {
+        if (version == 4) {
             out[0] = 0x45 // version 4, header length 5 words
             out[1] = 0
             put16(out, 2, 20 + payloadLength)
@@ -110,8 +206,8 @@ object PacketBuilder {
             out[8] = DEFAULT_TTL.toByte()
             out[9] = protocol.toByte()
             put16(out, 10, 0)
-            System.arraycopy(request, ip.destinationOffset, out, 12, 4)
-            System.arraycopy(request, ip.sourceOffset, out, 16, 4)
+            System.arraycopy(sourceAddress, 0, out, 12, 4)
+            System.arraycopy(destinationAddress, 0, out, 16, 4)
             put16(out, 10, checksum(out, 0, 20))
         } else {
             out[0] = 0x60 // version 6
@@ -121,8 +217,8 @@ object PacketBuilder {
             put16(out, 4, payloadLength)
             out[6] = protocol.toByte()
             out[7] = DEFAULT_TTL.toByte()
-            System.arraycopy(request, ip.destinationOffset, out, 8, 16)
-            System.arraycopy(request, ip.sourceOffset, out, 24, 16)
+            System.arraycopy(sourceAddress, 0, out, 8, 16)
+            System.arraycopy(destinationAddress, 0, out, 24, 16)
         }
     }
 
