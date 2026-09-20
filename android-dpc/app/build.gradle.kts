@@ -324,3 +324,24 @@ androidComponents {
         }
     }
 }
+
+/**
+ * Prints the unit-test runtime classpath, so the real-TUN harness can be launched outside Gradle.
+ *
+ * That harness has to run inside a network namespace (`sudo unshare -n`), and running Gradle itself
+ * as root would leave root-owned files all over the build directory. So the orchestrator launches a
+ * plain `java` process instead and asks this task where the classes are.
+ */
+tasks.register("printUnitTestClasspath") {
+    val testTask = tasks.named<Test>("testDebugUnitTest")
+    // The classes, NOT the test result. `dependsOn(testTask.map { it.classpath })` looks like it
+    // asks for only the classpath and does not: a provider derived from a TaskProvider carries a
+    // dependency on the task itself, so a red unit test blocked the real-TUN run — backwards,
+    // since the real run exists to catch what the unit tests miss. Measured, not reasoned.
+    dependsOn("compileDebugUnitTestSources")
+    val output = layout.buildDirectory.file("unit-test-classpath.txt")
+    outputs.file(output)
+    doLast {
+        output.get().asFile.writeText(testTask.get().classpath.asPath)
+    }
+}
