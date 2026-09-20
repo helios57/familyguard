@@ -201,7 +201,29 @@ type Settings struct {
 	// developing against, it removes the last way in. Every other restriction can be lifted by
 	// changing the policy and waiting for a sync; this one cannot, because it can take away the
 	// channel you would use to find out why the sync is not happening.
-	AllowDebugging    bool   `json:"allow_debugging"`
+	AllowDebugging bool `json:"allow_debugging"`
+
+	// AllowUninstall withholds RestrictionUninstallApps, so an app can be removed again — over adb,
+	// or from Settings on the phone (FR-5.7).
+	//
+	// It is the second switch whose cost is paid by whoever administers the phone rather than by
+	// the child, and it is there for the same reason AllowDebugging is. no_uninstall_apps is set on
+	// the *user*, and the device owner runs as that user, so the restriction binds the parent too:
+	// `adb uninstall` answers DELETE_FAILED_USER_RESTRICTED. Servicing a phone — restoring a
+	// backup from an older handset, undoing an install that went wrong — is then one-way, with no
+	// way out that does not involve a factory reset.
+	//
+	// The default stays off, because taking an app away is how a child escapes a suspension. What
+	// the switch buys is that the escape hatch is a policy a parent can see, open for as long as
+	// they need it, and close again from the console — rather than a constant compiled into a
+	// build nobody can change without a release.
+	//
+	// One thing it does not reach: EnforcementEngine.BASELINE_RESTRICTIONS on the device, the floor
+	// applied at every boot before any policy is known, still contains no_uninstall_apps. A phone
+	// rebooted while the switch is on comes back restricted until its next sync clears it. That
+	// floor deliberately reads no cached policy at all, and widening it would weaken the one path
+	// that runs when nothing is known.
+	AllowUninstall    bool   `json:"allow_uninstall"`
 	YouTubeBlocked    bool   `json:"youtube_blocked"`
 	DailyLimitMinutes int    `json:"daily_limit_minutes"`
 	BedtimeEnabled    bool   `json:"bedtime_enabled"`
@@ -355,10 +377,15 @@ func Compute(in Input) (DesiredState, error) {
 		RestrictionDateTime,
 		RestrictionAddUser,
 		RestrictionUnknownSources,
-		RestrictionUninstallApps,
 	})
 	if !in.Settings.AllowDebugging {
 		restrictions.add(RestrictionDebugging)
+	}
+	// FR-5.7. Conditional rather than part of the set above, for the same reason the line before it
+	// is: the parent can decline it, visibly, from the console. See Settings.AllowUninstall for why
+	// that is worth a switch rather than a constant.
+	if !in.Settings.AllowUninstall {
+		restrictions.add(RestrictionUninstallApps)
 	}
 	// Coupled to there being a resolver to protect, rather than applied always.
 	//

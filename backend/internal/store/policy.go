@@ -8,8 +8,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const policyCols = `child_id, tracking_only, allow_child_installs, allow_debugging, youtube_blocked,
-	daily_limit_minutes, bedtime_enabled, bedtime_start, bedtime_end, dns_host, timezone, version, updated_at`
+const policyCols = `child_id, tracking_only, allow_child_installs, allow_debugging, allow_uninstall,
+	youtube_blocked, daily_limit_minutes, bedtime_enabled, bedtime_start, bedtime_end, dns_host,
+	timezone, version, updated_at`
 
 // NormalizeDomain folds a hostname to the stored form: lowercase, no trailing dot, no scheme, no
 // path. Both add and remove go through it, which is what makes removal actually remove — a rule
@@ -36,6 +37,7 @@ type PolicyUpdate struct {
 	TrackingOnly       *bool
 	AllowChildInstalls *bool
 	AllowDebugging     *bool
+	AllowUninstall     *bool
 	YouTubeBlocked     *bool
 	DailyLimitMinutes  *int
 	BedtimeEnabled     *bool
@@ -53,19 +55,21 @@ func (s *Store) UpdatePolicy(ctx context.Context, childID uuid.UUID, u PolicyUpd
 		     tracking_only        = COALESCE($2, tracking_only),
 		     allow_child_installs = COALESCE($3, allow_child_installs),
 		     allow_debugging      = COALESCE($4, allow_debugging),
-		     youtube_blocked      = COALESCE($5, youtube_blocked),
-		     daily_limit_minutes  = COALESCE($6, daily_limit_minutes),
-		     bedtime_enabled      = COALESCE($7, bedtime_enabled),
-		     bedtime_start        = COALESCE($8, bedtime_start),
-		     bedtime_end          = COALESCE($9, bedtime_end),
-		     dns_host             = COALESCE($10, dns_host),
-		     timezone             = COALESCE($11, timezone),
+		     allow_uninstall      = COALESCE($5, allow_uninstall),
+		     youtube_blocked      = COALESCE($6, youtube_blocked),
+		     daily_limit_minutes  = COALESCE($7, daily_limit_minutes),
+		     bedtime_enabled      = COALESCE($8, bedtime_enabled),
+		     bedtime_start        = COALESCE($9, bedtime_start),
+		     bedtime_end          = COALESCE($10, bedtime_end),
+		     dns_host             = COALESCE($11, dns_host),
+		     timezone             = COALESCE($12, timezone),
 		     version              = version + 1,
 		     updated_at           = NOW()
 		  WHERE child_id = $1
 		 RETURNING `+policyCols,
-		childID, u.TrackingOnly, u.AllowChildInstalls, u.AllowDebugging, u.YouTubeBlocked,
-		u.DailyLimitMinutes, u.BedtimeEnabled, u.BedtimeStart, u.BedtimeEnd, u.DNSHost, u.Timezone))
+		childID, u.TrackingOnly, u.AllowChildInstalls, u.AllowDebugging, u.AllowUninstall,
+		u.YouTubeBlocked, u.DailyLimitMinutes, u.BedtimeEnabled, u.BedtimeStart, u.BedtimeEnd,
+		u.DNSHost, u.Timezone))
 }
 
 // BumpPolicyVersion increments the version without changing a field, used when an app rule or a
@@ -191,8 +195,8 @@ func (s *Store) ListBlockedDomains(ctx context.Context, childID uuid.UUID) ([]st
 func scanPolicy(row pgx.Row) (*Policy, error) {
 	var p Policy
 	if err := row.Scan(&p.ChildID, &p.TrackingOnly, &p.AllowChildInstalls, &p.AllowDebugging,
-		&p.YouTubeBlocked, &p.DailyLimitMinutes, &p.BedtimeEnabled, &p.BedtimeStart, &p.BedtimeEnd,
-		&p.DNSHost, &p.Timezone, &p.Version, &p.UpdatedAt); err != nil {
+		&p.AllowUninstall, &p.YouTubeBlocked, &p.DailyLimitMinutes, &p.BedtimeEnabled,
+		&p.BedtimeStart, &p.BedtimeEnd, &p.DNSHost, &p.Timezone, &p.Version, &p.UpdatedAt); err != nil {
 		return nil, mapErr(err)
 	}
 	return &p, nil

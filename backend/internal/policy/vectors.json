@@ -1626,6 +1626,111 @@
           "no_uninstall_apps"
         ]
       }
+    },
+    {
+      "name": "uninstalling allowed: apps can be removed, and nothing else is loosened with it",
+      "requirements": [
+        "FR-5.7"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "allow_uninstall": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 12,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T14:00:00+02:00"
+      },
+      "expect": {
+        "private_dns_host": "",
+        "user_restrictions": [
+          "no_add_user",
+          "no_config_date_time",
+          "no_debugging_features",
+          "no_install_unknown_sources",
+          "no_safe_boot"
+        ],
+        "safe_search": true,
+        "youtube_restricted_mode": true
+      }
+    },
+    {
+      "name": "uninstalling allowed while free-installation is off: installing and removing are separate switches",
+      "requirements": [
+        "FR-5.7",
+        "FR-5.3"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": false,
+          "allow_debugging": false,
+          "allow_uninstall": true,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": []
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 12,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T14:00:00+02:00"
+      },
+      "expect": {
+        "user_restrictions": [
+          "no_add_user",
+          "no_config_date_time",
+          "no_debugging_features",
+          "no_install_apps",
+          "no_install_unknown_sources",
+          "no_safe_boot"
+        ]
+      }
     }
   ]
 }

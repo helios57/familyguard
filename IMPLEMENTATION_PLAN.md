@@ -4000,6 +4000,7 @@ proven.
 | FR-4 bedtime | 5.4 | `EnforcementEngineVectorsTest` against the shared vectors; `TestSharedVectors`, `TestVectorsCoverTheEnforcementRequirements`, `TestNextChangeAtIsInTheFuture` |
 | FR-5 apps | 5.4, 5.5, 3.3 | `RestrictionPlannerTest`, `AppSuspensionManagerTest`, `StateApplierTest`; `TestAppRulesSplitByAction`, `TestCriticalPackagesAreNeverSuspended`, `TestUninstalledAppsAreNotSuspended`, `TestHiddenPackagesAreAlsoSuspended`, `TestSystemAppsStayEnabledByRequest`; e2e `TestPolicyEnforcementJourney`; and its two preconditions, which fail silently rather than loudly — `ManifestAndPlatformCallsTest` *the permissions the shipped app asks for are exactly the ones it needs* (`QUERY_ALL_PACKAGES`, without which every blocked package reads "not installed") and *the install watcher is registered at runtime, not declared in the manifest* (without which a newly installed app is unrestrained until the next poll) |
 | FR-5.6 developer options / adb | 16.3 | e2e `TestDeveloperOptionsCanBeAllowedPerChild` — the switch on withholds `no_debugging_features` and **nothing else**, asserted against the whole restriction set rather than one membership test, with the switch-off case as the positive control so the test cannot pass on an engine that never applies the restriction at all. Two shared vectors (with and without a resolver) replay it on both engines. **Not proven:** that adb actually comes back on a phone — no device has run with the switch on
+| FR-5.7 uninstalling apps | 23 | e2e `TestUninstallingCanBeAllowedPerChild` — the switch on withholds `no_uninstall_apps` and nothing else, with the switch-off case as the positive control, plus the discriminating pair: free-installation **off** while uninstalling is **on**, so an engine that had conflated the two switches is red. Two shared vectors replay it on both engines. `UninstallSwitchAndTheBootFloorTest` pins the part the vectors structurally cannot reach — the pre-sync floor keeps the restriction whatever the switch says, and the next authoritative sync clears it again. **Calibrated four ways:** the Go engine ignoring the switch (2 vectors red), `resolve.go` dropping the field so the PATCH sticks and the phone is told otherwise (e2e red), the Kotlin engine ignoring it (3 red), and each restored to green. **Not proven:** that `adb uninstall` actually succeeds on a phone with the switch on — no device has run with it yet
 | FR-6 filtering | 5.5, 16.6 | `ChromePolicyManagerTest`, `DnsPolicyManagerTest`; `TestNormalizeDomainMatchesTheStore`; e2e `TestNoFilteringResolverIsConfiguredByDefault`. FR-6.1 was **rewritten** in 16.6: there is no filtering resolver by default, and `disallow_config_private_dns` is applied only when a parent has named one. Both halves of that coupling are asserted, which matters because either alone passes on a broken engine — "no resolver by default" is also true of an engine that has lost the lock entirely, and the lock's presence is also true of one that pins a resolver nobody asked for. `TestPolicyEnforcementJourney` carries the default-state snapshot and used to assert the opposite; it is the test the sweep caught. **Not proven:** what a phone does with an empty private-DNS host — OPPORTUNISTIC is the documented behaviour and no device has been read back |
 | FR-7 YouTube | 5.4, 5.5 | `EnforcementEngineVectorsTest` (the YouTube set is symmetric across the vectors), `ChromePolicyManagerTest` (`ForceGoogleSafeSearch`, restricted mode strict) |
 | FR-8 tracking-only | 5.4 | `TestTrackingOnlyKeepsFilteringAndHardening`, `EnforcementEngineVectorsTest` |
@@ -5911,3 +5912,47 @@ shipped the normal way, and then watching whether the phone's unattended update 
 human tapping *Install anyway*. Until that runs, remedy 1 (the handset's *Scan apps with Play
 Protect* toggle) is still what is holding.
 
+---
+
+## Phase 23 — uninstalling apps, as a per-child switch (FR-5.7)
+
+*"Lift no_uninstall_apps in FamilyGuard (temporarily). Right now installs are one-way — I tested and
+got DELETE_FAILED_USER_RESTRICTED, so I couldn't undo a bad install."*
+
+`no_uninstall_apps` is set on the **user**, and the Device Owner runs as that user, so it binds the
+parent exactly as hard as it binds the child. That is not a side effect of this design — it is what
+`ManagedAppApplier` has always worked around, lifting the restriction around its own install
+sessions (`HardeningManager.withoutRestrictions`). What had no remedy was the case where the install
+does not come from the DPC at all: an app pushed over USB while setting a phone up cannot be taken
+off again, and the platform's refusal reads as a tooling fault rather than as policy.
+
+**Why a switch and not a temporary patch.** The device recomputes its own desired state every sync
+(`Synchronizer.applyFrom` → `EnforcementEngine.compute`), so a server-side lift is undone within one
+five-minute poll, and so is a one-shot command. Anything that survives a convergence loop has to be
+an input to it. That makes a policy column the cheap option rather than the expensive one — and it
+is the same argument 16.3 made for `allow_debugging`: a restriction whose cost falls on whoever
+administers the phone belongs in the console, where a parent can see it and withdraw it, not in a
+constant that takes a release to change.
+
+Migration `0011` adds the column, defaulting **FALSE**, so every existing row keeps the behaviour it
+has. Removing an app is how a child escapes a suspension; what the switch buys is that the hatch can
+be opened deliberately and closed again.
+
+**The boot floor is deliberately not covered, and that is the one thing worth reading twice.**
+`BASELINE_RESTRICTIONS` still contains `no_uninstall_apps`, and `HardeningManager.applyBaseline`
+applies it at every boot — before any policy is known, so there is no parent decision for it to
+honour. A phone rebooted while the switch is on therefore comes back restricted until its next sync
+clears it. Widening the floor to read a cached policy would weaken the one path that runs when
+nothing is known, which is a worse trade than a bounded window. `UninstallSwitchAndTheBootFloorTest`
+asserts **both** halves, because the first alone would describe a hatch that one reboot closes
+forever.
+
+**Calibration.** Four probes, each restored: the Go engine ignoring the switch (the two new vectors
+red, nothing else); `resolve.go` dropping the field, which is the silent shape — the PATCH sticks,
+the console shows the switch on, and the phone is still told to restrict — (e2e red); the Kotlin
+engine ignoring it (3 red, and the floor assertion correctly staying green, since the floor was not
+what changed); and the vector-count ratchet, which caught the resource change by itself.
+
+**Not proven:** that `adb uninstall` succeeds on a phone with the switch on. Everything above is the
+control plane and the two engines agreeing about a list of strings; the platform's own answer to a
+cleared restriction has not been read back from a device.

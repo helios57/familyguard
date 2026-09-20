@@ -219,9 +219,13 @@ git tag vX.Y.Z && git push origin vX.Y.Z    # X.Y.Z is what deploy/control-plane
 
 `.github/workflows/release.yml` refuses the tag unless it is a plain semver, on `main`, whose version
 matches the one the Android app carries; re-runs every CI layer against the tagged tree; and only
-then publishes `ghcr.io/helios57/familyguard-control-plane:X.Y.Z`. Three numbers move together and
-the tag is refused if any of them disagrees: the tag, the Android app's version, and the image the
-deployment manifest pins. Writing them as a version here instead of as a rule is how they drift.
+then publishes `ghcr.io/helios57/familyguard-control-plane:X.Y.Z`. Three numbers are meant to move
+together — the tag, the Android app's `versionName`, and the image `deploy/control-plane.yaml` pins
+— and **only the first two are actually enforced**: the workflow compares the tag against
+`versionName` and against `versionCode`, and reads the deployment manifest nowhere. A stale pin in
+that file is therefore a release that publishes fine and a manifest that names the previous image,
+with nothing red. Checked, rather than assumed, on 2026-09-20; this paragraph claimed all three were
+refused. Bump the pin in the same commit as the version, and verify by reading the file.
 
 `0.1.0` was the first release, on 2026-08-18. The package is public — an anonymous manifest request
 for a released version answers 200, and `latest` answers 404 because this workflow deliberately

@@ -350,6 +350,7 @@ func cmdPolicy(ctx context.Context, env *environment, args []string) error {
 		fmt.Fprintf(w, "YouTube blocked\t%v\n", pol.YouTubeBlocked)
 		fmt.Fprintf(w, "child installs\t%v\n", pol.AllowChildInstalls)
 		fmt.Fprintf(w, "debugging allowed\t%v\n", pol.AllowDebugging)
+		fmt.Fprintf(w, "uninstall allowed\t%v\n", pol.AllowUninstall)
 		fmt.Fprintf(w, "DNS host\t%s\n", firstNonEmpty(pol.DNSHost, "(none)"))
 	})
 }

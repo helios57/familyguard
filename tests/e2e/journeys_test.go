@@ -88,6 +88,7 @@ type policyDTO struct {
 	TrackingOnly       bool   `json:"tracking_only"`
 	AllowChildInstalls bool   `json:"allow_child_installs"`
 	AllowDebugging     bool   `json:"allow_debugging"`
+	AllowUninstall     bool   `json:"allow_uninstall"`
 	YouTubeBlocked     bool   `json:"youtube_blocked"`
 	DailyLimitMinutes  int    `json:"daily_limit_minutes"`
 	BedtimeEnabled     bool   `json:"bedtime_enabled"`

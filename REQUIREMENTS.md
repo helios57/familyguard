@@ -152,6 +152,16 @@ Applied at provisioning and re-applied on every boot:
   also stopped reaching the control plane it removes the last way in. It stays the default because
   adb un-suspends anything; the switch exists so the phone somebody is developing against can
   decline it, visibly, from the console, and have it back on the next sync.
+- FR-5.7 **Uninstalling apps is a per-child switch**, defaulting to off (the restriction applied).
+  `no_uninstall_apps` is set on the user, and the Device Owner runs as that user, so it binds
+  whoever administers the phone as much as it binds the child: `adb uninstall` answers
+  `DELETE_FAILED_USER_RESTRICTED`. Without a switch, putting an app on a governed phone is one-way
+  — restoring a backup from an older handset, or undoing an install that went wrong, has no remedy
+  short of a factory reset. It stays the default because removing an app is how a child escapes a
+  suspension; the switch exists so a parent can open the hatch for as long as they need it and
+  close it again from the console. The pre-sync boot floor (FR-2.1) is deliberately **not** covered:
+  a phone rebooted while the switch is on comes back restricted until its next sync, because that
+  floor runs before any policy is known.
 
 ### FR-6 Content filtering
 - FR-6.1 System-wide DNS filtering, enforced by the Device Owner, **when a resolver is configured**,

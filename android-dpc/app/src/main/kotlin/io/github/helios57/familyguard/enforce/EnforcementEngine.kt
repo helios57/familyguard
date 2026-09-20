@@ -212,6 +212,14 @@ object EnforcementEngine {
         // and the restriction then costs whoever holds the phone a setting in exchange for nothing.
         if (input.settings.dnsHost.isNotBlank()) restrictions.add(RESTRICTION_PRIVATE_DNS)
         if (!input.settings.allowChildInstalls) restrictions.add(RESTRICTION_INSTALL_APPS)
+        // FR-5.7. Removed after the baseline rather than made conditional inside it, because
+        // BASELINE_RESTRICTIONS is also the pre-sync floor and that floor must keep this one: it
+        // runs before any policy is known, and a phone that has never reached the server has no
+        // parent decision to honour. So the switch weakens only the authoritative path — the one
+        // that runs because the server just said what it wants. The consequence, which is real and
+        // deliberate: a phone rebooted while the switch is on comes back restricted until its next
+        // sync clears it again.
+        if (input.settings.allowUninstall) restrictions.remove(RESTRICTION_UNINSTALL_APPS)
         restrictions.removeAll(FORBIDDEN_RESTRICTIONS)
 
         val quota = input.settings.dailyLimitMinutes
@@ -465,6 +473,19 @@ data class Settings(
      * *adds* a restriction the compatible default is "off", and here "off" is what adds it.
      */
     @SerialName("allow_debugging") val allowDebugging: Boolean = false,
+    /**
+     * Lets apps be uninstalled again — over adb, or from Settings on the phone (FR-5.7).
+     *
+     * `no_uninstall_apps` is set on the *user*, and this app runs as that user, so the restriction
+     * binds whoever administers the phone as much as the child: `adb uninstall` answers
+     * `DELETE_FAILED_USER_RESTRICTED`. Restoring a backup from an older handset, or undoing an
+     * install that went wrong, is otherwise one-way.
+     *
+     * Defaulted to **false** for the same reason [allowDebugging] is, and the direction is the same
+     * unusual one: false is what keeps the restriction applied, so a phone talking to a server that
+     * predates this field behaves exactly as it did before.
+     */
+    @SerialName("allow_uninstall") val allowUninstall: Boolean = false,
     @SerialName("youtube_blocked") val youtubeBlocked: Boolean = false,
     @SerialName("daily_limit_minutes") val dailyLimitMinutes: Int = 0,
     @SerialName("bedtime_enabled") val bedtimeEnabled: Boolean = false,

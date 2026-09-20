@@ -947,7 +947,11 @@ function renderRules(data) {
     // whose effect a parent cannot undo by flipping it back if the phone has meanwhile stopped
     // reaching the console.
     toggle('allow_debugging', 'Allow developer options and USB debugging',
-      'For a phone you are developing on. Off switches adb off, and a phone that then loses contact with this console cannot be reached over USB either.'));
+      'For a phone you are developing on. Off switches adb off, and a phone that then loses contact with this console cannot be reached over USB either.'),
+    // FR-5.7. Beside the adb switch because it is the other one that exists for the adult holding
+    // the phone: with it off, nothing can take an app off that phone, including you over USB.
+    toggle('allow_uninstall', 'Allow apps to be removed',
+      'Turn on while you are setting the phone up or restoring a backup. Off means apps cannot be uninstalled \u2014 by them, or by you over USB.'));
 
   const bedtime = el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h2', { text: 'Bedtime and screen time' })),

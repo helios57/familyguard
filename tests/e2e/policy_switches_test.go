@@ -18,6 +18,7 @@ import (
 const (
 	restrictionDebugging  = "no_debugging_features"
 	restrictionPrivateDNS = "disallow_config_private_dns"
+	restrictionUninstall  = "no_uninstall_apps"
 )
 
 // FR-5.6.
@@ -64,6 +65,67 @@ func TestDeveloperOptionsCanBeAllowedPerChild(t *testing.T) {
 	h.patchPolicy(f.parent.Token, f.child.ID, map[string]any{"allow_debugging": false})
 	mustHave(t, h.desiredState(f.parent.Token, f.device.ID, "").Desired.UserRestrictions,
 		restrictionDebugging, "turning the switch back off must restore the restriction")
+}
+
+// FR-5.7. The same shape as the test above, for the switch that decides whether an app can be taken
+// off the phone at all — by the child, or by the adult holding it over USB.
+func TestUninstallingCanBeAllowedPerChild(t *testing.T) {
+	h := newHarness(t)
+	f := enrolledFixture(t, h)
+
+	// The calibration, again asserted rather than assumed: the "it is gone" half below proves
+	// nothing unless the restriction was demonstrably there first.
+	pol := h.policy(f.parent.Token, f.child.ID)
+	if pol.AllowUninstall {
+		t.Fatal("a new child defaults to allowing uninstalls; removing an app is how a suspension " +
+			"is escaped, so the restriction must be the state a parent has to leave, not reach")
+	}
+	before := h.desiredState(f.parent.Token, f.device.ID, "").Desired
+	mustHave(t, before.UserRestrictions, restrictionUninstall,
+		"a child with the switch off must have uninstalling restricted")
+
+	// On.
+	patched := h.patchPolicy(f.parent.Token, f.child.ID, map[string]any{"allow_uninstall": true})
+	if !patched.AllowUninstall {
+		t.Fatalf("the PATCH did not stick: allow_uninstall is %v", patched.AllowUninstall)
+	}
+	if patched.Version <= pol.Version {
+		t.Fatalf("the policy version did not move (%d → %d), so no phone would notice the change",
+			pol.Version, patched.Version)
+	}
+
+	allowed := h.desiredState(f.parent.Token, f.device.ID, "").Desired
+	mustNotHave(t, allowed.UserRestrictions, restrictionUninstall,
+		"allowing uninstalls must withhold the restriction that refuses adb uninstall")
+
+	// And nothing else moved with it. Named individually rather than compared as a set, so the
+	// failure says which restriction went missing rather than printing two lists.
+	for _, still := range []string{
+		"no_safe_boot", "no_config_date_time", "no_add_user",
+		"no_install_unknown_sources", restrictionDebugging,
+	} {
+		mustHave(t, allowed.UserRestrictions, still,
+			"the uninstall switch must not loosen "+still)
+	}
+
+	// Installing and removing are two switches, and this is the pair that would be easiest to
+	// conflate in the engine. A fresh child already allows installs, so the discriminating case is
+	// the other one: free-installation OFF while uninstalling is ON. Both entries must be present
+	// in their own right — the failure this guards against is a parent opening the hatch to service
+	// a phone and silently handing their child free installation with it.
+	h.patchPolicy(f.parent.Token, f.child.ID, map[string]any{"allow_child_installs": false})
+	both := h.desiredState(f.parent.Token, f.device.ID, "").Desired
+	mustHave(t, both.UserRestrictions, "no_install_apps",
+		"allowing uninstalls must not also switch free-installation on")
+	mustNotHave(t, both.UserRestrictions, restrictionUninstall,
+		"turning free-installation off must not close the uninstall hatch a parent opened")
+	h.patchPolicy(f.parent.Token, f.child.ID, map[string]any{"allow_child_installs": true})
+
+	// Off again. No policy state may be one-way (FR-4.2's rule, applied to this switch) — and for
+	// this one that is the whole point: the hatch is opened to service a phone and closed after.
+	h.patchPolicy(f.parent.Token, f.child.ID, map[string]any{"allow_uninstall": false})
+	mustHave(t, h.desiredState(f.parent.Token, f.device.ID, "").Desired.UserRestrictions,
+		restrictionUninstall, "turning the switch back off must restore the restriction")
 }
 
 // FR-6.1: no resolver by default, and the lock that protects one is coupled to there being one.

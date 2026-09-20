@@ -176,7 +176,11 @@ type Policy struct {
 	// AllowDebugging leaves developer options and adb switched on (FR-5.6). False everywhere it is
 	// not deliberately turned on, because the restriction it withholds is the one that cannot be
 	// undone from outside the phone.
-	AllowDebugging    bool      `json:"allow_debugging"`
+	AllowDebugging bool `json:"allow_debugging"`
+	// AllowUninstall withholds no_uninstall_apps, so apps can be removed over adb or from Settings
+	// (FR-5.7). False everywhere it is not deliberately turned on: uninstalling is how a child
+	// escapes a suspension.
+	AllowUninstall    bool      `json:"allow_uninstall"`
 	YouTubeBlocked    bool      `json:"youtube_blocked"`
 	DailyLimitMinutes int       `json:"daily_limit_minutes"`
 	BedtimeEnabled    bool      `json:"bedtime_enabled"`

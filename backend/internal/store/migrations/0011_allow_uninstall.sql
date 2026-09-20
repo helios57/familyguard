@@ -1,0 +1,16 @@
+-- Uninstalling apps, as a per-child switch (FR-5.7).
+--
+-- `no_uninstall_apps` has been unconditional since the first release, and it is right to be: taking
+-- an app away is how a child escapes a suspension, so a governed phone has to hold it. But it binds
+-- whoever is holding the phone, not just the child — the restriction is set on the user, and the
+-- device owner runs as that user — and there is no way around it from outside. `adb uninstall`
+-- answers DELETE_FAILED_USER_RESTRICTED, which is the platform refusing the parent, not the child.
+--
+-- That turns servicing a phone into a one-way street: an app installed over USB — restoring a
+-- backup from an older handset, say — cannot be taken off again. The escape hatch has to be a
+-- policy the parent can see and withdraw, for the same reason `allow_debugging` is one (0008): a
+-- restriction whose cost falls on the administrator belongs in the console, not in a constant.
+--
+-- DEFAULT FALSE, so every existing row keeps exactly the behaviour it has today. The column is a
+-- new way to say "and not this one", never a change of policy applied by a migration.
+ALTER TABLE policies ADD COLUMN allow_uninstall BOOLEAN NOT NULL DEFAULT FALSE;
