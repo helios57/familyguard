@@ -338,7 +338,20 @@ tasks.register("printUnitTestClasspath") {
     // asks for only the classpath and does not: a provider derived from a TaskProvider carries a
     // dependency on the task itself, so a red unit test blocked the real-TUN run — backwards,
     // since the real run exists to catch what the unit tests miss. Measured, not reasoned.
-    dependsOn("compileDebugUnitTestSources")
+    // The classpath's PRODUCERS, not the test run.
+    //
+    // `dependsOn(testTask.map { it.classpath })` looks like it asks for only the classpath and does
+    // not: a provider derived from a TaskProvider carries a dependency on the task itself, so a red
+    // unit test blocked the real-TUN run — backwards, since the real run exists to catch what the
+    // unit tests miss. A plain `provider { }` closure is not derived from the TaskProvider, so
+    // Gradle takes the build dependencies of the resolved FileCollection and nothing else.
+    //
+    // `compileDebugUnitTestSources` alone was NOT enough, and the way it failed is the reason this
+    // comment is long: the classpath names the app's own classes as
+    // `runtime_app_classes_jar/.../classes.jar`, built by `bundleDebugClassesToRuntimeJar`, which
+    // that task does not run. So the harness started against a STALE jar and died on
+    // NoClassDefFoundError for a class that was on disk, one directory over. Measured, not reasoned.
+    dependsOn(provider { testTask.get().classpath })
     val output = layout.buildDirectory.file("unit-test-classpath.txt")
     outputs.file(output)
     doLast {
