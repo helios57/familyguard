@@ -244,6 +244,12 @@ class AndroidInstaller(private val context: Context) {
             // policy install, and leaving it `PACKAGE_SOURCE_UNSPECIFIED` describes this session as
             // one whose installer did not say. Claiming `PACKAGE_SOURCE_STORE` would be a lie about
             // provenance told to a verifier, which is not a thing this app does.
+            //
+            // Do NOT "fix" this to PACKAGE_SOURCE_DOWNLOADED_FILE because the bytes arrive over
+            // HTTPS. Android 15's EnhancedConfirmationService treats DOWNLOADED_FILE and
+            // LOCAL_FILE as "always considered dangerous", and its protected-settings set names
+            // BIND_DEVICE_ADMIN — so the semantically obvious value would opt this app into ECM
+            // guarding on the very permission it is a device owner through.
             params.setPackageSource(PackageInstaller.PACKAGE_SOURCE_OTHER)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

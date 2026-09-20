@@ -4707,11 +4707,22 @@ rather than going quiet.
 **Nothing in this app can turn it off**, verified against the Android 37 platform sources rather than
 recalled:
 
-- `DevicePolicyManager.setGlobalSetting`'s allowlist is exactly four settings — `ADB_ENABLED`,
-  `USB_MASS_STORAGE_ENABLED`, `STAY_ON_WHILE_PLUGGED_IN`, `WIFI_DEVICE_OWNER_CONFIGS_LOCKDOWN`. No
-  verifier setting appears in it, and the verifier *enable* flag is not public API at all (only
-  `verifier_timeout`, `verifier_default_response`, `verifier_setting_visible` and
+- `DevicePolicyManager.setGlobalSetting` accepts **eleven** settings, not the four the javadoc's
+  still-supported list names. The number here read *"exactly four"* — `ADB_ENABLED`,
+  `USB_MASS_STORAGE_ENABLED`, `STAY_ON_WHILE_PLUGGED_IN`, `WIFI_DEVICE_OWNER_CONFIGS_LOCKDOWN` —
+  because it was taken from the SDK javadoc rather than from the service. The **code** allowlist is
+  in `DevicePolicyManagerService.java` (`main`, lines 725–736) and adds `ADB_WIFI_ENABLED`,
+  `AUTO_TIME`, `AUTO_TIME_ZONE`, `DATA_ROAMING`, `WIFI_SLEEP_POLICY`, `PRIVATE_DNS_MODE` and
+  `PRIVATE_DNS_SPECIFIER`. **The conclusion is unchanged and is in fact stronger:** `grep -c
+  PACKAGE_VERIFIER` on that file is **0**, and measured across `android-5.0.0_r1` through `main`,
+  no verifier setting was **ever** in either allowlist on any API level. It was not removed — a DPC
+  could never write it, not even on the API 29 floor where the framework still honoured
+  `package_verifier_enable`. Only `adb`/shell could. The verifier *enable* flag is not public API
+  either (only `verifier_timeout`, `verifier_default_response`, `verifier_setting_visible` and
   `verifier_verify_adb_installs` are).
+- `setSecureSetting`'s allowlist also carries `INSTALL_NON_MARKET_APPS`, which the earlier reading
+  missed. It is dead twice over: `UnsupportedOperationException` for `targetSdk >= 26`, and for a
+  **device owner** — as opposed to a profile owner — it is logged and silently ignored.
 - `UserManager.ENSURE_VERIFY_APPS` is one-way by construction: *"disallowed from disabling
   application verification"*. It forces verification on; there is no counterpart.
 - `setPackagesSuspended` names *"the required package verifier"* among the packages that cannot be
@@ -4729,9 +4740,28 @@ So the two things that do work are both outside the app, and both are the operat
    enrolled phone then refuses the update and has to be re-provisioned. Upload the existing key as
    the app signing key.
 
-Not applicable: Google's Play Protect appeal form covers apps flagged as *harmful*, not the "not
-known" notice; and the install-volume heuristic that relaxes the warning never arrives for a fleet
-of one.
+Mostly not applicable, and this paragraph used to overstate it. What an appeal can *overturn* is a
+PHA classification — and *"Play Protect has never seen this binary"* is not a verdict to reverse, so
+the appeal does not address the "not known" notice. But the claim that the form does not apply at
+all was wrong: on Google's own [warning guidance][ppwarn] the **App Scan Recommended** section does
+carry the appeal link; only **Send App for Security Check** is documented as non-appealable
+(*"Appeals are not relevant and won't remove this message."*). The install-volume heuristic that
+relaxes the warning still never arrives for a fleet of one.
+
+There is also a *second*, unrelated appeal queue, and it did not exist when this was written:
+Google now enforces an **approved-DPC allowlist during Android Enterprise provisioning**
+([answer/16694822][dpcallow], device-facing error *"App blocked to protect your device"*). Its
+appeal button is the only documented route back to QR/NFC enrolment for a custom DPC. Google's own
+**Test DPC is currently blocked by it** (`com.afwsamples.testdpc` 9.0.12, Google-signed, reported
+2026-09-19 in [googlesamples/android-testdpc#283][testdpc]) — which is the cleanest available
+control that being on Play and signed by Google exempts nobody. Field reports put the latency at
+days to weeks with no SLA. `adb install` + `adb shell dpm set-device-owner` is **not** one of the
+"Android Enterprise methods" that wording names, so it plausibly sidesteps the allowlist entirely —
+**inference, not measured**, and it is the cheapest test available.
+
+[ppwarn]: https://developers.google.com/android/play-protect/warning-dev-guidance
+[dpcallow]: https://support.google.com/work/android/answer/16694822
+[testdpc]: https://github.com/googlesamples/android-testdpc/issues/283
 
 ## Phase 18 — Ring, and the two minutes nobody could stop (FR-9, FR-9.2)
 
