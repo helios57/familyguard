@@ -1,5 +1,6 @@
 package io.github.helios57.familyguard.update
 
+import io.github.helios57.familyguard.net.ApiException
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -154,7 +155,33 @@ class AppUpdater(
     fun update(): UpdateOutcome {
         val want = try {
             info()
+        } catch (e: ApiException) {
+            // **The server answered, and its answer was no.** A 404 from a control plane that hosts
+            // no DPC at all, a 503 while the APK on the node is being replaced, a 401 from a
+            // credential that is no longer accepted. Each of those is a fact about the deployment
+            // that a parent should be able to read, so each becomes a refusal with the server's own
+            // words in it.
+            return UpdateOutcome.Refused("the server did not say which build to install (${reason(e)})")
+        } catch (e: IOException) {
+            // **The server was never reached, so nothing was refused — rethrow rather than report.**
+            // The caller already has the branch this belongs in, and its comment says exactly what
+            // it is for: "nothing was attempted, and a phone that is merely offline must not show a
+            // parent a red line about an update." That branch only runs when this function THROWS,
+            // and until 2026-09-20 this function caught the transport failure and turned it into a
+            // refusal — so the guard was unreachable for the one case it names, and the words it
+            // was written to suppress are the words that reached the console.
+            //
+            // Measured on the family phone that day: an `apk-info` call lost a connection at
+            // 15:49+02, and the console said "This phone did not take the last update. the server
+            // did not say which build to install (Failed to connect to …:443)" for the next 81
+            // minutes, on a phone that was on the newest build and heartbeating every 60 seconds.
+            //
+            // `ApiException` extends `IOException` and is caught above, so this branch is the
+            // transport and nothing else. Order matters: the narrower catch has to come first.
+            throw e
         } catch (e: Exception) {
+            // Anything that is not the transport: a malformed body, a serializer that could not
+            // read what came back. The server answered something, so this is a refusal.
             return UpdateOutcome.Refused("the server did not say which build to install (${reason(e)})")
         }
         if (want.packageName.isBlank()) {

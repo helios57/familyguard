@@ -107,6 +107,46 @@ func TestTheConsoleShowsAPhoneThatIsBehindAndWhyItsUpdateFailed(t *testing.T) {
 		t.Errorf("the update button does not name the build it would install: %q", behind.Buttons)
 	}
 
+	// **The state a real family ended up in, and the one this test could not see until 2026-09-20.**
+	// The phone catches up to the hosted build while the stored failure is STILL SET — which is not
+	// an edge case but the normal outcome of a failure recorded against the newest build: the DPC
+	// clears its record only when a build ABOVE the recorded one runs, and there is no such build.
+	// On the family phone one lost `apk-info` connection put "This phone did not take the last
+	// update" on the card and left it there, on a phone that was on the newest build and
+	// heartbeating every 60 seconds.
+	//
+	// It sits here, before the control below, because the control below changes TWO things at once
+	// — the build and the error — so whichever of them the card was keying on, it would go green.
+	// That is exactly why this was not caught: a negative control that moves two variables proves
+	// nothing about either.
+	beat(map[string]any{
+		"app_version_name": "0.0.2", "app_version_code": 2, "update_error": reason,
+	})
+	b.eval("refresh()", nil)
+	b.waitFor(
+		"(() => { const c = Array.from(document.querySelectorAll('#view .card'))"+
+			".find((x) => x.textContent.indexOf('The blue phone') >= 0);"+
+			"return !!c && c.textContent.indexOf('0.0.2') >= 0; })()",
+		15*time.Second, "the card to follow the update")
+
+	var caughtUp card
+	b.eval(deviceCardJS, &caughtUp)
+
+	if joined := strings.Join(caughtUp.Warnings, "\n"); strings.Contains(joined, "did not take the last update") {
+		t.Errorf("the phone runs the build the server hosts and the console still calls its update failed."+
+			"\nA warning that cannot go away is one a parent learns to scroll past.\nwarnings: %q", joined)
+	}
+	// The failure text itself must go with it: half a warning — the platform's words with no
+	// sentence saying what they are about — is worse than none.
+	if joined := strings.Join(caughtUp.Warnings, "\n"); strings.Contains(joined, reason) {
+		t.Errorf("the stale reason is still drawn on an up-to-date phone: %q", joined)
+	}
+	// ...and the card has not otherwise gone quiet. Without this, a card that failed to render at
+	// all would pass both assertions above.
+	if !hasBadge(caughtUp.Badges, "app 0.0.2") {
+		t.Errorf("the card stopped naming the build the phone runs: %q", caughtUp.Badges)
+	}
+
 	// The negative control, and the half that makes the assertions above mean something. The phone
 	// reports the build the server hosts and nothing to report; every difference must disappear.
 	// Without this, a card that drew the warning unconditionally would pass everything above.

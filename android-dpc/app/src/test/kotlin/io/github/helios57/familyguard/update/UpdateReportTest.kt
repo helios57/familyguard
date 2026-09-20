@@ -94,6 +94,42 @@ class UpdateReportTest {
         assertEquals("", r.pending(runningVersionCode = 8))
     }
 
+    /**
+     * **The hole the self-clearing rule cannot close, stated so that the fix for it has somewhere
+     * to point.**
+     *
+     * [UpdateFailure] clears itself when a build ABOVE the recorded one is seen running, which
+     * answers "it failed, then a later attempt worked". A failure recorded against the build that
+     * is already the newest one has no such build coming: `pending` asks `running > from`, and
+     * 18 > 18 is false on every heartbeat for the life of the install. So the line stays on the
+     * parent's screen forever, on a phone with nothing wrong with it.
+     *
+     * Measured on the family phone 2026-09-20, where a lost connection during one `apk-info` call
+     * put a permanent "This phone did not take the last update" on a phone running build 18 of 18.
+     * `ConnectionService.updateCheck` now calls [UpdateReport.clear] when the server says this
+     * phone is already current, which is the only other proof available that the failure is over.
+     */
+    @Test
+    fun `a failure recorded against the newest build never clears itself, and only clear() ends it`() {
+        val store = InMemoryUpdateReportStore()
+        val r = report(store)
+        r.record("the server did not say which build to install", runningVersionCode = 18)
+
+        assertEquals(
+            "a failure recorded against build 18 is still reported while build 18 runs",
+            "the server did not say which build to install", r.pending(runningVersionCode = 18),
+        )
+        assertEquals(
+            "and a thousand heartbeats later it is still reported, because nothing above 18 ever runs",
+            "the server did not say which build to install", r.pending(runningVersionCode = 18),
+        )
+
+        r.clear()
+
+        assertNull("clear() is the only thing that can end it", store.load())
+        assertEquals("", r.pending(runningVersionCode = 18))
+    }
+
     @Test
     fun `records when it happened, so the console can say how stale the failure is`() {
         val store = InMemoryUpdateReportStore()

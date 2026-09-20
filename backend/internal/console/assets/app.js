@@ -597,6 +597,22 @@ function updateBehind(st) {
   return { hosted: hosted.version_name || ('build ' + hosted.version_code) };
 }
 
+/*
+ * Whether this phone is MEASURABLY running the build the server hosts.
+ *
+ * `updateBehind` folds three states into one null — "behind is false", "the phone has not said"
+ * and "the server cannot say" — which is right for a badge nobody should draw on a guess, and
+ * wrong for deciding whether a stored failure is still true. This is the half that can be
+ * asserted: both version codes are known and the phone's is not lower. Anything else is
+ * unknown, and unknown must never read as current.
+ */
+function updateCurrent(st) {
+  const hosted = state.dpc;
+  if (!hosted || !hosted.hosted || !hosted.version_code) return false;
+  if (!st.app_version_code) return false;
+  return hosted.version_code <= st.app_version_code;
+}
+
 function deviceCard(dev, desired) {
   const st = dev.state || {};
   const online = st.online;
@@ -655,7 +671,20 @@ function deviceCard(dev, desired) {
   // update failed is a phone running code that may be the reason anything else on this card is
   // wrong. Shown verbatim — the text is Android's own words, and paraphrasing an error this console
   // has never seen would be inventing a diagnosis.
-  if (st.update_error) {
+  //
+  // **Only while the server actually has something this phone has not taken.** `update_error` is
+  // last-reported and the phone clears it by reporting an empty one, so a failure recorded against
+  // the build that is already the newest one has nothing left to clear it — see `UpdateReport` on
+  // the DPC side, fixed in 0.6.10. Measured on the family phone 2026-09-20: a lost connection
+  // during one `apk-info` call left "This phone did not take the last update" on the card for 81
+  // minutes and counting, while the phone sat on the newest build heartbeating every 60 seconds.
+  // A warning that cannot go away is one a parent learns to scroll past, which costs the next
+  // warning too.
+  //
+  // `updateCurrent` and not `!behind`: a phone that has not reported a build, or a server that
+  // cannot say which one it hosts, is UNKNOWN, and an unknown must keep showing the warning —
+  // suppressing on "we could not tell" is how a real stuck phone would go quiet.
+  if (st.update_error && !updateCurrent(st)) {
     body.push(el('p', { class: 'warn' },
       el('strong', { text: 'This phone did not take the last update. ' }),
       st.update_error + '.',

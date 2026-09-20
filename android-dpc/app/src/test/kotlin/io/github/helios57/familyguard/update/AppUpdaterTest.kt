@@ -1,5 +1,6 @@
 package io.github.helios57.familyguard.update
 
+import io.github.helios57.familyguard.net.ApiException
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
@@ -223,15 +224,50 @@ class AppUpdaterTest {
         assertTrue(refused.reason.contains("no build of $PACKAGE"))
     }
 
+    /**
+     * **This test used to assert the defect, and the defect reached a real family.**
+     *
+     * It read "reports the transport's own reason when the metadata call fails" and required a
+     * plain `IOException` to come back as [UpdateOutcome.Refused]. That is the opposite of what
+     * `ConnectionService.updateCheck` is written for — its exception branch says "nothing was
+     * attempted, and a phone that is merely offline must not show a parent a red line about an
+     * update" — so the guard was unreachable and this test is what held it that way.
+     *
+     * Measured 2026-09-20: one `apk-info` call on the family phone failed with
+     * `Failed to connect to familyguard.lu-mi.ch/…:443`, and the console carried
+     * "This phone did not take the last update" for the next 81 minutes while the phone sat on the
+     * newest build heartbeating every 60 seconds.
+     */
     @Test
-    fun `reports the transport's own reason when the metadata call fails`() {
+    fun `a server that was never reached is not a refusal, because nothing was refused`() {
         val h = Harness(folder)
-        h.infoFails = IOException("connection reset")
+        h.infoFails = IOException("Failed to connect to guard.example.com/203.0.113.9:443")
+
+        val thrown = runCatching { h.updater().update() }.exceptionOrNull()
+            ?: throw AssertionError(
+                "a transport failure came back as an outcome, so the caller cannot tell it from a " +
+                    "refusal and will report it to a parent"
+            )
+        assertTrue(
+            "the caller needs the transport's own exception, not a wrapper: $thrown",
+            thrown is IOException && thrown.message!!.contains("Failed to connect")
+        )
+    }
+
+    /**
+     * The positive control for the test above, and the half that keeps it from being a licence to
+     * swallow everything. A server that ANSWERED is a fact about the deployment — a control plane
+     * hosting no DPC at all, or one whose APK is being replaced — and a parent should read it.
+     */
+    @Test
+    fun `a server that answered with a refusal is still reported in the server's own words`() {
+        val h = Harness(folder)
+        h.infoFails = ApiException(404, "not_found", "this control plane hosts no DPC", "req-1")
 
         val refused = h.updater().update() as? UpdateOutcome.Refused
-            ?: throw AssertionError("a failed apk-info call was not refused")
-        assertTrue("the parent needs the transport's words: ${refused.reason}",
-            refused.reason.contains("connection reset"))
+            ?: throw AssertionError("a 404 from apk-info was not reported as a refusal")
+        assertTrue("the parent needs the server's words: ${refused.reason}",
+            refused.reason.contains("this control plane hosts no DPC"))
     }
 
     @Test

@@ -4018,6 +4018,7 @@ proven.
 | FR-3.6 the phone says it cannot measure | 15.4 | e2e `TestAPhoneThatCannotMeasureScreenTimeSaysSo` — three-valued on the heartbeat, a later omitting heartbeat does not clear a recorded `false`, and the **list** endpoint carries the field as well as the single-device one, which is where a console warning would otherwise be invisible. **16.5 added the other half**: the phone now notices the grant at the moment it happens, via `AppOpsManager.startWatchingMode` on `OPSTR_GET_USAGE_STATS`, instead of only on the next sync — which on an unlinked phone was never, and is what the owner actually hit. The deep link, its highlight extras and the watcher itself have no automated coverage at all: an intent is resolved at run time against a Settings this project does not own, and `AppOpsManager` is not reachable from a JVM test |
 | FR-14 audit | 3.7 | e2e `TestEveryAuditedActionIsWritten` — all **21** audited actions driven over real HTTP (17 parent-side, 4 device-side), each asserted as a row naming actor type, actor id, action, target type and target *id*; nine detail keys checked so the row says *which* change was made; every row required to carry a `request_id`; and a source-scanning ratchet over `internal/httpapi/*.go` that fails when a 22nd action appears. **Calibrated 6/6** — see the record below. Also `TestRecoveryAndAudit`, which checks ten action names |
 | FR-15 keeping the DPC current | 9 | three layers, and only the third can see it. JVM: `AppUpdaterTest` drives the five checks with every dependency a function, so the whole decision runs off a device. Server + e2e: `TestAPKInfoDescribesTheFileThisServerWillHandOver`, `TestAPKInfoIsNotFoundWhenTheServerHostsNoDPC`, `TestAParentCanTellThePhoneToUpdateItself`, `TestTheHeartbeatReportsWhichDPCThePhoneIsRunning`, `TestAnAPKReplacedUnderTheRunningServerIsRefused`, and `apk_test.go`'s seven over the bytes themselves. Device: **`tests/android/self-update.sh` + `TestTheServerReplacesTheDPCOnARealDevice`**, which builds the DPC twice from one tree, enrols the lower build against a real server and watches the higher one arrive — passed 2026-09-05 in 176 s, with the phone's own log as the second witness (`wake:connected: commands done=1` → `PackageManager: installation completed` → `FamilyGuardUpdate: self-update installed`) on a device whose adb had been off since the first policy applied. Its negative control is the same command again, declined as "already running". `tests/android/calibrate-update.sh` breaks each of the five checks in turn and records the refusal. **Not proven anywhere:** the update path on a phone that is not an emulator, and the `MY_PACKAGE_REPLACED` restart on an OEM build that kills background starts more aggressively than AOSP |
+| FR-15.7 reporting an update that did not take | 17, **26** | Device: `UpdateReportTest` (8) — the record is kept until a build **above** the one it names runs, the latest attempt wins, and `a failure recorded against the newest build never clears itself, and only clear() ends it` pins the hole that `AlreadyCurrent` now closes. `AppUpdaterTest` splits the two shapes a failed `apk-info` can have: a server that ANSWERED stays a refusal in the server's own words, a server that was never reached propagates so the caller's "nothing was attempted" branch — which had been unreachable since it was written — finally runs. Console: e2e `TestTheConsoleShowsAPhoneThatIsBehindAndWhyItsUpdateFailed` drives a real browser and now holds the build fixed while the error stays set, which is the state a real family reached and the one combination its old two-variable control could not distinguish ([26.4](#264--why-the-e2e-suite-had-this-state-and-still-missed-it)). **Calibrated 3/3** ([26.5](#265--calibration-3-probes-3-red)). **Not proven:** the `AlreadyCurrent` call site has no JVM test — `updateCheck` is inside an Android `Service` — and neither device-side fix has run on a handset |
 | FR-16 managed applications | 12 | four layers, and the one that decided the design is the device. Server: `TestAnUploadedAPKIsReadRatherThanDescribed`, `TestMultipartAndRawBodyAgree`, `TestTwoVersionsOfOneAppBothLive`, `TestTheSameFileTwiceIsNotAConflict`, `TestAPackageSignedByAnotherKeyIsRefused`, `TestWhatIsNotAnAPKIsRefusedAsSuch`, `TestTheDirectoryOnTheNodeIsAlsoASource`, `TestADeploymentWithoutAnAPKDirSaysSo`, `TestDeletingAnAppRemovesItsFileToo`, `TestAManagedAppDownloadNeedsADeviceCredential`, plus `internal/apk`'s parser tests. Policy: `TestDeclaringAnAppReachesThePhoneAsSomethingItCanFetch`, `TestAnUpgradeIsANewVersionInTheSamePolicy`, `TestWithdrawingAnAppRemovesItFromThePolicy`, `TestDeclaringSomethingTheCatalogDoesNotHaveIsRefused`, `TestTheConsoleSeesADeclarationWithNothingBehindIt`; the shared vectors carry three new cases so both engines normalise a declared set identically. JVM: `ManagedAppApplierTest` (12) and `AppUpdaterTest`'s four new cases. **Device: `ManagedInstallTest`** — the restriction matrix in [12.1](#121--which-restrictions-bind-the-device-owner-measured-on-a-phone-rather-than-argued-from-the-source), the install→upgrade→withdraw lifecycle against a real second application, and `getInstallSourceInfo` as a real filter. **Calibrated 11/11** ([12.2](#122--the-jvm-calibration-including-one-break-that-proved-a-test-binds-to-nothing)), and the record includes one assertion that binds to nothing at the JVM layer and says so. **Not proven:** any of it on hardware rather than an emulator, and the API 29 floor |
 | FR-17 API keys | 12 | e2e `TestAnAPIKeyIsTheSameParent`, `TestTheTokenIsShownOnceAndNeverAgain`, `TestRevokingAKeyEndsItImmediately`, `TestAKeyCannotMintACredential`, `TestAKeyThatWasNeverIssuedIsNotDistinguishable`, `TestOnlyThePrimaryAdminMintsKeys`, `TestAKeyNeedsAName`, `TestTheAuditTrailTellsAScriptFromAPerson` — the last two of those are the ones that matter most: a key must not be able to mint a credential that outlives its own revocation, and an audit row must say a script acted rather than a person |
 | FR-18 family blocklist | 14 | e2e `TestTheCuratedBlocklistIsSeededAndReachesAPhone`, `TestTheBlocklistCoversAChildAddedAfterIt`, `TestAChildAllowExemptsOnlyThatChild`, `TestTheCriticalWhitelistOutranksTheBlocklist`, `TestDeletingACuratedEntryIsPermanent`, `TestABlocklistChangeBumpsEveryChildsPolicyVersion`, `TestTheBlocklistIsReachableByAPIKeyAndGuardedByRole`, `TestTheBlocklistRefusesWhatCanNeverMatchAnApp`, `TestTheBlocklistIsAudited`; three shared vectors replayed by **both** engines. The four that carry the requirement rather than the plumbing: the phone is told to hide packages **no inventory reported** (an implementation that blocks only what it can see leaves the installer stub that puts Facebook back); a child created *after* the entry is covered by it; one child's ALLOW exempts that child and a **second child is the control** that the entry did not simply vanish; and the device's own dialer, put on the list deliberately, is neither hidden nor suspended — with a non-critical package blocked in the same call, so an implementation that ignored the list entirely could not pass by doing nothing. `TestDeletingACuratedEntryIsPermanent` restarts the server, which is the only thing that separates "seeded once" from "re-applied on boot". **Calibrated 3/3 on the engine** (drop the union / drop the ALLOW carve-out / apply the list after the critical whitelist), each break red in the vector that owns the property and green on restore. **Not proven:** any of it on hardware — no phone has yet reported one of these packages back as hidden. `com.spotify.music` was added as a parent row on the live database in 16.7 and is in the same position: the app is not installed on the only enrolled phone, so the entry is pre-emptive by design |
@@ -6315,3 +6316,117 @@ Selected verdicts:
   covers the upsert is the e2e layer against a real PostgreSQL (25.6) — which is the right place
   for it, but it means the SQL is measured only when docker and a `postgres:18.6` image are
   present. A machine without them reports NOT MEASURED, not a pass.
+
+## Phase 26 — the warning that could never go away (FR-15.7)
+
+The owner read the console on the day 0.6.9 shipped and sent back what it said, verbatim:
+
+> `This phone did not take the last update. the server did not say which build to install (Failed to
+> connect to familyguard.lu-mi.ch/…:443)`
+
+The phone had taken the update. `device_state` at that moment: `app_version_name` **0.6.9**,
+`app_version_code` **18** — the newest build there is — `connectivity` wifi, `last_seen_at` **2.6
+seconds** old. The line had been on the card for **81 minutes** and had no way to leave it.
+
+Three defects, none of which had ever been red, and each of which alone is enough to produce the
+sentence above.
+
+### 26.1 — a guard that named the case it could not reach
+
+`ConnectionService.updateCheck` already distinguishes the two shapes, and its comment is explicit:
+
+> The check itself did not complete — no server, no answer. Not recorded as an update failure:
+> nothing was attempted, and **a phone that is merely offline must not show a parent a red line
+> about an update.**
+
+That branch runs when `AppUpdater.update()` **throws**. `update()` caught the transport failure
+itself and returned `UpdateOutcome.Refused("the server did not say which build to install (…)")`, so
+the branch was unreachable for the one case its own comment names — and the words it exists to
+suppress are the words that reached the console. A guard defined, commented, and never called.
+
+The fix splits the catch by whether the server *answered*. `ApiException` — whose own doc says "the
+server answered, and its answer was a refusal" — is a 404 from a control plane hosting no DPC, a 503
+while the node's APK is being replaced, a 401 from a revoked credential. Each is a fact about the
+deployment a parent should read, so each stays a refusal. Every other `IOException` is a server that
+was never reached, and it propagates. Order matters: `ApiException` **extends** `IOException`, so the
+narrower catch has to come first, and `e is IOException` on its own does not discriminate at all.
+
+**The test that held this in place asserted the defect.** `reports the transport's own reason when
+the metadata call fails` fed `IOException("connection reset")` and required a `Refused` back. It is
+now two tests — a transport failure propagates, and a server that answered is still reported in the
+server's own words — and the second is the positive control that keeps the first from being a licence
+to swallow everything.
+
+### 26.2 — a record with no way to clear itself on the newest build
+
+`UpdateFailure` is self-clearing by design, and the design is good: it stores the build that was
+running when the attempt failed, and `pending()` drops the record once a build **above** it is seen
+running. "It failed, then a later attempt worked" needs nobody to remember to clean up.
+
+It has no answer for a failure recorded against the build that is *already* the newest one.
+`pending()` asks `running > from`; 18 > 18 is false on every heartbeat, forever. Storing the target
+instead would be worse for the reasons `UpdateFailure` already gives. So the missing input is the
+other proof that a failure is over: **the phone reached the server and was told it is current.**
+`updateCheck`'s `AlreadyCurrent` branch now calls `report.clear()`. It cannot hide a phone that is
+genuinely stuck — a phone the server has a newer build for never reaches that branch.
+
+### 26.3 — a console that repeated a stale claim as a present-tense fact
+
+`update_error` is last-reported, and the phone clears it by reporting an empty one. With 26.1 and
+26.2 both live it could not, so the card drew the warning on every render. But the console had its
+own share: it drew it whenever the field was non-empty, including on a phone it could see was running
+the build the server hosts — where the sentence "This phone did not take the last update" is simply
+false.
+
+`updateBehind` could not be reused for the guard. It folds **three** states into one null — behind is
+false, the phone has not said, the server cannot say — which is right for a badge nobody should draw
+on a guess and wrong for deciding whether a stored failure is still true. `updateCurrent` asserts the
+positive half only: both version codes known, and the phone's is not lower. Unknown keeps the
+warning, because suppressing on "we could not tell" is how a genuinely stuck phone would go quiet.
+
+### 26.4 — why the e2e suite had this state and still missed it
+
+`TestTheConsoleShowsAPhoneThatIsBehindAndWhyItsUpdateFailed` already drove a real browser against a
+real server, already set an `update_error`, and already had a negative control. The control was:
+
+```go
+beat(map[string]any{"app_version_name": "0.0.2", "app_version_code": 2, "update_error": ""})
+```
+
+**It moves two variables at once.** The phone catches up to the hosted build *and* the error is
+cleared in the same heartbeat, so whichever of the two the card was keying on, the warning goes away
+and the control passes. The state a real family reached — caught up, error still set — is the one
+combination the test never wrote, and it is not an edge case: with 26.2 unfixed it is the *normal*
+end state of any failure recorded against the newest build.
+
+The new case sits **before** the old control and holds the build fixed while the error stays set. The
+old control stays exactly where it was: it is still the only thing proving the card goes quiet when
+there is genuinely nothing to say.
+
+### 26.5 — calibration: 3 probes, 3 red
+
+Each probe changes one value and leaves the structure intact, per the rule that a probe deleting a
+symbol is a compile error wearing a red. Snapshot with `cp`, restore, `filecmp.cmp` to prove the
+restore is byte-identical.
+
+| # | file | the one value | expected red | measured |
+|---|---|---|---|---|
+| 1 | `AppUpdater.kt` | the transport catch returns `Refused` again | the new propagation test | **RED** — `a transport failure came back as an outcome, so the caller cannot tell it from a refusal`; 21 tests, 1 failure, the `ApiException` positive control still green |
+| 2 | `UpdateReport.kt` | `pending()`'s `>` becomes `>=` | the newest-build test | **RED** — `a failure recorded against build 18 is still reported while build 18 runs`; 3 of 8 red, the two older tests binding the same rule |
+| 3 | `app.js` | the guard drops `&& !updateCurrent(st)` | the new e2e case | **RED** in a real browser — `the phone runs the build the server hosts and the console still calls its update failed`, and `the stale reason is still drawn on an up-to-date phone`; the behind-phone and cleared-error assertions stayed green |
+
+Cumulative across the project: **42 probes, 42 red.**
+
+### 26.6 — what is NOT proven
+
+- **The `AlreadyCurrent` call site has no JVM test.** `updateCheck` lives inside an Android
+  `Service` and the unit suite cannot reach it. What is tested is the contract either side of it:
+  that `pending()` cannot clear a same-build failure, and that `clear()` does. The line joining them
+  is read, not measured.
+- **26.1 and 26.2 are unproven on hardware**, like every DPC change — they ship in 0.6.10 and the
+  phone has to install it by hand while Play Protect blocks the unattended path. 26.3 is the half
+  that reaches the family immediately, because it is the control plane.
+- **Why the connection was lost at 15:49+02 is not determined** and is not worth determining: the
+  phone heartbeats every 60 s over the same TLS to the same host and did so throughout. A transient
+  network failure is the expected case, which is the whole reason it must not be reported as a
+  refusal.

@@ -1246,6 +1246,19 @@ class ConnectionService : Service() {
             when (val result = outcome.getOrThrow()) {
                 is UpdateOutcome.AlreadyCurrent -> {
                     Log.i(TAG, "update check ($why): already on build ${result.identity.versionCode}")
+                    // **This is the only proof that an older failure is over, and without it the
+                    // record could outlive the problem forever.** `UpdateReport` clears itself when
+                    // a build ABOVE the one the failure was recorded against is seen running — see
+                    // `UpdateFailure` — which answers "the attempt failed, then a later one
+                    // worked". It has no answer for a failure recorded against the build that is
+                    // already the newest one: `pending()` asks `running > from`, and 18 > 18 is
+                    // false, so the line stays on the parent's screen for the life of the install.
+                    // Reaching the server and being told this phone is current is exactly the
+                    // measurement that says there is nothing left to report.
+                    //
+                    // It does NOT hide a phone that is genuinely stuck: a phone the server has a
+                    // newer build for never reaches this branch at all.
+                    report.clear()
                     bookUpdateCheck(schedule.checked())
                 }
                 is UpdateOutcome.Refused -> {
