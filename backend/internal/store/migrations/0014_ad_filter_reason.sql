@@ -1,0 +1,17 @@
+-- Why the tunnel is not running, in the phone's own words (FR-6.11).
+--
+-- `ad_filter_running` already says WHETHER a tunnel is up, and FR-6.10 exists because that can
+-- disagree with the switch a parent set. What it cannot say is which of several unrelated faults is
+-- holding it, and they have different remedies: no list has been fetched yet, the phone has not
+-- allowed the connection, the watchdog stood a tunnel down that carried nothing, or the network
+-- named no resolver to forward queries to.
+--
+-- Measured on the family phone on 2026-09-20: the switch was on, 180423 rules were compiled and
+-- loaded, the heartbeat was 30 seconds old, and `ad_filter_running` was false — for hours. The
+-- phone knew exactly why and said so in its own notification shade, where a console cannot read it,
+-- so the only way to learn the reason was to pick up the phone.
+--
+-- TEXT NOT NULL DEFAULT '', matching `update_error` above it, which answers the same shape of
+-- question about a different subsystem. Empty is "nothing to say" — a tunnel that is up, or a
+-- phone whose DPC predates this column — and never a reason of its own.
+ALTER TABLE device_state ADD COLUMN ad_filter_reason TEXT NOT NULL DEFAULT '';

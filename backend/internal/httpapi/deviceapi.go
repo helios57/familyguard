@@ -154,6 +154,11 @@ type heartbeatRequest struct {
 	AdFilterRules     *int    `json:"ad_filter_rules"`
 	AdFilterFetchedAt *string `json:"ad_filter_fetched_at"`
 	AdFilterRunning   *bool   `json:"ad_filter_running"`
+
+	// AdFilterReason is why no tunnel is running, in the phone's own words (FR-6.11). Absent from
+	// an older DPC and carried through as absence; "" is a phone saying there is nothing to
+	// explain, which is what clears the line when a tunnel comes up.
+	AdFilterReason *string `json:"ad_filter_reason"`
 }
 
 // maxUpdateErrorRunes bounds what one phone may write into the field a parent reads.
@@ -242,6 +247,9 @@ func (s *Server) heartbeat(c *gin.Context) {
 		AdFilterRunning:   req.AdFilterRunning,
 
 		ReportedUpdateError: clampUpdateError(req.UpdateError),
+		// Bounded by the same rule and for the same reason: it is the phone's own words, shown
+		// verbatim, and a console line is a console line.
+		ReportedAdFilterReason: clampUpdateError(req.AdFilterReason),
 	}); err != nil {
 		s.fail(c, err)
 		return

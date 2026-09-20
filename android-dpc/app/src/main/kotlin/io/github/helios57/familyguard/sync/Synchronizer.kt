@@ -289,6 +289,7 @@ class Synchronizer(
                 adFilterRules = t.adFilterRules,
                 adFilterFetchedAt = t.adFilterFetchedAt,
                 adFilterRunning = t.adFilterRunning,
+                adFilterReason = t.adFilterReason,
             )
         ).pendingCommands
     }
@@ -367,4 +368,6 @@ data class DeviceTelemetry(
     val adFilterRules: Int? = null,
     val adFilterFetchedAt: String? = null,
     val adFilterRunning: Boolean? = null,
+    /** Why no tunnel is running, or "" when there is nothing to explain (FR-6.11). */
+    val adFilterReason: String? = null,
 )

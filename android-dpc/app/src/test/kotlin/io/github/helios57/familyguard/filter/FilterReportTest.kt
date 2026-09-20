@@ -74,4 +74,34 @@ class FilterReportTest {
         assertNull("rules", report.rules)
         assertEquals(true, report.running)
     }
+
+    @Test
+    fun `a tunnel that is not running says why`() {
+        val report = FilterReport.of(
+            true, list(), running = false,
+            reason = "the network offers no resolver to forward queries to",
+        )
+        assertEquals("the network offers no resolver to forward queries to", report.reason)
+    }
+
+    @Test
+    fun `a tunnel that is up has nothing to explain`() {
+        // The reason and the flag are read one after the other, so the service can record a
+        // stand-down and then come up before the heartbeat is assembled. Reported together, that
+        // would tell a parent the tunnel is running AND that it never started (FR-6.11).
+        val report = FilterReport.of(true, list(), running = true, reason = "a reason from before")
+        assertEquals("", report.reason)
+    }
+
+    @Test
+    fun `a phone with nothing to explain reports an empty reason, never a null one`() {
+        // "" clears the line the server is holding; null means "this build does not report it" and
+        // leaves it standing. A tunnel that is simply waiting must clear it.
+        assertEquals("", FilterReport.of(true, list(), running = false, reason = null).reason)
+    }
+
+    @Test
+    fun `a build with no filter reports no reason at all`() {
+        assertNull(FilterReport.of(false, list(), running = null, reason = "anything").reason)
+    }
 }

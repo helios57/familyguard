@@ -234,6 +234,17 @@ Applied at provisioning and re-applied on every boot:
   `https://`; anything else is refused by the console and by the phone, since whatever can rewrite a
   plain-HTTP list decides what the phone refuses to connect to — including, once, this control plane.
 
+- FR-6.11 When the filter is switched on and no tunnel is running, the console says **why**, in the
+  phone's own words. A tunnel stands down for reasons a parent can act on — the list has not been
+  fetched, the phone has not allowed the connection, the network named no resolver to forward to —
+  and each one has a different remedy. Reported on the heartbeat like every other measurement, so
+  it is the phone's answer rather than the server's guess, and blank whenever a tunnel is up: a
+  reason left standing after the thing it explained is over is how a console teaches a parent to
+  ignore it. Measured 2026-09-20: the filter was on with 180423 rules compiled and the tunnel had
+  been down for hours, the phone knew exactly why, and it said so only in its own notification
+  shade — the console showed a switch that was on and a tunnel that was not, with no way to learn
+  which of three unrelated faults it was.
+
 ### FR-7 YouTube killswitch
 One toggle per child that blocks YouTube across every layer available to us:
 - FR-7.1 Suspend and hide the YouTube app family (YouTube, YouTube Kids, YouTube Music, and known

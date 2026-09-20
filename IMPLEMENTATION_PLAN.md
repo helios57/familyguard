@@ -6580,3 +6580,108 @@ Cumulative across the project: **56 probes, 55 red and one deliberate green.**
   in the queue is a question for the owner, not for the suite.
 - **Why those four apps were installed after the baseline is not determined** and does not matter:
   the same state arises for every app a child adds, which is what FR-5.4 is for.
+
+## Phase 28 — the filter that stood down on a phone that had a resolver all along (FR-6.11)
+
+> `it sais "add filter off the network offers no resolver to forward queries to`
+
+That sentence is the phone's own notification, and it was true: the tunnel really had nowhere to
+forward. It was also, on that phone at that moment, impossible — which is what made it worth
+chasing rather than explaining away.
+
+### 28.1 — what was actually true, measured before anything was changed
+
+| field | value | what it rules out |
+|---|---|---|
+| `policies.ad_filter` | `t`, version 15 | the parent's switch is on |
+| `device_state.ad_filter_rules` | **180423**, fetched 17:12 | the list downloaded and compiled |
+| `device_state.connectivity` | `wifi`, heartbeat 30 s old | the phone is online |
+| `device_state.ad_filter_running` | **`f`** — for hours | the tunnel never came up |
+
+A phone on Wi-Fi has a resolver. So the question was never *"why does this network have none"* but
+*"why does this service believe it has none"*, and those have different answers.
+
+### 28.2 — a cached projection of system state with no repair path
+
+`AdFilterVpnService` kept the resolvers in one field, written only by a `NetworkCallback`:
+
+```kotlin
+override fun onLost(network: Network) {
+    underlyingResolvers = emptyList()
+}
+```
+
+Any network's loss emptied the list — including a network the phone was not using. A phone that
+drops mobile data while Wi-Fi is up has lost nothing that matters, and this cleared it anyway.
+
+**Nothing could refill it.** The surviving network's link properties do not change when a different
+network goes away, so no further callback arrives; `onLinkPropertiesChanged` only ever *set* a
+non-empty list and never re-read; and the one re-arm in the file (`live?.let { … restart() }`) fires
+only when a tunnel is already running, which after a stand-down it is not. The next sync calls
+`startTunnel()` again, reads the same empty field, and stands down again, once a minute, for as long
+as the phone stays on that network.
+
+Two fixes, and the second is the one that matters:
+
+1. **`ResolverBook`** — one entry per network, each removed only by its own loss. Pure, keyed on
+   anything, so it is assertions rather than a hope about the order callbacks arrive in.
+2. **The decision asks the platform, at the moment it decides.** `upstreamNow()` reads the active
+   network's own resolvers from `ConnectivityManager` and falls back to the book. A question that
+   can be asked again cannot get stuck — which also covers every callback story this session could
+   not distinguish from the outside: a callback that never fired, a process the platform restarted
+   under an already-up always-on VPN, a network lost before the service ever started.
+
+Plus the missing re-arm: resolvers arriving while nothing is running is exactly the event a tunnel
+standing down for want of one is waiting for, and the next sync is up to a minute away.
+
+**IPv6 resolvers are still not offered, and that is a decision rather than an oversight.** While the
+tunnel is up it *is* the phone's resolver, so an upstream it cannot reach costs the phone every name
+it looks up — and nothing in the watchdog notices a tunnel that carries queries nobody answers, so
+the phone would stay that way. Including them needs a real socket against a real network, not an
+argument. It is asserted, so the restriction is visible rather than implied.
+
+### 28.3 — the phone knew, and told only the notification shade (FR-6.11)
+
+`TunnelDecision.Stand` carries a reason, and its own KDoc says why: *"every one of these is a state
+the console has to be able to explain"*. It reached a notification on the phone and stopped there.
+What the console drew instead was a **guess**:
+
+> The ad filter is not running on this phone. It is switched on for this child, so the phone will
+> start it at its next sync. If it stays off, the list may not have downloaded — check the filter
+> list in Rules, and that the phone is online.
+
+Both halves were wrong for this family: 180423 rules had downloaded, and the phone was online. A
+console that guesses at a remedy sends a parent to fix something that is not broken.
+
+The reason now rides the heartbeat like every other measurement — `ad_filter_reason`, three-valued
+on the way in exactly like `update_error` (nil leaves a newer build's report alone, `""` clears the
+line, text replaces it) — and the console prints it verbatim. The guess survives only for a DPC too
+old to answer, where it is still better than silence. `FilterReport` blanks the reason whenever the
+tunnel is up, because the flag and the reason are read one after the other and a fixed stand-down
+would otherwise arrive alongside the tunnel that fixed it.
+
+### 28.4 — calibration: 4 probes, 4 red
+
+Structure left intact, one value changed, `cp` snapshots restored and verified byte-identical
+with `cmp`, changed-line count printed so a no-op cannot pass for a calibration.
+
+| # | file | the one value | measured |
+|---|---|---|---|
+| 1 | `ResolverBook.kt` | `lost()` clears every network, as the service used to | **RED** — *a network going away does not take another network's resolver with it*, and only that one of the eight |
+| 2 | `app.js` | the console falls back to its guess even when the phone answered | **RED** on both assertions, in a real browser — and the failure output quotes the wrong guess verbatim |
+| 3 | `devices.go` | an older DPC's silence overwrites the reason instead of leaving it | **RED** — *a heartbeat that omitted the reason cleared it* |
+| 4 | `FilterReport.kt` | a tunnel that is up still carries the reason it stood down for | **RED** — *a tunnel that is up has nothing to explain* |
+
+Cumulative: **60 probes, 59 red and one deliberate green.**
+
+### 28.5 — what is NOT proven
+
+- **The exact sequence that emptied the list on that phone is not determined**, and cannot be from
+  here: it is visible only in logcat on a phone in the family's hands. What is established is that
+  the code had a state with no way out, that the state produces precisely this symptom, and that the
+  fix removes the whole class rather than one path into it. If the filter is still off after 0.6.11,
+  the console will now say why in the phone's own words — which is the other half of this phase.
+- **No tunnel has come up on the family phone under this code.** The console half is live as soon as
+  the control plane is deployed; the device half ships in the APK.
+- **A network whose only resolvers are IPv6 still stands the tunnel down**, deliberately, and that
+  is asserted rather than left to be discovered.

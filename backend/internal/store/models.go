@@ -166,6 +166,15 @@ type DeviceState struct {
 	AdFilterFetchedAt *time.Time `json:"ad_filter_fetched_at,omitempty"`
 	AdFilterRunning   *bool      `json:"ad_filter_running,omitempty"`
 
+	// AdFilterReason is why no tunnel is running, in the phone's own words (FR-6.11).
+	//
+	// AdFilterRunning says whether one is up; this says which of several unrelated faults is
+	// holding it, and they have different remedies — no list fetched yet, the phone has not allowed
+	// the connection, a watchdog stood down a tunnel that carried nothing, the network named no
+	// resolver to forward to. Empty is nothing to say: a tunnel that is up, or a DPC that predates
+	// the field. Never a reason of its own.
+	AdFilterReason string `json:"ad_filter_reason,omitempty"`
+
 	// AppVersionName and AppVersionCode are the DPC build actually running on the phone, as the
 	// phone reports it. They exist because the APK this server hosts is installed out of band —
 	// it is a file on the node, not part of the image — so before this, nothing anywhere could
@@ -192,6 +201,11 @@ type DeviceState struct {
 	//
 	// Never serialised: it is an input to TouchDevice and nothing reads it back.
 	ReportedUpdateError *string `json:"-"`
+
+	// ReportedAdFilterReason is the write side of AdFilterReason, three-valued for exactly the
+	// reason above: nil is a DPC that does not know the field and must not clear what a newer one
+	// reported, "" is a phone with nothing to say, and text replaces it.
+	ReportedAdFilterReason *string `json:"-"`
 }
 
 // Policy is a child's governance settings. DailyLimitMinutes of 0 means "no quota".

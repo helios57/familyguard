@@ -23,7 +23,6 @@ import io.github.helios57.familyguard.R
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.DatagramSocket
-import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicLong
@@ -74,33 +73,79 @@ class AdFilterVpnService : VpnService() {
     @Volatile private var stoodDown = false
 
     /**
-     * Resolvers seen on the network **underneath** the tunnel.
+     * Resolvers seen on the networks **underneath** the tunnel, one entry per network.
      *
-     * Asked for by capability rather than read from the default network, because once this service
-     * is running the default network IS the tunnel, and its resolver is the address this service
+     * Watched by capability rather than read from the default network, because once this service is
+     * running the default network IS the tunnel, and its resolver is the address this service
      * invented. Forwarding there would be a loop, and the symptom would be a phone on which no name
      * resolves at all.
+     *
+     * A second opinion, never the only one — see [upstreamNow]. This is what the callbacks have
+     * said; that is what the platform says at the moment the decision is taken.
      */
-    @Volatile private var underlyingResolvers: List<String> = emptyList()
+    private val resolvers = ResolverBook<Network>()
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) {
-            val found = properties.dnsServers
-                .filterIsInstance<Inet4Address>()
-                .map { it.hostAddress }
-                .filterNotNull()
-                .filter { it != TUNNEL_RESOLVER }
-            if (found.isNotEmpty() && found != underlyingResolvers) {
-                underlyingResolvers = found
-                Log.i(TAG, "underlying resolvers: ${found.size}")
-                // The tunnel forwards to whatever this last said, so a network change that moves
-                // the resolver has to reach a running tunnel rather than only the next start.
-                live?.let { if (it.router != null) restart("the network's resolver changed") }
-            }
+            val before = upstreamNow()
+            resolvers.learned(network, ResolverBook.usable(properties.dnsServers, TUNNEL_RESOLVER))
+            reconsider(before, "the network's resolver changed")
         }
 
         override fun onLost(network: Network) {
-            underlyingResolvers = emptyList()
+            // This network's entry, and no other. Clearing the whole list here is what left the
+            // tunnel standing down with "the network offers no resolver to forward queries to" on a
+            // phone whose Wi-Fi had a resolver the entire time — see [ResolverBook].
+            val before = upstreamNow()
+            resolvers.lost(network)
+            reconsider(before, "a network went away")
+        }
+    }
+
+    /**
+     * Where the tunnel would forward a query right now.
+     *
+     * Asked of the platform at the moment of the decision rather than remembered from the last
+     * callback that happened to arrive. The remembered version had no repair path: once it was
+     * empty — a callback that never fired, a process the platform restarted under an always-on VPN,
+     * an unrelated network going away — nothing on the phone could refill it, and the filter was
+     * off until somebody changed a network. A question that can be asked again cannot get stuck.
+     *
+     * The active network is skipped when it is the tunnel itself, which it is whenever this runs
+     * with a tunnel up: its only resolver is the address this service invented.
+     */
+    private fun upstreamNow(): List<String> {
+        val manager = connectivity
+        val active = manager?.activeNetwork
+        if (manager != null && active != null) {
+            val capabilities = manager.getNetworkCapabilities(active)
+            if (capabilities != null && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)) {
+                val direct = ResolverBook.usable(
+                    manager.getLinkProperties(active)?.dnsServers.orEmpty(), TUNNEL_RESOLVER,
+                )
+                if (direct.isNotEmpty()) return direct
+            }
+        }
+        return resolvers.forwardTo(active)
+    }
+
+    /**
+     * A network changed. Act only if it changed the answer.
+     *
+     * Three cases, and the middle one is the one that was missing: a tunnel that is up forwards to
+     * whatever this last said, so a moved resolver has to reach it; a tunnel that is NOT up because
+     * there was nowhere to forward has just been handed the one thing it was waiting for, and the
+     * next sync is up to a minute away; and a change that leaves the answer identical is not an
+     * event at all — the underlying link properties change every time a tunnel comes up.
+     */
+    private fun reconsider(before: List<String>, why: String) {
+        val after = upstreamNow()
+        if (after == before) return
+        Log.i(TAG, "$why: ${after.size} resolver(s)")
+        val running = live
+        when {
+            running == null -> if (after.isNotEmpty()) startTunnel()
+            running.router != null -> restart(why)
         }
     }
 
@@ -190,12 +235,13 @@ class AdFilterVpnService : VpnService() {
         val state = FilterState.of(this)
         val decision = TunnelPlan.decide(
             policy = state.policy,
-            upstream = underlyingResolvers,
+            upstream = upstreamNow(),
             ruleCount = state.engine.ruleCount,
             stoodDown = stoodDown,
         )
         if (decision is TunnelDecision.Stand) {
             Log.i(TAG, "not running: ${decision.reason}")
+            standReason = decision.reason
             note(getString(R.string.filter_off_because, decision.reason))
             return
         }
@@ -210,7 +256,8 @@ class AdFilterVpnService : VpnService() {
         if (descriptor == null) {
             // `establish` returns null when this app is not prepared as the VPN, which for a device
             // owner means always-on has not been set yet. Nothing to do but wait for the next sync.
-            note(getString(R.string.filter_off_because, getString(R.string.filter_not_permitted)))
+            standReason = getString(R.string.filter_not_permitted)
+            note(getString(R.string.filter_off_because, standReason))
             return
         }
 
@@ -218,6 +265,9 @@ class AdFilterVpnService : VpnService() {
         this.live = live
         live.start()
         tunnelUp = true
+        // Cleared only here, where a tunnel is actually up. A reason left standing after the thing
+        // it explained is over is how a console teaches a parent to ignore it (FR-6.11).
+        standReason = ""
         watchdog.tunnelStarted(System.currentTimeMillis())
         note(getString(R.string.filter_running, state.engine.ruleCount))
         Log.i(TAG, "tunnel up: mode=${run.mode} rules=${state.engine.ruleCount}")
@@ -277,7 +327,8 @@ class AdFilterVpnService : VpnService() {
                 Log.w(TAG, "standing down: two windows with nothing carried")
                 stoodDown = true
                 stopTunnel("stood down by the watchdog")
-                note(getString(R.string.filter_off_because, getString(R.string.filter_carried_nothing)))
+                standReason = getString(R.string.filter_carried_nothing)
+                note(getString(R.string.filter_off_because, standReason))
             }
         }
     }
@@ -469,8 +520,22 @@ class AdFilterVpnService : VpnService() {
         @Volatile
         private var tunnelUp: Boolean = false
 
+        /**
+         * Why no tunnel is running, in the words [TunnelPlan] chose, for the console (FR-6.11).
+         *
+         * "" is nothing to explain — a tunnel that is up, or a service that has not decided yet —
+         * and is what clears the line a parent is shown. Beside [tunnelUp] rather than derived from
+         * it: *whether* a tunnel is up and *why* it is not are different questions, and only the
+         * second one has a remedy attached.
+         */
+        @Volatile
+        private var standReason: String = ""
+
         /** Null on a build where the filter cannot run at all — "not reported", not "off". */
         fun running(): Boolean? = if (BuildConfig.AD_FILTER_AVAILABLE) tunnelUp else null
+
+        /** Null on a build with no filter, for the same reason as [running]. */
+        fun reason(): String? = if (BuildConfig.AD_FILTER_AVAILABLE) standReason else null
 
         /** Bring the tunnel up, or re-decide whether it should be up. Safe to call repeatedly. */
         fun apply(context: Context) {

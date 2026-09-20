@@ -760,11 +760,21 @@ function deviceCard(dev, desired) {
   // asked for — and the only one worth showing here. The Rules tab already says what was asked.
   if (desired && desired.ad_filter) {
     if (st.ad_filter_running === false) {
+      /* The phone's own reason, verbatim, and the guess only when there is none (FR-6.11).
+         This line used to say the list had probably not downloaded and to check that the phone was
+         online. Measured on the family phone on 2026-09-20 it was wrong on both counts — 180423
+         rules were compiled and the heartbeat was thirty seconds old — and the real reason, which
+         the phone knew and printed in its own notification shade, was that the network had named no
+         resolver to forward queries to. A console that guesses at a remedy sends a parent to fix
+         something that is not broken. An older DPC reports nothing here, and for that one the guess
+         is still better than silence. */
       body.push(el('p', { class: 'warn' },
         el('strong', { text: 'The ad filter is not running on this phone. ' }),
-        'It is switched on for this child, so the phone will start it at its next sync. If it stays '
-        + 'off, the list may not have downloaded \u2014 check the filter list in Rules, and that the '
-        + 'phone is online.'));
+        st.ad_filter_reason
+          ? 'The phone says: ' + st.ad_filter_reason + '.'
+          : 'It is switched on for this child, so the phone will start it at its next sync. If it '
+            + 'stays off, the list may not have downloaded \u2014 check the filter list in Rules, '
+            + 'and that the phone is online.'));
     } else if (st.ad_filter_running === true) {
       body.push(el('p', { class: 'muted', text: 'Ad filter: running'
         + (st.ad_filter_rules ? ' with ' + st.ad_filter_rules.toLocaleString() + ' rules' : '')

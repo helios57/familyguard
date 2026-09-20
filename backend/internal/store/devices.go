@@ -150,7 +150,8 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 		        COALESCE(s.connectivity, ''), COALESCE(s.policy_version, 0), s.last_seen_at,
 		        COALESCE(s.app_version_name, ''), COALESCE(s.app_version_code, 0), s.usage_access,
 		        COALESCE(s.update_error, ''), s.update_error_at, s.power_exempt, s.exact_alarms,
-		        s.ad_filter_rules, s.ad_filter_fetched_at, s.ad_filter_running
+		        s.ad_filter_rules, s.ad_filter_fetched_at, s.ad_filter_running,
+		        COALESCE(s.ad_filter_reason, '')
 		   FROM devices d
 		   LEFT JOIN device_state s ON s.device_id = d.id
 		  WHERE ($1::uuid IS NULL OR d.child_id = $1)
@@ -171,7 +172,8 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 			&d.State.AppVersionName, &d.State.AppVersionCode, &d.State.UsageAccess,
 			&d.State.UpdateError, &d.State.UpdateErrorAt,
 			&d.State.PowerExempt, &d.State.ExactAlarms,
-			&d.State.AdFilterRules, &d.State.AdFilterFetchedAt, &d.State.AdFilterRunning); err != nil {
+			&d.State.AdFilterRules, &d.State.AdFilterFetchedAt, &d.State.AdFilterRunning,
+			&d.State.AdFilterReason); err != nil {
 			return nil, err
 		}
 		d.State.DeviceID = d.ID
@@ -228,8 +230,10 @@ func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceSt
 		                           app_version_name, app_version_code, usage_access, update_error,
 		                           power_exempt, exact_alarms,
 		                           ad_filter_rules, ad_filter_fetched_at, ad_filter_running,
+		                           ad_filter_reason,
 		                           update_error_at, last_seen_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, ''), $11, $12, $13, $14, $15,
+		         COALESCE($16, ''),
 		         CASE WHEN COALESCE($10, '') = '' THEN NULL ELSE NOW() END, NOW(), NOW())
 		 ON CONFLICT (device_id) DO UPDATE SET
 		     battery_level  = COALESCE(EXCLUDED.battery_level, device_state.battery_level),
@@ -261,6 +265,12 @@ func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceSt
 		     ad_filter_rules      = COALESCE(EXCLUDED.ad_filter_rules, device_state.ad_filter_rules),
 		     ad_filter_fetched_at = COALESCE(EXCLUDED.ad_filter_fetched_at, device_state.ad_filter_fetched_at),
 		     ad_filter_running    = COALESCE(EXCLUDED.ad_filter_running, device_state.ad_filter_running),
+		     -- Three-valued like update_error below, and for the same reason: NULL is a DPC that
+		     -- does not know the field and must leave a newer build's report alone, '' is a phone
+		     -- saying there is nothing to explain — which is what clears the line the moment a
+		     -- tunnel comes up — and text replaces it.
+		     ad_filter_reason     = CASE WHEN $16::text IS NULL
+		                                 THEN device_state.ad_filter_reason ELSE $16 END,
 		     -- Three values, and each one means something different. NULL is a DPC that does not
 		     -- report the field, and leaves what is stored alone: an older build's heartbeat must
 		     -- not erase a newer build's report. '' is a phone saying it has nothing to report, and
@@ -279,7 +289,7 @@ func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceSt
 		deviceID, st.BatteryLevel, st.Charging, st.ScreenOn, st.Connectivity, st.PolicyVersion,
 		st.AppVersionName, st.AppVersionCode, st.UsageAccess, st.ReportedUpdateError,
 		st.PowerExempt, st.ExactAlarms,
-		st.AdFilterRules, st.AdFilterFetchedAt, st.AdFilterRunning)
+		st.AdFilterRules, st.AdFilterFetchedAt, st.AdFilterRunning, st.ReportedAdFilterReason)
 	return err
 }
 
@@ -302,12 +312,13 @@ func (s *Store) GetDeviceState(ctx context.Context, deviceID uuid.UUID, offlineA
 	err := s.pool.QueryRow(ctx,
 		`SELECT device_id, battery_level, charging, screen_on, connectivity, policy_version, last_seen_at,
 		        app_version_name, app_version_code, usage_access, update_error, update_error_at,
-		        power_exempt, exact_alarms, ad_filter_rules, ad_filter_fetched_at, ad_filter_running
+		        power_exempt, exact_alarms, ad_filter_rules, ad_filter_fetched_at, ad_filter_running,
+		        COALESCE(ad_filter_reason, '')
 		   FROM device_state WHERE device_id = $1`, deviceID).
 		Scan(&st.DeviceID, &st.BatteryLevel, &st.Charging, &st.ScreenOn, &st.Connectivity,
 			&st.PolicyVersion, &st.LastSeenAt, &st.AppVersionName, &st.AppVersionCode,
 			&st.UsageAccess, &st.UpdateError, &st.UpdateErrorAt, &st.PowerExempt, &st.ExactAlarms,
-			&st.AdFilterRules, &st.AdFilterFetchedAt, &st.AdFilterRunning)
+			&st.AdFilterRules, &st.AdFilterFetchedAt, &st.AdFilterRunning, &st.AdFilterReason)
 	if err != nil {
 		return nil, mapErr(err)
 	}

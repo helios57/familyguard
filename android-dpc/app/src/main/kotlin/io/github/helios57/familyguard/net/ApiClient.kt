@@ -132,6 +132,11 @@ data class HeartbeatRequest(
     @SerialName("ad_filter_rules") val adFilterRules: Int? = null,
     @SerialName("ad_filter_fetched_at") val adFilterFetchedAt: String? = null,
     @SerialName("ad_filter_running") val adFilterRunning: Boolean? = null,
+    /**
+     * Why no tunnel is running, in this phone's own words (FR-6.11). "" is nothing to explain and
+     * clears the line; null is a build that does not report it and leaves what the server has.
+     */
+    @SerialName("ad_filter_reason") val adFilterReason: String? = null,
 )
 
 @Serializable

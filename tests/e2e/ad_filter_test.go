@@ -193,11 +193,34 @@ func TestWhatThePhoneMeasuredAboutItsFilterSurvivesAnOlderBuildsHeartbeat(t *tes
 		t.Fatalf("a heartbeat that omitted the running flag changed it: %v", st.AdFilterRunning)
 	}
 
+	// FR-6.11: WHY it is not running, which is the question "not running" leaves open. Three
+	// faults hold a tunnel down and each has a different remedy, so a console without this can
+	// only guess — and the guess it made for this family was wrong in both halves.
+	const why = "the network offers no resolver to forward queries to"
+	beat(map[string]any{"connectivity": "wifi", "ad_filter_running": false, "ad_filter_reason": why})
+	if got := state().AdFilterReason; got != why {
+		t.Fatalf("the phone said why the tunnel is down and the server holds %q", got)
+	}
+
+	// The same rule as every field above: an older DPC omits the key and must not erase it.
+	beat(map[string]any{"connectivity": "wifi"})
+	if got := state().AdFilterReason; got != why {
+		t.Fatalf("a heartbeat that omitted the reason cleared it: %q", got)
+	}
+
 	// The tunnel comes up. Both directions, because a field that can only ever go one way is a
 	// field a parent learns to ignore.
 	beat(map[string]any{"connectivity": "wifi", "ad_filter_running": true})
 	if got := state().AdFilterRunning; got == nil || !*got {
 		t.Fatalf("the phone reported the tunnel is up and the server holds %v", got)
+	}
+
+	// And the reason has to be clearable, by the only party that can know it is over. A reason
+	// that outlives the fault is a console line a parent learns to ignore, and the phone sends ""
+	// on every heartbeat where a tunnel is up (FilterReport, on the DPC side).
+	beat(map[string]any{"connectivity": "wifi", "ad_filter_running": true, "ad_filter_reason": ""})
+	if got := state().AdFilterReason; got != "" {
+		t.Fatalf("the phone reported it has nothing to explain and the server still holds %q", got)
 	}
 
 	// A measured zero is a finding, not a silence: the filter is on, the list fetched, and it

@@ -82,6 +82,11 @@ type deviceStateDTO struct {
 	AdFilterRules     *int       `json:"ad_filter_rules"`
 	AdFilterFetchedAt *time.Time `json:"ad_filter_fetched_at"`
 	AdFilterRunning   *bool      `json:"ad_filter_running"`
+
+	// Why no tunnel is running, in the phone's own words (FR-6.11). A string rather than a pointer
+	// because reading it there are only two states: the phone said something, or it did not. The
+	// third state exists only on the way in — see store.DeviceState.ReportedAdFilterReason.
+	AdFilterReason string `json:"ad_filter_reason"`
 }
 
 type deviceViewDTO struct {

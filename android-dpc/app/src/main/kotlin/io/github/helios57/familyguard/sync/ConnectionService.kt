@@ -1385,6 +1385,7 @@ class ConnectionService : Service() {
             available = BuildConfig.AD_FILTER_AVAILABLE,
             list = if (BuildConfig.AD_FILTER_AVAILABLE) FilterState.listState(this) else FilterListState(),
             running = AdFilterVpnService.running(),
+            reason = AdFilterVpnService.reason(),
         )
 
         return DeviceTelemetry(
@@ -1417,6 +1418,7 @@ class ConnectionService : Service() {
             adFilterRules = filter.rules,
             adFilterFetchedAt = filter.fetchedAt,
             adFilterRunning = filter.running,
+            adFilterReason = filter.reason,
             connectivity = when {
                 capabilities == null -> "none"
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
