@@ -232,6 +232,11 @@ object EnforcementEngine {
             blockedDomains = domains.toList(),
             safeSearch = true,
             youtubeRestrictedMode = true,
+            // FR-6.6. The url decides, not just the switch: a filter turned on with nowhere to
+            // fetch a list from would put a tunnel between every app on the phone and the network
+            // in exchange for blocking nothing.
+            adFilter = input.settings.adFilter && input.settings.adFilterListUrl.isNotBlank(),
+            adFilterListUrl = input.settings.adFilterListUrl.trim(),
             allowInstalls = input.settings.allowChildInstalls,
             managedApps = normalizeManagedApps(input.settings.managedApps),
             userRestrictions = restrictions.toList(),
@@ -492,6 +497,24 @@ data class Settings(
     @SerialName("bedtime_start") val bedtimeStart: String = "",
     @SerialName("bedtime_end") val bedtimeEnd: String = "",
     @SerialName("dns_host") val dnsHost: String = "",
+    /**
+     * Whether the on-device advertising and tracker filter runs for this child (FR-6.6 to FR-6.9).
+     *
+     * Separate from [dnsHost] and not implied by it, because they solve different halves and only
+     * one of them reaches an advertisement inside a game: a resolver sees a name only when an app
+     * asks it for one, and an SDK that ships its ad server's address, or reuses a connection it
+     * already holds, never asks.
+     *
+     * Defaulted to false so a phone running this build against a server that predates the filter
+     * computes what that server computes, rather than switching a tunnel on because a field is
+     * missing.
+     */
+    @SerialName("ad_filter") val adFilter: Boolean = false,
+    /**
+     * Where the phone fetches its filter list from. A URL and nothing else — this project ships the
+     * fetcher and never the data.
+     */
+    @SerialName("ad_filter_list_url") val adFilterListUrl: String = "",
     @SerialName("timezone") val timezone: String = "",
     @SerialName("version") val version: Long = 0,
     @SerialName("blocked_packages") val blockedPackages: List<String> = emptyList(),
@@ -564,6 +587,14 @@ data class DesiredState(
     @SerialName("blocked_domains") val blockedDomains: List<String> = emptyList(),
     @SerialName("safe_search") val safeSearch: Boolean = false,
     @SerialName("youtube_restricted_mode") val youtubeRestrictedMode: Boolean = false,
+    /**
+     * Whether the device should run its local filtering tunnel, and what to filter from.
+     *
+     * [adFilter] is false whenever [adFilterListUrl] is empty, whatever the parent set — see the
+     * comment at the assignment for why. Content filtering, so both survive tracking-only mode.
+     */
+    @SerialName("ad_filter") val adFilter: Boolean = false,
+    @SerialName("ad_filter_list_url") val adFilterListUrl: String = "",
     @SerialName("allow_installs") val allowInstalls: Boolean = false,
     @SerialName("user_restrictions") val userRestrictions: List<String> = emptyList(),
     @SerialName("quota_minutes") val quotaMinutes: Int = 0,

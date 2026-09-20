@@ -320,6 +320,32 @@
         </service>
 
         <!--
+          FR-6.6 to FR-6.9. The ad filter's tunnel.
+
+          Exported and guarded by BIND_VPN_SERVICE, which is the shape the platform requires: the
+          system binds this, and that permission is held by the system alone, so "exported" here
+          does not mean any app on the phone can reach it. A VpnService that is not exported is
+          simply never bound, and the filter silently never runs.
+
+          `specialUse` for the same reason ConnectionService uses it — a tunnel capped at six hours
+          a day is a filter that stops filtering every evening.
+        -->
+        <service
+            android:name=".filter.AdFilterVpnService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="specialUse">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Parental-control content filtering on a fully managed device: removes
+                    advertising and tracking from apps and games on the child's phone, on the device,
+                    for as long as the phone is on." />
+        </service>
+
+        <!--
           Not exported. BOOT_COMPLETED is a protected broadcast that only the system can send, so
           there is nothing an app on the phone could gain by reaching this — and nothing it should
           be able to try.

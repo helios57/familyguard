@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The critical whitelist is the one enforcement input the managed device supplies, and an entry in
@@ -135,5 +136,67 @@ func TestClampUpdateErrorTruncatesByRunesNotBytes(t *testing.T) {
 	short := strings.Repeat("é", maxUpdateErrorRunes-1)
 	if got := clampUpdateError(&short); got == nil || *got != short {
 		t.Fatal("a reason inside the bound was altered")
+	}
+}
+
+// TestClampRuleCountKeepsNothingApartFromZero is the same distinction as clampUpdateError's, on the
+// number a parent reads as "the filter is working".
+//
+// Three inputs, three meanings: nil is a phone that has not said (an older DPC, or a build with no
+// filter at all), a real count is a measurement, and a negative is a phone contradicting itself.
+// Only the first two may reach the column. A negative stored would render as a number — "-1 rules"
+// reads as a bug in the console, and "0 rules" would read as a filter that fetched an empty list,
+// which is a state the device's own store refuses to reach.
+func TestClampRuleCountKeepsNothingApartFromZero(t *testing.T) {
+	if got := clampRuleCount(nil); got != nil {
+		t.Fatalf("an absent count became %d; a phone that has not measured must not report one", *got)
+	}
+
+	negative := -1
+	if got := clampRuleCount(&negative); got != nil {
+		t.Fatalf("a negative count survived as %d", *got)
+	}
+
+	zero := 0
+	if got := clampRuleCount(&zero); got == nil || *got != 0 {
+		t.Fatalf("zero is a number the phone can legitimately send and must survive, got %v", got)
+	}
+
+	real := 181117
+	if got := clampRuleCount(&real); got == nil || *got != real {
+		t.Fatalf("a real count was not passed through: %v", got)
+	}
+}
+
+// TestParseReportedTimeDropsWhatItCannotRead pins that an unreadable stamp becomes nothing rather
+// than the zero time.
+//
+// The zero time is the trap: it is a valid `time.Time`, it stores without complaint, and it reaches
+// the parent as "1 January year one", which reads as a defect in this console rather than as a
+// phone that sent something unusable. Nil is the honest answer and the column already means
+// "nothing reported".
+func TestParseReportedTimeDropsWhatItCannotRead(t *testing.T) {
+	for _, bad := range []*string{nil, ptr(""), ptr("   "), ptr("yesterday"), ptr("2026-09-20"), ptr("1758326400")} {
+		shown := "<nil>"
+		if bad != nil {
+			shown = *bad
+		}
+		if got := parseReportedTime(bad); got != nil {
+			t.Errorf("%q parsed to %s; an unreadable stamp must be dropped, not stored", shown, got)
+		}
+	}
+
+	// The positive control: the format the DPC actually sends. Without it the loop above would pass
+	// on a function that returned nil for everything.
+	good := "2026-09-20T12:26:40Z"
+	got := parseReportedTime(&good)
+	if got == nil {
+		t.Fatal("the format the phone sends did not parse; every assertion above is then vacuous")
+	}
+	if !got.Equal(time.Date(2026, 9, 20, 12, 26, 40, 0, time.UTC)) {
+		t.Fatalf("parsed to %s, want 2026-09-20T12:26:40Z", got)
+	}
+	if surrounded := parseReportedTime(ptr("  " + good + "  ")); surrounded == nil || !surrounded.Equal(*got) {
+		t.Fatalf("a stamp with whitespace around it was dropped: %v", surrounded)
 	}
 }

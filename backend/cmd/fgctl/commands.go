@@ -306,6 +306,18 @@ func cmdDevice(ctx context.Context, env *environment, args []string) error {
 		fmt.Fprintf(w, "usage access\t%s\n", tri(s.UsageAccess))
 		fmt.Fprintf(w, "battery unrestricted\t%s\n", tri(s.PowerExempt))
 		fmt.Fprintf(w, "exact alarms\t%s\n", tri(s.ExactAlarms))
+		// What the PHONE says about its filter, which is a different question from whether a parent
+		// switched it on — that is in `fgctl policy`. Three states each, and "not reported" is the
+		// answer for an older DPC and for the Play build, which carries no filter to report on.
+		fmt.Fprintf(w, "ad filter running\t%s\n", tri(s.AdFilterRunning))
+		rules := "not reported"
+		if s.AdFilterRules != nil {
+			rules = strconv.Itoa(*s.AdFilterRules)
+		}
+		fmt.Fprintf(w, "ad filter rules\t%s\n", rules)
+		if s.AdFilterFetchedAt != nil {
+			fmt.Fprintf(w, "ad filter list fetched\t%s\n", ago(s.AdFilterFetchedAt))
+		}
 		if s.UpdateError != "" {
 			fmt.Fprintf(w, "update error\t%s (%s)\n", s.UpdateError, ago(s.UpdateErrorAt))
 		}
@@ -352,6 +364,11 @@ func cmdPolicy(ctx context.Context, env *environment, args []string) error {
 		fmt.Fprintf(w, "debugging allowed\t%v\n", pol.AllowDebugging)
 		fmt.Fprintf(w, "uninstall allowed\t%v\n", pol.AllowUninstall)
 		fmt.Fprintf(w, "DNS host\t%s\n", firstNonEmpty(pol.DNSHost, "(none)"))
+		// Both lines, always, and never collapsed into one. A switch that is on with no list url
+		// is a filter that does NOT run, and printing only "ad filter true" would say the opposite
+		// of what the phone is doing.
+		fmt.Fprintf(w, "ad filter\t%v\n", pol.AdFilter)
+		fmt.Fprintf(w, "ad filter list\t%s\n", firstNonEmpty(pol.AdFilterListURL, "(none — the filter cannot run)"))
 	})
 }
 

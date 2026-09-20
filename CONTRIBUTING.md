@@ -49,6 +49,7 @@ tests/run_all.sh backend e2e # only these two
 | `image` | Docker | twelve properties of the built container, under the manifest's own restrictions |
 | `e2e` | Docker | black box: a real server binary, a real PostgreSQL, a real browser |
 | `android-unit` | JDK 26 and the Android SDK (platform 37.1, build-tools 37.0.0) | the DPC's JVM suite, plus the two repository-wide guards: requirement citations and documentation links |
+| `android-realtun` | root (`unshare -n`, a TUN device, `iptables`), plus `curl` and `openssl` | the ad filter against a **real** Linux TCP/IP stack: a real `curl` as the app, a real TLS server as the destination, and the SNI read out of a real ClientHello. A fixture cannot tell a working tunnel from one that hangs — the peer's stack is what notices |
 | `android-instrumented` | an emulator or device on API 29+ promoted to Device Owner | provisioning, suspension, DNS policy, commands, keystore-backed storage, across a real reboot |
 | `android-self-update` | both of the above at once — an emulator **and** Docker | FR-15 end to end: the control plane replaces the DPC on an enrolled, hardened phone, and the phone reports the new build back |
 

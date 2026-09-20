@@ -133,6 +133,11 @@ class ManifestAndPlatformCallsTest {
             // being asked for; it is left in place because removing a library's own initialisation
             // is the kind of change that only misbehaves on a real phone.
             "android.permission.DUMP" to "shell and privileged apps only",
+            // Signature-level, held by the platform. The system's ConnectivityService is the only
+            // thing that binds a VpnService, and a VpnService that is NOT exported is simply never
+            // bound — so this component has to be exported, and this permission is what makes that
+            // mean "the system, and nothing else on the phone".
+            "android.permission.BIND_VPN_SERVICE" to "platform only",
         )
 
         val components = componentsIn(merged)

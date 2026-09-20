@@ -4002,6 +4002,8 @@ proven.
 | FR-5.6 developer options / adb | 16.3 | e2e `TestDeveloperOptionsCanBeAllowedPerChild` — the switch on withholds `no_debugging_features` and **nothing else**, asserted against the whole restriction set rather than one membership test, with the switch-off case as the positive control so the test cannot pass on an engine that never applies the restriction at all. Two shared vectors (with and without a resolver) replay it on both engines. **Not proven:** that adb actually comes back on a phone — no device has run with the switch on
 | FR-5.7 uninstalling apps | 23 | e2e `TestUninstallingCanBeAllowedPerChild` — the switch on withholds `no_uninstall_apps` and nothing else, with the switch-off case as the positive control, plus the discriminating pair: free-installation **off** while uninstalling is **on**, so an engine that had conflated the two switches is red. Two shared vectors replay it on both engines. `UninstallSwitchAndTheBootFloorTest` pins the part the vectors structurally cannot reach — the pre-sync floor keeps the restriction whatever the switch says, and the next authoritative sync clears it again. **Calibrated four ways:** the Go engine ignoring the switch (2 vectors red), `resolve.go` dropping the field so the PATCH sticks and the phone is told otherwise (e2e red), the Kotlin engine ignoring it (3 red), and each restored to green. **Not proven:** that `adb uninstall` actually succeeds on a phone with the switch on — no device has run with it yet
 | FR-6 filtering | 5.5, 16.6 | `ChromePolicyManagerTest`, `DnsPolicyManagerTest`; `TestNormalizeDomainMatchesTheStore`; e2e `TestNoFilteringResolverIsConfiguredByDefault`. FR-6.1 was **rewritten** in 16.6: there is no filtering resolver by default, and `disallow_config_private_dns` is applied only when a parent has named one. Both halves of that coupling are asserted, which matters because either alone passes on a broken engine — "no resolver by default" is also true of an engine that has lost the lock entirely, and the lock's presence is also true of one that pins a resolver nobody asked for. `TestPolicyEnforcementJourney` carries the default-state snapshot and used to assert the opposite; it is the test the sweep caught. **Not proven:** what a phone does with an empty private-DNS host — OPPORTUNISTIC is the documented behaviour and no device has been read back |
+| FR-6.6 … FR-6.9 in-app ad filtering | 25 | **217 JVM tests** over `filter/` and `policy/AlwaysOnVpnManager` — the rule parser and the 181k-rule index, the packet layer, `TcpFlow`, the ClientHello and `Host:` readers, the DNS path, the router, `TunnelPlan`, `TunnelWatchdog`, `FilterListStore`. Plus the layer a fixture structurally cannot reach: `tests/run_all.sh android-realtun` runs the same code against a **real TUN device, a real `curl` and a real TLS server**, both arms with a rules-removed calibration ([25.6](#256--the-tests-that-are-not-fixtures)). **Calibrated 39/39** across four batches ([25.7](#257--calibration-39-probes-39-red)). **Not proven:** anything on a handset — no phone has run the tunnel, so battery, throughput and OEM VPN supervision are unmeasured |
+| FR-6.10 the parent's switch and the phone's report | 25 | Server: `TestFilterListURLIsRefusedUnlessItIsHTTPS`, `TestClampRuleCountKeepsNothingApartFromZero`, `TestParseReportedTimeDropsWhatItCannotRead`, four shared vectors on both engines (`ad filter: a switch and a list url turn the tunnel on`, and the three that must NOT turn it on). Console: `TestTheAdFilterIsReportedOnlyFromMeasurements` pins the three-valued rule — a truthy read of `ad_filter_running` would warn on every Play-build phone — and `TestTheConsoleCanSetEveryPolicyFieldTheApiAccepts` pins the join between the API's settable set and the controls a parent can reach, which is what found `timezone` accepted for months and settable by nobody. Device: `FilterApplierTest` (13, transcript-based, asserting call ORDER), `FilterReportTest` (8, every assertion about a null) |
 | FR-7 YouTube | 5.4, 5.5 | `EnforcementEngineVectorsTest` (the YouTube set is symmetric across the vectors), `ChromePolicyManagerTest` (`ForceGoogleSafeSearch`, restricted mode strict) |
 | FR-8 tracking-only | 5.4 | `TestTrackingOnlyKeepsFilteringAndHardening`, `EnforcementEngineVectorsTest` |
 | FR-9 commands | 3.5, 3.6, 5.7 | both halves. Server: `TestParentLockIsStateNotACommand`; e2e `TestPushWakeUps`. Device (5.7): `CommandExecutorTest`, `CommandQueueTest`, `CommandHandlersTest`, `SirenControllerTest`, `LocationProbeTest`, `LockManagerTest` — a command is answered by executing it and not by fetching it, each ack lands as its command finishes, an ack that fails is `unacknowledged` rather than `failed`, `LOCATE_NOW` delivers the position *before* it acknowledges, a cached fix keeps its true timestamp, the siren carries its own five-minute deadline, and a phone with no PIN reports the failure rather than a keyguard dismissed by a swipe. Plus the two guards nothing runtime can reach: `CommandHandlersTest` *the handlers implement exactly the command types the server accepts*, which parses `ValidCommandTypes` out of `backend/internal/store/models.go` rather than restating it, and `ManifestAndPlatformCallsTest` *the command drain runs outside the sync lock*, which is the only place the non-reentrant-`Mutex` deadlock can be caught before the day a parent presses a button and nothing ever answers. **Calibrated 11/11**, each verdict naming the individual test method — see the record above |
@@ -4029,6 +4031,7 @@ proven.
 | NFR-10 battery | 5.3, 5.6, 5.7 | **Half proven.** `ManifestAndPlatformCallsTest` *the permissions the shipped app asks for are exactly the ones it needs* is what keeps the "no location polling" half structural rather than a promise. **5.7 turned it red on purpose and the red was answered rather than suppressed**, which is the whole reason the guard is written in both directions: `LOCATE_NOW` (REQUIREMENTS.md line 136) needs location, so `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` and `ACCESS_BACKGROUND_LOCATION` are now declared, each with its reason in the manifest and in the whitelist — COARSE because Android 12 answers a FINE-only request with COARSE when the user picks approximate location, BACKGROUND because the command arrives while the phone is in a pocket and this app has no UI to be in front of. What the permissions do *not* buy is a poll loop: `LocationProbe` is one shot with a 30 s budget, and `AndroidLocationSource` releases the receiver in a `finally` on both API paths, so a fix that times out does not leave GNSS running. The screen-off idleness half still has no test — the connection is one held-open stream rather than a poll loop, but nothing asserts it. Owed a measurement, not a test |
 | NFR-9 abuse resistance | 2.5 | e2e `TestRateLimitProtectsTheServer`, `TestOversizedBodiesAreRefusedAsTooLarge`, `TestMalformedRequestsAreRefusedWithAReason`, `TestCORSAllowsOnlyTheConfiguredOrigins`, `TestSecurityHeadersOnEveryAnswer`; `TestRateLimiter*` (7), `TestRateLimitCannotBeEscapedByAForgedHeader`, `TestBodyLimit`, `TestCORS*`, `TestSecurityHeaders`, `TestHSTSOnlyOverTLS` |
 | NFR-11 deployability | 7.1, 7.3, 7.4, 7.5 | `deploy/` renders under `kubectl kustomize`, calibrated against a deliberately broken manifest; `DEPLOYMENT.md`; `tests/image/smoke.sh` — **twelve assertions, all calibrated**, registered as the `image` layer of `tests/run_all.sh`. Two of the twelve were false greens the calibration itself found (`docker top` printing "uid root, not root" as a pass; a crash under `--read-only` reported as NOT MEASURED because `docker port` says nothing about an exited container) |
+| FR-15.8 two builds, one source tree | 22, 25 | `-PplayBuild=true` flips one `buildConfigField`; the applier is then not installed and `FilterReport` answers three nulls, which `FilterReportTest` asserts in both directions. **Not proven:** the Play artifact has not been built and inspected in CI — the flag removes the code path, not the classes, and the build file says so rather than claiming otherwise |
 | NFR-13 supported platforms | 5.11, 5.10 | `app/build.gradle.kts` sets `minSdk = 29`, and `RequirementCitationsTest` is what ties the number to the requirement. The requirement itself was **wrong** until 5.10 — it said API 26, while `setGlobalPrivateDnsModeSpecifiedHost` is API 29, so a 26–28 install would have enforced everything except FR-6.1 and left filtering silently off. Proven on the floor as of 2026-08-18: the `android-instrumented` layer runs on an API 29 emulator — 16 testcases in the provisioned pass, 1 after a real reboot — and it was the *first* run at 29 that found two defects an API 34 run had not (§7.6) |
 | NFR-14 the running notice is as quiet as the platform allows | 16.4 | **Nothing.** `IMPORTANCE_MIN` on a channel with a new id, the old id deleted, plus builder-level `PRIORITY_MIN` / `VISIBILITY_SECRET` / `setSilent` / `setShowWhen(false)`. Whether that reads as quiet enough is a judgement made by looking at a phone, and the trap this row exists to remember — channel importance is **immutable after creation**, so lowering it in place is accepted, changes nothing and reports no error — is guarded only by the comment that records it. The requirement is cited, which is the one thing `RequirementCitationsTest` can check; it is not tested
 | every requirement, both directions | 5.10 | `RequirementCitationsTest` — no id cited anywhere in the repo that `REQUIREMENTS.md` does not define (it found four — FR-13.4, cited twelve times and never written, plus three misnumbered store citations), and no requirement that nothing claims (it found eight, one of which was a genuine gap — see FR-2.2). Scans `kt kts go md xml sh py ts yaml yml sql`; a third test fails if either set is implausibly small, if any of `kt`/`go`/`xml`/`md` stops appearing among the citing files, or if a fabricated id is ever reported as defined — two empty sets compare equal, and a walk that resolved the wrong directory is the greenest result available |
@@ -6075,3 +6078,240 @@ churn produces `RESUMED`/`PAUSED` pairs often enough that the old code accidenta
 than 4 minutes in 29 — has not been read back from a device, and the honest way to settle it is to
 compare a day of the phone's own reported totals against Android's Digital Wellbeing for the same
 day.
+
+---
+
+## Phase 25 — advertising inside apps, filtered on the phone (FR-6.6 … FR-6.10, FR-15.8)
+
+The ask was specific and it ruled out the easy answer in the same sentence: *"i don't want the
+adguard DNS — its not helping against AD's inside apps which are the most annoying"*, and then
+*"no NOT DNS ONLY, SPI/SNI the full and good thing"*, and then the constraint that shapes every
+decision below — *"just make sure to not brick my phone"*.
+
+### 25.1 — why a resolver cannot do this, and what can
+
+A DNS-based filter sees the **names an app asks about**. That is a strict subset of the names an
+app **connects to**, and the gap is exactly where advertising lives:
+
+- an SDK with a hardcoded IP never asks,
+- an SDK doing its own DoH inside its own TLS session never asks *anything the phone can see*,
+- and a CDN that serves both the app's content and its adverts answers one name for both.
+
+So the filter has to sit where the **connection** is, not where the question is. On Android that
+means `VpnService` — the only interface a non-rooted app has to the packet stream — and it means
+reading the name out of the connection itself: the **SNI** of a TLS ClientHello, or the `Host:`
+header of a plain request.
+
+**MITM was considered and rejected on evidence, not taste.** The owner asked directly — *"inject a
+certificate and then filter out everything"* — and then the sharper follow-up, *"then why would
+adguard still install its CA?"*. The answer is that a device-owner-installed CA is in the **user**
+store, and since Android 7 an app gets user CAs only by opting in with a network security config.
+Every app that carries advertising pins or uses the system store, so the CA buys nothing those apps
+would honour. What it would buy is a decryption capability aimed at a child's phone that the child
+cannot inspect. AdGuard installs one because it also wants to rewrite *page content* inside a
+browser it controls; this product does not, and SNI already names the host that content comes from.
+
+### 25.2 — the shape
+
+Nothing in the tunnel decides anything. Every decision lives in a class a fixture can drive, and the
+service is the thin part:
+
+| what | where | driven by |
+|---|---|---|
+| one rule, parsed | `FilterRule`, `RuleParser` | fixtures taken from AdGuard's own `filter_1.txt` |
+| 181k rules, looked up | `DomainIndex`, `FilterEngine` | fixtures |
+| a packet, read and forged | `IpPacket`, `PacketBuilder` | fixtures |
+| a connection, run | `TcpFlow` | fixtures **and a real kernel** (25.6) |
+| the name inside one | `TlsClientHello`, `HttpHost` | fixtures |
+| a query, answered or forwarded | `DnsCodec`, `DnsTunnel`, `DnsForwarder`, `PendingQueries` | fixtures |
+| every packet, routed | `PacketRouter` | fixtures |
+| whether to come up at all | `TunnelPlan` | fixtures |
+| whether it is still working | `TunnelWatchdog` | fixtures |
+| the list, fetched and compiled | `FilterListStore` | a temp dir and two fake streams |
+| always-on, asked for and read back | `AlwaysOnVpnManager` | a transcript double |
+| the policy, applied | `FilterApplier` | a transcript double asserting call ORDER |
+| what the phone reports back | `FilterReport` | fixtures |
+| a descriptor, two threads, a notification | `AdFilterVpnService` | **nothing — and that is the point** |
+
+**217 JVM tests** cover the first thirteen rows. The last row is deliberately empty: it is the part
+that needs Android and therefore cannot be unit-tested at all, so the design goal was to make that
+part as small as possible rather than to pretend it is covered.
+
+### 25.3 — not bricking the phone
+
+Six rails, each of which is a specific way this feature could have taken a child's phone off the
+internet with nothing on the screen saying why:
+
+1. **Lockdown is never set.** `AlwaysOnVpnManager.LOCKDOWN` is `false`, and the manager *reads the
+   flag back* after setting the package — a lockdown found on is reported as a failure rather than
+   left. Under lockdown, a tunnel that dies takes all connectivity with it, and the one connection
+   that could switch the filter off is the one that would be gone.
+2. **This app is excluded from its own tunnel** (`addDisallowedApplication`). That is safe *only*
+   because lockdown is off; under lockdown the same call is a bypass. The sync connection is the
+   lifeline, and a filter that could filter its own control plane is a filter nobody can turn off.
+3. **The control plane's own host can never be blocked**, whatever a list says —
+   `FilterEngine.neverBlockedFor(serverUrl)`.
+4. **Fail open, everywhere.** Anything the filter cannot parse, name or decide is *carried*. A
+   tunnel that is up and dropping is worse than no tunnel: the phone has no internet, nothing says
+   why, and a child can only report it as *"the internet is weird"*.
+5. **A watchdog stands the tunnel down.** `TunnelWatchdog` judges whole windows, reads its counters
+   as deltas, forgives nothing on a restart, and after two broken windows stops trying until the
+   policy changes. A tunnel that carries nothing is torn down rather than persisted with.
+6. **An https-only list URL**, refused at both ends. Whatever can rewrite a plain-HTTP list decides
+   what the phone refuses to connect to — and one of the names it could add is this control plane's.
+
+The owner's other standing rail still holds: factory-reset blocking is **not** set, so the phone can
+always be reset by hand.
+
+### 25.4 — the deliberate breakages, accepted in advance
+
+- **QUIC (UDP/443) is dropped** so clients fall back to TLS over TCP, where the name is clear text
+  (FR-6.9). Costs one fallback delay per host, once.
+- **Rewarded-video games soft-lock** at the point the advert would play. Asked and answered: *"if
+  they are broken its fine, better than with ads"*.
+- **YouTube and Spotify are not special-cased.** *"on youtube the ads are ok and we will restrict
+  youtube usage anyway"*, *"spotify we dont use"*.
+
+### 25.5 — the server side, and why the console shows two different things
+
+A parent's switch and a phone's tunnel are **different questions**, and a console that echoed the
+setting back would hide the only failure that matters: the switch on, the tunnel down.
+
+- `policies.ad_filter` + `ad_filter_list_url` — what was asked (FR-6.10). `AdFilter` is computed
+  false whenever the URL is empty, in **both** engines, because a switch with no list filters
+  nothing and reporting it as on would be a lie in the parent's own words.
+- `device_state.ad_filter_running` / `_rules` / `_fetched_at` — what the phone **measured**, through
+  the heartbeat. All three are nullable and *null means "not reported"*: an older DPC does not send
+  them, and the Play build has no filter to report on at all (FR-15.8). The console draws a badge
+  only on `=== true` / `=== false`, never on truthiness, and the "not running" warning is further
+  conditioned on the parent having asked for the filter.
+- Migration `0012_ad_filter.sql`, five columns, `COALESCE` upsert so a heartbeat that omits a field
+  does not erase it.
+
+`fgctl device` prints the same three, and `fgctl policy` prints the switch with
+`(none — the filter cannot run)` when there is no list, for the same reason.
+
+**Two gaps were found by building this, not by looking for them.** A new guard,
+`TestTheConsoleCanSetEveryPolicyFieldTheApiAccepts`, reflects over `patchPolicyRequest` and scans
+the shipped console: it found `timezone` accepted by the API since the beginning, printed as prose,
+and settable by nobody — the field every other time on that screen is measured against. And
+`RequirementCitationsTest` was not scanning `.js` at all, so the twelve requirement citations in the
+parent console had never been checked in either direction. Both are fixed here.
+
+### 25.6 — the tests that are not fixtures
+
+*"Find a solution to do an actual test instead of mocks, mock usually don't test what they should."*
+
+`tools/realtun/run.sh` runs the filter's own code against a **real Linux TCP/IP stack**: a real TUN
+device, `curl` as the app, a real Python TLS server as the destination, and a uid-scoped DNAT
+standing in for `VpnService.protect()`. Two arms, each with its calibration:
+
+| arm | with the rule | with no rules (calibration) |
+|---|---|---|
+| DNS | `ads.example.com` → **NXDOMAIN**, `content.example.org` → 203.0.113.9 | `ads.example.com` → **NOERROR** 198.51.100.7 |
+| SNI | `ads.example.com` → **curl 35, TLS failed**; `content.example.org` → **the real body over a real handshake** | `ads.example.com` → **the real body** |
+
+The second column is what makes the first mean anything: a filter that reset *everything* satisfies
+the block assertion. And the harness tells a **reset** from a **timeout** on purpose — a reset is
+the filter deciding, a timeout is the filter failing to decide, and reporting both as "blocked"
+would make a tunnel that carries nothing look like one that works.
+
+This layer was **invoked by nothing** until it was registered as `android-realtun` in
+`tests/run_all.sh` — this repository's own recurring defect, a control that exists, passes, and is
+never called. It reports NOT MEASURED (never a pass) where `sudo` would prompt.
+
+> **The martian-source trap, kept because it cost an afternoon.** The first version of the SNI
+> harness assigned the server address to `lo` so the filter could reach it without NAT. Every
+> SYN-ACK the filter wrote was then dropped by the kernel as a *martian source* — a packet arriving
+> on an interface carrying an address the machine owns — and the symptom was perfect: `tcpdump`
+> showed the SYN-ACK on the wire with `cksum correct`, and `curl` retransmitted three times and
+> timed out. Nothing in the filter was wrong. The one-line discriminator is
+> `ip route get from <addr> iif fgtun0`: `Invalid argument` for a local source, a route for a
+> non-local one.
+
+**And the server half is tested against a real PostgreSQL, because the interesting behaviour is in
+SQL and nowhere else.** `tests/e2e/ad_filter_test.go` drives the real binary over HTTP: a parent's
+PATCH, the desired state both the console and the device are handed, and the heartbeat's three-valued
+upsert. `internal/store` has no unit tests and cannot usefully have them — what is being asserted is
+`ON CONFLICT DO UPDATE` with `COALESCE`, which is a property of the database, and a fake store would
+assert only that the fake does what its author believed the SQL does.
+
+> **That suite immediately produced the exact defect it exists to prevent, in its own assertions.**
+> The check for "an unreadable timestamp is dropped rather than stored as the zero time" was written
+> as `IsZero()`, and it **passed with the production code deliberately broken to store the zero
+> time** — one of six calibration probes came back green. The column is `timestamptz`, year 1
+> predates standard time, so PostgreSQL applies the session zone's *local mean time* and the value
+> comes back as `0001-01-01 01:05:21 +0105` — 1 h 5 m 21 s away from the instant Go calls zero.
+> `IsZero()` is false for precisely the value it was written to catch, while the console still
+> renders "1 January year one". The assertion now compares against the stamp the phone actually
+> sent, which has no such hole. **An assertion that passed on broken code found by calibration is
+> the whole argument for calibration**: it would otherwise have shipped as coverage.
+
+### 25.7 — calibration: 39 probes, 39 red
+
+Four batches, every probe applied to production code, verified to have **landed** by a changed-line
+count against a saved copy (a `git diff` cannot see an untracked file), run, restored, and verified
+byte-identical. Every probe leaves the code's *structure* intact and changes only a value or an
+ordering, so a red can only come from an assertion — one probe that deleted an error branch produced
+`declared and not used: err` instead, was recognised as a compile error wearing a red, and was
+rewritten to change what the branch *returns*.
+
+| batch | probes | what it broke |
+|---|---|---|
+| 1 | 10 | the watchdog's window arithmetic (4), the plan's refusals (2), the list store's atomicity (4) |
+| 2 | 10 | always-on lockdown and read-back (4), the applier's ordering and refresh interval (6) |
+| 3 | 13 | the API's refusals (4), the console's controls and three-valued badges (5), the phone's report (4) |
+| 4 | 6 | the server end to end against a real PostgreSQL: the switch, the desired state, the https refusal, the `COALESCE` upsert, the clamp, the timestamp |
+
+Batches 1 to 3 went red on a named assertion first time. **Batch 4 did not, and that is the most
+useful result in this table**: its first run was 5 red and 1 green, and the green one was not a
+weak probe but a wrong assertion — `IsZero()` against a value that had been through a `timestamptz`
+column (see 25.6). Corrected, the same six probes are 6 red. A probe that comes back green is
+information about the test, and here it was the only thing that found a test which would have
+shipped as coverage.
+
+Selected verdicts:
+
+| probe | reds |
+|---|---|
+| lockdown is passed as `true` | 5 |
+| the read-back is skipped and the call is trusted | 1 |
+| the tunnel starts before consent is granted | 2 |
+| a list that compiles to nothing is accepted | 1 |
+| the cache is replaced before the list is compiled | 10 |
+| a plain-HTTP filter list is accepted | 1 |
+| an empty list url is refused, so a parent cannot clear one | 1 |
+| an unreadable timestamp becomes the zero time | 1 |
+| the ad-filter switch is gone from the console | 2 |
+| the time zone goes back to being prose | 1 |
+| the running badge is read for truthiness | 1 |
+| a list that was never fetched reports zero rules | 3 |
+| a build with no filter reports the tunnel as off | 3 |
+| the switch alone turns the filter on, with no list to fetch | 1 |
+| the desired state drops the parent's list url | 1 |
+| an older build's heartbeat overwrites what a newer one measured | 1 |
+| a negative rule count reaches the column | 1 |
+
+### 25.8 — what is NOT proven
+
+- **No handset has run this.** Every number above is the JVM, a Linux namespace, or Go. Whether a
+  Galaxy S20 with the tunnel up loses battery, loses throughput, or trips an OEM's own VPN
+  supervision is unmeasured.
+- **The rule count is a claim about a list, not about adverts.** 181,117 rules compiled says nothing
+  about how many adverts a child stops seeing. There is no measurement of that here and no honest
+  way to fake one.
+- **`AdFilterVpnService` itself has no test**, by construction (25.2). The flag it exposes for the
+  heartbeat (`running()`) is set on one line and cleared on another; only a device can show that
+  those two lines are in the right places.
+- **The Play build's compiled-out path is asserted by one build flag**, not by a second artifact
+  built and inspected in CI. `AD_FILTER_AVAILABLE=false` removes the applier and makes the report
+  three nulls; it does **not** remove the classes, and the build file says so rather than claiming
+  otherwise.
+- **`blocked_domains` does not reach the filter index.** The index is compiled from the downloaded
+  advertising list and from nothing else, so a parent's own blocked domains (FR-6.4) are still
+  browser-layer only even with the tunnel up. Feeding them in is the obvious next step and is not
+  done; SECURITY.md says so where a reader would otherwise assume the tunnel covers it.
+- **`internal/store` still has no unit tests**, and the ad-filter columns do not change that. What
+  covers the upsert is the e2e layer against a real PostgreSQL (25.6) — which is the right place
+  for it, but it means the SQL is measured only when docker and a `postgres:18.6` image are
+  present. A machine without them reports NOT MEASURED, not a pass.

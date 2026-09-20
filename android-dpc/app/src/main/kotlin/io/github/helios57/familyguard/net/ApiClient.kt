@@ -118,6 +118,20 @@ data class HeartbeatRequest(
      */
     @SerialName("power_exempt") val powerExempt: Boolean? = null,
     @SerialName("exact_alarms") val exactAlarms: Boolean? = null,
+    /**
+     * What the ad filter is actually doing on this phone (FR-6.6): how many rules it has compiled,
+     * when it last fetched them, and whether the tunnel is up.
+     *
+     * Reported for the same reason as [usageAccess]: the failure is invisible from every other
+     * signal. A parent's switch being on says nothing about whether the phone has a list, whether
+     * that list compiled, or whether the tunnel came up — and each of those can fail quietly, so
+     * without these three the console would show "Ad filter: on" over a phone filtering nothing.
+     *
+     * Null in all three means this build does not report them. The server leaves what it has.
+     */
+    @SerialName("ad_filter_rules") val adFilterRules: Int? = null,
+    @SerialName("ad_filter_fetched_at") val adFilterFetchedAt: String? = null,
+    @SerialName("ad_filter_running") val adFilterRunning: Boolean? = null,
 )
 
 @Serializable

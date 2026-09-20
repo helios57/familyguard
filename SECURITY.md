@@ -176,6 +176,48 @@ would be a second, weaker implementation of a check the device already makes pro
   cannot reach an app the child or the OEM installed, and a self-update cannot make the applier
   uninstall the device owner.
 
+### Filter list → phone (in-app ad filtering)
+
+FR-6.6 … FR-6.10 give the phone a local `VpnService` that terminates each TCP connection, reads the
+server name out of the TLS ClientHello or the `Host:` header, and decides against a list of rules.
+Two things follow from that and are worth stating plainly: this app sees the **names** a child's
+apps connect to, and a list it downloads gets to influence what the phone can reach.
+
+**Names, never content.** Nothing is decrypted. No certificate authority is installed — a
+device-owner CA lands in the *user* store, which since Android 7 an app sees only if its own network
+security config opts in, so it would decrypt nothing that carries advertising while handing this
+system a capability nobody could inspect. The SNI is already clear text on the wire; the filter
+reads it, decides, and either splices the connection through to the real destination untouched or
+resets it. What leaves the phone is aggregate: how many rules the list holds, when it was fetched,
+and whether the tunnel is up. **No hostname a child's phone connected to is reported to the control
+plane** — there is no field for one, and the counters the engine keeps (seen, blocked, and
+`namesHidden`, which counts the ClientHellos that carried Encrypted Client Hello and so named
+nothing readable) are numbers, not names.
+
+**The list is data from a third party, and it is bounded like it.**
+
+- **The URL is a parent's decision and must be `https://`** — refused by the API
+  (`ad_filter_list_url must start with https://`) and refused again on the phone. Plain HTTP would
+  let anything on the path choose what a child's phone blocks.
+- **Nothing is shipped with the app.** The lists worth using are GPL and this repository is MIT, and
+  a list baked into an APK is months stale by the time a child installs it. This project ships the
+  fetcher; the bytes arrive at run time and nothing here asserts anything about their content.
+- **A fetch that fails leaves the previous list in place.** The download goes to a temporary file,
+  is hashed, and is *compiled before* it can replace the cache; a list that yields zero rules is
+  refused outright. A truncated body has a perfectly good `200`, so the decision is made on the
+  bytes that arrived, never on a header. Capped at 32 MB with a 30 s timeout.
+- **The control plane's own hostname can never be blocked, whatever the list says.** It is checked
+  before the rule index and nothing outranks it. An allow *rule* would not be equivalent: a deeper
+  block beats a shallower allow by design, so `||sync.guard.example.com^` in a downloaded list would
+  win. Without that override, one line in a third-party file would stop the phone syncing — and a
+  sync is the only thing that can switch the filter back off.
+
+**And the tunnel itself is built not to be able to take the network away.** `lockdown` is never set,
+this app excludes itself from its own tunnel (`addDisallowedApplication`), anything unparseable is
+carried rather than dropped, and a watchdog stands the tunnel down after two windows that carried
+nothing. CONCEPT.md §2.1 has the reasoning; the failure being designed against is a phone with no
+internet and nothing on the screen saying why.
+
 ### Browser → control plane
 
 - Content-Security-Policy, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
@@ -220,10 +262,16 @@ that admits a gap.
 - **A determined, technical child with physical possession of the phone.** Device Owner is strong
   against a bored teenager, not against an unlocked bootloader. The escape hatch that keeps the
   phone recoverable (property 1) is also, by construction, available to whoever holds it.
-- **Custom domain blocking outside the managed browser.** Filtering is DNS-over-TLS at the OS
-  resolver plus Chrome's managed `URLBlocklist`. A non-managed browser installed by the child can
-  reach a custom-blocked domain the DoT resolver does not itself block. This is CONCEPT.md §2.1, and
-  the fix is a self-hosted resolver, which needs port 853 exposed.
+- **Custom domain blocking outside the managed browser.** A parent's own blocked domains (FR-6.4)
+  are enforced by Chrome's managed `URLBlocklist`, and by the DoT resolver only if the parent named
+  one that blocks them. A non-managed browser the child installs reaches them. **The connection
+  filter does not close this**: its index is compiled from the downloaded advertising list and from
+  nothing else, so `blocked_domains` never reaches it. Feeding them in is the obvious next step and
+  is not done; until it is, treat FR-6.4 as browser-layer only (CONCEPT.md §2.1).
+- **A name the filter cannot see.** Encrypted Client Hello hides the real host behind a public name,
+  QUIC is dropped so clients fall back to TCP but an app that refuses to fall back simply has no
+  network, and an app that connects to a bare IP address names nothing at all. The filter counts
+  these (`namesHidden`, and connections with no name) rather than pretending they were inspected.
 - **A compromised control plane.** Whoever runs the server can publish any policy the DPC will
   apply. There is no second signature on a policy bundle. The mitigations are operational: the
   binary runs as an unprivileged user in a distroless image with no shell and a read-only root

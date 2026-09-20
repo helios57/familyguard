@@ -24,6 +24,7 @@ class DeviceOwnerPolicy(
     val chrome: ChromePolicyManager,
     val dns: DnsPolicyManager,
     val lock: LockManager,
+    val alwaysOnVpn: AlwaysOnVpnManager,
 ) {
     companion object {
         /**
@@ -61,6 +62,10 @@ class DeviceOwnerPolicy(
                 chrome = ChromePolicyManager(DpmManagedConfigGateway(dpm, admin)),
                 dns = DnsPolicyManager(DpmDnsGateway(dpm, admin)),
                 lock = LockManager(DpmLockGateway(dpm, context.getSystemService(KeyguardManager::class.java))),
+                alwaysOnVpn = AlwaysOnVpnManager(
+                    gateway = DpmAlwaysOnVpnGateway(dpm, admin),
+                    ownPackage = context.packageName,
+                ),
             )
         }
     }
@@ -201,6 +206,30 @@ class DpmLockGateway(
 }
 
 /** [DnsGateway] over the global private-DNS API, which is API 29 and up — hence this app's minSdk. */
+/**
+ * [AlwaysOnVpnGateway] over the real platform. Thin on purpose: every decision — and in particular
+ * the one about lockdown — lives in [AlwaysOnVpnManager], which is covered by JVM tests.
+ */
+class DpmAlwaysOnVpnGateway(
+    private val dpm: DevicePolicyManager,
+    private val admin: ComponentName,
+) : AlwaysOnVpnGateway {
+
+    override fun packageName(): String? = dpm.getAlwaysOnVpnPackage(admin)
+
+    override fun isLockdownEnabled(): Boolean = dpm.isAlwaysOnVpnLockdownEnabled(admin)
+
+    /**
+     * Throws `UnsupportedOperationException` when [packageName] does not declare a `VpnService`, or
+     * `NameNotFoundException` when it is not installed. Both propagate: [AlwaysOnVpnManager] turns
+     * them into a reported problem, and swallowing them here would report a phone that is not
+     * filtering as one that is.
+     */
+    override fun setPackage(packageName: String?, lockdown: Boolean) {
+        dpm.setAlwaysOnVpnPackage(admin, packageName, lockdown)
+    }
+}
+
 class DpmDnsGateway(
     private val dpm: DevicePolicyManager,
     private val admin: ComponentName,

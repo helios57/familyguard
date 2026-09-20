@@ -233,6 +233,25 @@ type Settings struct {
 	Timezone          string `json:"timezone"`
 	Version           int64  `json:"version"`
 
+	// AdFilter turns on the on-device advertising and tracker filter (FR-6.6 to FR-6.9): a local
+	// VpnService that terminates connections, reads the name out of a TLS ClientHello or a Host:
+	// header, and resets the ones a list names.
+	//
+	// Separate from DNSHost and not implied by it, because they solve different halves and only one
+	// of them reaches an advertisement inside a game. A resolver sees a name only when an app asks
+	// it for one; an SDK that ships its ad server's address, or reuses a connection it already has,
+	// never asks. The filter is the half that sees those, and the resolver is the half that costs
+	// no battery — so a parent can sensibly want either, both, or neither.
+	AdFilter bool `json:"ad_filter"`
+
+	// AdFilterListURL is where the phone fetches its filter list from. A URL and nothing else: this
+	// project ships the fetcher and never the data (the lists worth using are GPL-3.0 and this is
+	// MIT), and a list compiled into an artifact is months old by the time a child installs it.
+	//
+	// Must be https. The device refuses anything else, because whatever can rewrite a plain-HTTP
+	// list can decide what this phone blocks — including deciding that it blocks the control plane.
+	AdFilterListURL string `json:"ad_filter_list_url"`
+
 	BlockedPackages []string `json:"blocked_packages"`
 	AllowedPackages []string `json:"allowed_packages"`
 	BlockedDomains  []string `json:"blocked_domains"`
@@ -307,6 +326,13 @@ type DesiredState struct {
 	SafeSearch            bool     `json:"safe_search"`
 	YouTubeRestrictedMode bool     `json:"youtube_restricted_mode"`
 
+	// AdFilter is whether the device should run its local filtering tunnel, and AdFilterListURL is
+	// what it should filter from. AdFilter is false whenever the URL is empty, whatever the parent
+	// set, because a tunnel with nothing to block carries every packet on the phone through this
+	// code for no benefit at all — see Compute.
+	AdFilter        bool   `json:"ad_filter"`
+	AdFilterListURL string `json:"ad_filter_list_url"`
+
 	AllowInstalls    bool     `json:"allow_installs"`
 	UserRestrictions []string `json:"user_restrictions"`
 
@@ -370,6 +396,13 @@ func Compute(in Input) (DesiredState, error) {
 	out.BlockedDomains = domains.sorted()
 
 	out.ManagedApps = normalizeManagedApps(in.Settings.ManagedApps)
+
+	// FR-6.6. The list url decides, not just the switch: a filter turned on with nowhere to fetch a
+	// list from would put a tunnel between every app on the phone and the network in exchange for
+	// blocking nothing. Refusing here rather than on the device means the console can show a parent
+	// that the switch is on and the filter is not, from the same value the phone reads.
+	out.AdFilterListURL = strings.TrimSpace(in.Settings.AdFilterListURL)
+	out.AdFilter = in.Settings.AdFilter && out.AdFilterListURL != ""
 
 	out.AllowInstalls = in.Settings.AllowChildInstalls
 	restrictions := newSet([]string{

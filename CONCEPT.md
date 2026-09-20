@@ -25,14 +25,28 @@ container for the UI.
 
 ## 2. The three decisions that shape everything
 
-### 2.1 If a resolver is used at all it is DNS-over-TLS enforced by the Device Owner — never an in-app VPN
+### 2.1 Never lockdown — and a resolver alone was never going to reach advertising inside an app
 
 The draft ran its own `VpnService`, intercepted every packet, and paired that with
 `setAlwaysOnVpnPackage(..., lockdown = true)`. Lockdown means the kernel drops all traffic the VPN
 cannot carry. If the VPN is wrong, the device has no network — and the same code blocked its own
-uninstall. That is a brick, and it violates NFR-6. That decision stands and is not revisited: there
-is no packet path of ours to get wrong, nothing to keep alive, no battery cost, and no way for our
-bug to remove the device's connectivity.
+uninstall. That is a brick, and it violates NFR-6.
+
+**The part of that decision that stands is `lockdown = false`, and it is absolute.** The part that
+did *not* stand is "no packet path at all". This section said exactly that, in those words, until
+2026-09-20, and it was wrong about the consequence rather than the risk: it concluded that lockdown
+being unacceptable made a tunnel unacceptable, and then had to write three paragraphs below
+admitting that the thing the owner actually wanted filtered could not be reached from any other
+layer. A tunnel without lockdown is a different object from the draft's: when it fails, traffic goes
+around it.
+
+So there **is** a packet path of ours now (FR-6.6 … FR-6.10, IMPLEMENTATION_PLAN.md Phase 25), and
+every rail on it exists because of the paragraph above: no lockdown, this app excluded from its own
+tunnel, the control plane's host unblockable whatever a list says, anything unparseable carried
+rather than dropped, and a watchdog that stands the tunnel down after two windows that carried
+nothing. A tunnel that is up and silently dropping is worse than no tunnel — the phone has no
+internet, nothing on the screen says why, and a child can only report it as *"the internet is
+weird"*.
 
 **What changed on 2026-09-06: there is no filtering resolver by default any more.** Until then every
 child was provisioned with `dns_host = family.adguard-dns.com` and
@@ -62,17 +76,26 @@ is just a settings screen a child cannot open.
 | DNS | Private DNS (DoT), **only if a parent names a resolver**, then locked by the DO | whole categories of *site*, device-wide. **Not** advertising inside an app |
 | Apps | `setPackagesSuspended` + `setApplicationHidden` | YouTube app family, any app a parent blocks |
 | Browser | Chrome managed `URLBlocklist`, SafeSearch, YouTube restricted mode | custom domains, YouTube on the web |
+| Connections | local `VpnService`, SNI and `Host:`, **no lockdown**, fails open | advertising and trackers **inside apps and games** |
 
 FR-6.4 (custom domains) and FR-7.2 (YouTube at DNS) are therefore delivered at the **browser and
 app** layers, not at DNS. A child who installs a non-managed browser can reach a custom-blocked
 domain that no resolver blocks either.
 
-**Advertising inside apps is out of scope for this layer and is a known gap, not a solved problem.**
-It is deliberately left open rather than papered over with a control that measurably does not
-address it. Whatever eventually closes it will not be a public DoT resolver; `dns_host` stays
-per-child configuration, so pointing it at something later — a self-hosted resolver, reachable only
-by exposing port 853 through an ingress this system does not get to reconfigure (§5) — remains a
-config change rather than a redesign, but it is not the plan and it is not the default.
+**Advertising inside apps is closed by a fourth layer, not by this one.** It stayed an open gap
+until 2026-09-20 rather than being papered over with a control that measurably does not address it,
+and what closed it is the only thing that could: reading the name out of the **connection** instead
+of out of the question. A `VpnService` terminates each TCP connection locally and reads the server
+name from the TLS ClientHello, or the `Host:` header of a plain request; UDP/443 is dropped so
+clients fall back to TLS over TCP where that name is clear text. That reaches an SDK with a
+hardcoded address and an SDK doing its own DoH inside its own session — both invisible to every
+DNS-based filter.
+
+A CA is deliberately **not** installed. A device-owner-installed certificate lands in the *user*
+store, and since Android 7 an app sees user CAs only if its own network security config opts in —
+which no app carrying advertising does. So a CA would decrypt nothing that matters while giving this
+system a capability aimed at a child's phone that the child cannot inspect. SNI already names the
+host, which is the only thing this filter decides on.
 
 ### 2.2 The command channel is our own — and an event is a wake-up, never a delivery
 

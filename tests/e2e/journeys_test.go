@@ -75,6 +75,13 @@ type deviceStateDTO struct {
 	// Empty is "nothing to report", which is also what an older DPC that cannot report sends.
 	UpdateError   string     `json:"update_error"`
 	UpdateErrorAt *time.Time `json:"update_error_at"`
+
+	// What the PHONE measured about its own ad filter (FR-6.10), which is a different question
+	// from whether a parent turned the switch on. All three are three-valued and `omitempty` on
+	// the server, so a missing key decodes here as nil — see ad_filter_test.go.
+	AdFilterRules     *int       `json:"ad_filter_rules"`
+	AdFilterFetchedAt *time.Time `json:"ad_filter_fetched_at"`
+	AdFilterRunning   *bool      `json:"ad_filter_running"`
 }
 
 type deviceViewDTO struct {
@@ -95,6 +102,8 @@ type policyDTO struct {
 	BedtimeStart       string `json:"bedtime_start"`
 	BedtimeEnd         string `json:"bedtime_end"`
 	DNSHost            string `json:"dns_host"`
+	AdFilter           bool   `json:"ad_filter"`
+	AdFilterListURL    string `json:"ad_filter_list_url"`
 	Timezone           string `json:"timezone"`
 	Version            int64  `json:"version"`
 }
@@ -109,6 +118,8 @@ type desiredStateDTO struct {
 	BlockedDomains        []string `json:"blocked_domains"`
 	SafeSearch            bool     `json:"safe_search"`
 	YouTubeRestrictedMode bool     `json:"youtube_restricted_mode"`
+	AdFilter              bool     `json:"ad_filter"`
+	AdFilterListURL       string   `json:"ad_filter_list_url"`
 	AllowInstalls         bool     `json:"allow_installs"`
 	UserRestrictions      []string `json:"user_restrictions"`
 	QuotaMinutes          int      `json:"quota_minutes"`

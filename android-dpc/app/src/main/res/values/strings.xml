@@ -130,4 +130,15 @@
     <string name="relink_done">Linked. The phone is reporting to the console again.</string>
     <string name="relink_refused">That setup code was not accepted. Codes can only be used once and expire after 30 minutes — issue a new one in the console.</string>
     <string name="relink_deferred">The server could not be reached. Check the phone is online and try again.</string>
+
+    <!-- FR-6.6 to FR-6.9. The ad filter's notification, which is what the child sees of it.
+         An Android VPN puts a permanent key icon in the status bar whatever this says, so the
+         notification's job is to make that icon explainable rather than mysterious: it names the
+         app, says what the tunnel is for, and never implies the phone is being watched. -->
+    <string name="filter_channel">Ad filter</string>
+    <string name="filter_starting">Starting the ad filter…</string>
+    <string name="filter_running">Ad filter on · %1$d rules</string>
+    <string name="filter_off_because">Ad filter off — %1$s</string>
+    <string name="filter_not_permitted">this phone has not allowed the connection yet</string>
+    <string name="filter_carried_nothing">it carried no traffic, so it was switched off</string>
 </resources>

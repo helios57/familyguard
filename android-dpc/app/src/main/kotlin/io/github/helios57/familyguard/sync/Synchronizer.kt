@@ -264,6 +264,9 @@ class Synchronizer(
                 updateError = t.updateError,
                 powerExempt = t.powerExempt,
                 exactAlarms = t.exactAlarms,
+                adFilterRules = t.adFilterRules,
+                adFilterFetchedAt = t.adFilterFetchedAt,
+                adFilterRunning = t.adFilterRunning,
             )
         ).pendingCommands
     }
@@ -331,4 +334,15 @@ data class DeviceTelemetry(
      */
     val powerExempt: Boolean? = null,
     val exactAlarms: Boolean? = null,
+    /**
+     * What the ad filter is doing on this phone (FR-6.6). Null when this build does not report it.
+     *
+     * [adFilterRules] is the number compiled from the cached list — zero is a real measurement and
+     * means the filter is on and blocking nothing. [adFilterFetchedAt] is RFC 3339 by this phone's
+     * clock. [adFilterRunning] is whether the tunnel is actually up, which is a different question
+     * from both of the others and from the parent's switch.
+     */
+    val adFilterRules: Int? = null,
+    val adFilterFetchedAt: String? = null,
+    val adFilterRunning: Boolean? = null,
 )

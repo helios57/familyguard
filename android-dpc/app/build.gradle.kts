@@ -16,6 +16,23 @@ val buildOffset: Int = (project.findProperty("buildOffset") as String?)
     ?.let { it.toIntOrNull() ?: throw GradleException("-PbuildOffset=$it is not a number") }
     ?: 0
 
+// FR-15.8. `-PplayBuild=true` builds the artifact that goes to Play, and the one thing that changes is
+// whether the ad filter may run. Play's Device and Network Abuse policy bans ad-blocking outright;
+// its VpnService policy explicitly permits parental controls, so the tunnel is not the problem and
+// the filtering is. The switch is a build-time constant rather than a server flag because a flag
+// a parent could turn on would make the Play binary an ad blocker on somebody's phone, which is
+// exactly what the policy is about.
+//
+// It does NOT remove the filter code from the APK — R8 is off (see `release`, below), so the
+// classes are still in there and simply never reached. That is a claim about behaviour, not about
+// bytes, and it is stated here so nobody reads this as stripping.
+val playBuild: Boolean = (project.findProperty("playBuild") as String?)
+    ?.let {
+        it.toBooleanStrictOrNull()
+            ?: throw GradleException("-PplayBuild=$it is not true or false")
+    }
+    ?: false
+
 android {
     namespace = "io.github.helios57.familyguard"
     // 37.1 is the newest released platform AGP 9.3 supports (its documented maximum is API 37),
@@ -43,10 +60,13 @@ android {
         // versionName stays the same for both builds ON PURPOSE. FR-15.3 installs on a strictly
         // greater versionCode, and a test whose two builds also differed by name could pass while
         // the updater compared names.
-        versionCode = 17 + buildOffset
-        versionName = "0.6.8"
+        versionCode = 18 + buildOffset
+        versionName = "0.6.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Read by AdFilterVpnService before it does anything else. See `playBuild`, above.
+        buildConfigField("boolean", "AD_FILTER_AVAILABLE", (!playBuild).toString())
     }
 
     buildFeatures {

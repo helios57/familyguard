@@ -10,7 +10,7 @@ import (
 
 const policyCols = `child_id, tracking_only, allow_child_installs, allow_debugging, allow_uninstall,
 	youtube_blocked, daily_limit_minutes, bedtime_enabled, bedtime_start, bedtime_end, dns_host,
-	timezone, version, updated_at`
+	ad_filter, ad_filter_list_url, timezone, version, updated_at`
 
 // NormalizeDomain folds a hostname to the stored form: lowercase, no trailing dot, no scheme, no
 // path. Both add and remove go through it, which is what makes removal actually remove — a rule
@@ -44,6 +44,8 @@ type PolicyUpdate struct {
 	BedtimeStart       *string
 	BedtimeEnd         *string
 	DNSHost            *string
+	AdFilter           *bool
+	AdFilterListURL    *string
 	Timezone           *string
 }
 
@@ -62,14 +64,16 @@ func (s *Store) UpdatePolicy(ctx context.Context, childID uuid.UUID, u PolicyUpd
 		     bedtime_start        = COALESCE($9, bedtime_start),
 		     bedtime_end          = COALESCE($10, bedtime_end),
 		     dns_host             = COALESCE($11, dns_host),
-		     timezone             = COALESCE($12, timezone),
+		     ad_filter            = COALESCE($12, ad_filter),
+		     ad_filter_list_url   = COALESCE($13, ad_filter_list_url),
+		     timezone             = COALESCE($14, timezone),
 		     version              = version + 1,
 		     updated_at           = NOW()
 		  WHERE child_id = $1
 		 RETURNING `+policyCols,
 		childID, u.TrackingOnly, u.AllowChildInstalls, u.AllowDebugging, u.AllowUninstall,
 		u.YouTubeBlocked, u.DailyLimitMinutes, u.BedtimeEnabled, u.BedtimeStart, u.BedtimeEnd,
-		u.DNSHost, u.Timezone))
+		u.DNSHost, u.AdFilter, u.AdFilterListURL, u.Timezone))
 }
 
 // BumpPolicyVersion increments the version without changing a field, used when an app rule or a
@@ -196,7 +200,8 @@ func scanPolicy(row pgx.Row) (*Policy, error) {
 	var p Policy
 	if err := row.Scan(&p.ChildID, &p.TrackingOnly, &p.AllowChildInstalls, &p.AllowDebugging,
 		&p.AllowUninstall, &p.YouTubeBlocked, &p.DailyLimitMinutes, &p.BedtimeEnabled,
-		&p.BedtimeStart, &p.BedtimeEnd, &p.DNSHost, &p.Timezone, &p.Version, &p.UpdatedAt); err != nil {
+		&p.BedtimeStart, &p.BedtimeEnd, &p.DNSHost, &p.AdFilter, &p.AdFilterListURL,
+		&p.Timezone, &p.Version, &p.UpdatedAt); err != nil {
 		return nil, mapErr(err)
 	}
 	return &p, nil

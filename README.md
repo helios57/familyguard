@@ -43,10 +43,15 @@ has not been run, and that is deliberate — see [Test integrity](#test-integrit
 
 ## The three decisions worth knowing before reading the code
 
-1. **Content filtering is DNS-over-TLS set by the Device Owner, not an in-app VPN.** A `VpnService`
-   with `lockdown = true` means the phone has no network whenever our code is wrong. The OS resolver
-   filters instead; there is no packet path of ours to get wrong. The cost is stated honestly in
-   CONCEPT.md §2.1: custom domain blocking lands at the Chrome-policy layer, not at DNS.
+1. **Filtering is two layers, and neither of them is lockdown.** A resolver (DNS-over-TLS, set by
+   the Device Owner, **opt-in and empty by default**) covers categories of site — and measurably
+   does nothing about advertising inside an app, because a resolver only ever sees a name. That
+   second half is covered by a `VpnService` that reads the server name out of each connection
+   (CONCEPT.md §2.1, FR-6.6 … FR-6.10). What was rejected in the draft and is still rejected is
+   `lockdown = true`: under lockdown a tunnel that is wrong takes the phone's whole network with it,
+   including the one connection that could switch the filter off. So the tunnel fails **open**,
+   excludes this app from itself, can never block the control plane, and stands itself down when it
+   stops carrying traffic.
 2. **An event is a wake-up, never a delivery.** Commands are rows in PostgreSQL with an explicit
    lifecycle. The server never reports a command succeeded because it sent one — it reports what the
    device acknowledged. A dropped SSE connection costs latency, never correctness.

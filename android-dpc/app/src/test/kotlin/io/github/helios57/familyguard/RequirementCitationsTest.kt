@@ -91,9 +91,10 @@ class RequirementCitationsTest {
         val extensions = cited.values.flatten().distinct()
             .mapNotNull { it.substringAfterLast('.', "").takeIf(String::isNotEmpty) }.toSet()
         assertTrue(
-            "requirements are cited from Kotlin, Go, XML and Markdown; this scan saw only " +
-                "$extensions, so it is reading one part of the repository and reporting on all of it",
-            setOf("kt", "go", "xml", "md").all { it in extensions },
+            "requirements are cited from Kotlin, Go, JavaScript, XML and Markdown; this scan saw " +
+                "only $extensions, so it is reading one part of the repository and reporting on " +
+                "all of it",
+            setOf("kt", "go", "js", "xml", "md").all { it in extensions },
         )
         // The authority must be able to say no. Without this, a `defined` set built by some future
         // pattern that matches every line would make the whole class vacuous while staying green.
@@ -137,8 +138,18 @@ class RequirementCitationsTest {
     }
 
     private companion object {
+        /**
+         * `js` was missing until 2026-09-20, and the parent console is written in it.
+         *
+         * `app.js` cites twelve requirements in its comments — the very comments a reviewer reads
+         * to decide whether the screen a parent looks at does what was asked — and not one of them
+         * was checked in either direction. The consequence is the shape this class exists for: a
+         * requirement implemented ONLY in the console read as *unclaimed*, and a citation there
+         * pointing at a number nobody wrote read as correct. Both were true at once while this
+         * test was green.
+         */
         val SCANNED_EXTENSIONS =
-            setOf("kt", "kts", "go", "md", "xml", "sh", "py", "ts", "yaml", "yml", "sql")
+            setOf("kt", "kts", "go", "js", "md", "xml", "sh", "py", "ts", "yaml", "yml", "sql")
 
         /**
          * Build outputs, VCS metadata and tool caches. Named rather than pattern-matched so adding

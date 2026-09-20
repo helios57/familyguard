@@ -55,6 +55,11 @@ import io.github.helios57.familyguard.enroll.EncryptedCredentialStore
 import io.github.helios57.familyguard.enroll.EnrollResult
 import io.github.helios57.familyguard.enroll.Enroller
 import io.github.helios57.familyguard.enroll.androidDeviceFacts
+import io.github.helios57.familyguard.filter.AdFilterVpnService
+import io.github.helios57.familyguard.filter.FilterListState
+import io.github.helios57.familyguard.filter.FilterReport
+import io.github.helios57.familyguard.filter.FilterState
+import io.github.helios57.familyguard.filter.filterApplier
 import io.github.helios57.familyguard.net.AckRequest
 import io.github.helios57.familyguard.net.ApiClient
 import io.github.helios57.familyguard.net.Backoff
@@ -543,7 +548,12 @@ class ConnectionService : Service() {
         val synchronizer = Synchronizer(
             api = api,
             cache = EncryptedPolicyCache(this),
-            applier = deviceApplier(policy, credentials.serverUrl, managedAppApplier(api, policy)),
+            applier = deviceApplier(
+                policy = policy,
+                serverUrl = credentials.serverUrl,
+                managedApps = managedAppApplier(api, policy),
+                filter = policy?.let { filterApplier(this, it.alwaysOnVpn) },
+            ),
             recovery = RecoveryMode(recoveryStore.mode),
             telemetry = {
                 val t = telemetry()
@@ -1353,6 +1363,15 @@ class ConnectionService : Service() {
         val connectivity = getSystemService(ConnectivityManager::class.java)
         val capabilities = connectivity?.activeNetwork?.let { connectivity.getNetworkCapabilities(it) }
 
+        // Read from the store and from the service rather than from the policy the server sent: the
+        // parent's switch is what the server already knows, and repeating it back would show
+        // "filtering" for a phone whose tunnel never came up. These three are the measurement.
+        val filter = FilterReport.of(
+            available = BuildConfig.AD_FILTER_AVAILABLE,
+            list = if (BuildConfig.AD_FILTER_AVAILABLE) FilterState.listState(this) else FilterListState(),
+            running = AdFilterVpnService.running(),
+        )
+
         return DeviceTelemetry(
             // Null, not a percentage, when the broadcast did not carry the numbers. A fabricated
             // "0%" would show the parent a phone about to die.
@@ -1380,6 +1399,9 @@ class ConnectionService : Service() {
             // Read here rather than pushed from the updater because the heartbeat is the only
             // channel that survives the process being replaced mid-install.
             updateError = update,
+            adFilterRules = filter.rules,
+            adFilterFetchedAt = filter.fetchedAt,
+            adFilterRunning = filter.running,
             connectivity = when {
                 capabilities == null -> "none"
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"

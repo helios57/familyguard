@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -194,6 +195,8 @@ type patchPolicyRequest struct {
 	BedtimeStart       *string `json:"bedtime_start"`
 	BedtimeEnd         *string `json:"bedtime_end"`
 	DNSHost            *string `json:"dns_host"`
+	AdFilter           *bool   `json:"ad_filter"`
+	AdFilterListURL    *string `json:"ad_filter_list_url"`
 	Timezone           *string `json:"timezone"`
 }
 
@@ -226,6 +229,11 @@ func (s *Server) patchPolicy(c *gin.Context) {
 			bad = append(bad, "unknown time zone "+*req.Timezone)
 		}
 	}
+	if req.AdFilterListURL != nil {
+		if problem := filterListURLProblem(*req.AdFilterListURL); problem != "" {
+			bad = append(bad, problem)
+		}
+	}
 	// An empty dns_host is deliberately ACCEPTED, and this used to be the one field a parent could
 	// not clear. It read "set the family default rather than clearing it", which assumed there was
 	// a sensible family default to fall back to; the default was a third-party filtering resolver
@@ -252,6 +260,8 @@ func (s *Server) patchPolicy(c *gin.Context) {
 		BedtimeStart:       req.BedtimeStart,
 		BedtimeEnd:         req.BedtimeEnd,
 		DNSHost:            req.DNSHost,
+		AdFilter:           req.AdFilter,
+		AdFilterListURL:    req.AdFilterListURL,
 		Timezone:           req.Timezone,
 	})
 	if err != nil {
@@ -261,6 +271,30 @@ func (s *Server) patchPolicy(c *gin.Context) {
 	s.auditParent(c, "POLICY_UPDATED", "child", childID.String(), map[string]any{"version": pol.Version})
 	s.notifyChild(c, childID, "policy")
 	c.JSON(http.StatusOK, pol)
+}
+
+// filterListURLProblem says why a filter list url cannot be stored, or "" when it can.
+//
+// Refused here for the same reason the device refuses it (FR-6.6): whatever can rewrite a
+// plain-HTTP list decides what a child's phone blocks, and that includes deciding that it blocks
+// this server — after which nothing can switch the filter off again. The phone applies the same
+// rule, so accepting one here would store a value that silently never loads.
+//
+// Empty is accepted and means "no list", which is the state every family starts in and the only
+// way back out of a list that turned out to be wrong.
+func filterListURLProblem(raw string) string {
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return ""
+	}
+	parsed, err := url.Parse(u)
+	switch {
+	case err != nil || parsed.Host == "":
+		return "ad_filter_list_url must be a url"
+	case parsed.Scheme != "https":
+		return "ad_filter_list_url must start with https:// — the phone refuses anything else"
+	}
+	return ""
 }
 
 // validHHMM accepts exactly the 24-hour form the schema constrains. It is duplicated from the

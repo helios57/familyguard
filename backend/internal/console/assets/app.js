@@ -16,6 +16,13 @@ const API = '/api/v1';
 const SESSION_KEY = 'fg.session';
 const CHILD_KEY = 'fg.child';
 
+/* The list offered by the button in the Rules tab, and the only one this project names.
+ *
+ * A URL, never the bytes: AdGuard's lists are GPL-3.0 and FamilyGuard is MIT, so shipping the data
+ * would relicense the repo. The phone fetches it directly, and a parent can replace it with any
+ * AdGuard- or hosts-style list they prefer. */
+const AD_FILTER_SUGGESTED_LIST = 'https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt';
+
 const state = {
   session: null,
   parent: null,
@@ -631,7 +638,16 @@ function deviceCard(dev, desired) {
     // the existence of the second switch until the first is fixed, which is a second trip to
     // Settings and a second day of waiting to find out. Order the remedies; do not hide one.
     st.exact_alarms === false
-      && el('span', { class: 'badge warn', text: 'alarms not exact' }));
+      && el('span', { class: 'badge warn', text: 'alarms not exact' }),
+    // FR-6.10. Three states, and the third is why this is not a boolean: `true` is a tunnel the
+    // phone has confirmed is up, `false` is one it says is down, and `undefined` is a phone that
+    // has not reported — an older DPC, or a Play build, which carries no filter at all to report
+    // on (FR-15.8). Only the first two draw anything, and the warning is conditioned on the parent
+    // having ASKED for it: "not running" on a child whose filter is off is not news.
+    st.ad_filter_running === true
+      && el('span', { class: 'badge ok', text: 'ad filter on' }),
+    desired && desired.ad_filter && st.ad_filter_running === false
+      && el('span', { class: 'badge warn', text: 'ad filter not running' }));
 
   const body = [head, facts];
 
@@ -697,6 +713,25 @@ function deviceCard(dev, desired) {
       + 'FamilyGuard on. Until then every app reads zero minutes and daily limits never apply. '
       + 'FamilyGuard cannot grant this itself \u2014 Android does not let any app, even a device '
       + 'owner, turn it on.'));
+  }
+
+  // What the phone MEASURED about its filter, which is a different question from what the parent
+  // asked for — and the only one worth showing here. The Rules tab already says what was asked.
+  if (desired && desired.ad_filter) {
+    if (st.ad_filter_running === false) {
+      body.push(el('p', { class: 'warn' },
+        el('strong', { text: 'The ad filter is not running on this phone. ' }),
+        'It is switched on for this child, so the phone will start it at its next sync. If it stays '
+        + 'off, the list may not have downloaded \u2014 check the filter list in Rules, and that the '
+        + 'phone is online.'));
+    } else if (st.ad_filter_running === true) {
+      body.push(el('p', { class: 'muted', text: 'Ad filter: running'
+        + (st.ad_filter_rules ? ' with ' + st.ad_filter_rules.toLocaleString() + ' rules' : '')
+        + (st.ad_filter_fetched_at ? ', list fetched ' + fmtTime(st.ad_filter_fetched_at) : '')
+        + '.' }));
+    }
+    // `undefined` draws nothing at all: a phone that has not reported is not a phone with a
+    // problem, and a line saying so would be a measurement nobody took.
   }
 
   if (desired) {
@@ -939,7 +974,13 @@ function renderRules(data) {
   const rules = el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h2', { text: 'Rules' })),
     toggle('tracking_only', 'Watch only', 'See what is happening, change nothing on the phone.'),
-    toggle('allow_child_installs', 'Let them install apps', 'Off means new apps wait for your approval.'),
+    // FR-5.3. The hint used to read "Off means new apps wait for your approval", which is what
+    // happens to an app that arrives ANYWAY — it is not what off does. Off applies
+    // `no_install_apps`, so the Play Store refuses every install on that phone, and a parent
+    // looking for why one named app will not install finds nothing about that app anywhere.
+    // Measured the first time this was used with a real family: "i cant install whatsapp".
+    toggle('allow_child_installs', 'Let them install apps',
+      'Off blocks the Play Store entirely \u2014 nothing new can be installed, and anything that does arrive waits for your approval. Turn it on to add an app, then off again.'),
     toggle('youtube_blocked', 'Block YouTube', 'Blocks the app and the site.'),
     toggle('bedtime_enabled', 'Bedtime', 'Pauses apps overnight. Calls always work.'),
     // FR-5.6. Last in the card and worded as what it costs, because it is the only switch here
@@ -965,7 +1006,17 @@ function renderRules(data) {
         id: 'quota', type: 'number', min: '0', max: '1440', inputmode: 'numeric', value: p.daily_limit_minutes,
         onchange: (e) => save({ daily_limit_minutes: Number(e.target.value) }, 'Daily limit'),
       })),
-    el('p', { class: 'muted', text: 'Times are in ' + p.timezone + '.' }));
+    // Editable, not prose. It was one line reading "Times are in Europe/Zurich." over a value the
+    // console could not change — and this is the field every other time on the screen is measured
+    // against: bedtime, the daily reset, and therefore the quota. A family that moves, or a policy
+    // row created with the server's default rather than theirs, had no way to correct it.
+    el('div', {}, el('label', { for: 'tz', text: 'Time zone' }),
+      el('input', {
+        id: 'tz', type: 'text', value: p.timezone || '', placeholder: 'Europe/Zurich',
+        autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false',
+        onchange: (e) => save({ timezone: e.target.value.trim() }, 'Time zone'),
+      }),
+      el('p', { class: 'muted', text: 'Bedtime and the daily reset use this zone. An IANA name \u2014 the server refuses anything it cannot look up, so a typo is answered rather than saved.' })));
 
   const domains = el('div', { class: 'card full' },
     el('div', { class: 'card-head' }, el('h2', { text: 'Blocked websites' })),
@@ -1011,7 +1062,33 @@ function renderRules(data) {
         ? 'Names resolved through ' + p.dns_host + '. A resolver only sees names, so it cannot remove advertising an app fetches over its own connection.'
         : 'Empty: the phone uses the network\u2019s own resolver. Leaving it empty is fine \u2014 a DNS resolver cannot see, and so cannot remove, advertising served inside an app.' })));
 
-  const cards = [rules, bedtime, domains];
+  // FR-6.6 to FR-6.9. Its own card rather than a switch in Rules, because it is the only setting
+  // here that needs a second value to do anything at all — a switch with no list is a switch that
+  // silently filters nothing, and the phone reports exactly that back (see the Home card).
+  const adfilter = el('div', { class: 'card full' },
+    el('div', { class: 'card-head' }, el('h2', { text: 'Advertising inside apps' })),
+    toggle('ad_filter', 'Filter advertising and trackers',
+      'Runs on the phone itself, so it reaches advertising inside games and apps — which is where most of it is.'),
+    el('div', {}, el('label', { for: 'adlist', text: 'Filter list' }),
+      el('input', {
+        id: 'adlist', type: 'text', value: p.ad_filter_list_url || '', placeholder: 'https://…',
+        autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false',
+        onchange: (e) => save({ ad_filter_list_url: e.target.value.trim() }, 'Filter list'),
+      }),
+      // FamilyGuard ships the fetcher and never the list: the good lists are GPL-3.0 and this is an
+      // MIT project, so the URL is offered and the bytes stay where their licence put them.
+      !p.ad_filter_list_url
+        ? el('button', {
+          class: 'btn btn-quiet', type: 'button', text: 'Use AdGuard’s list',
+          onclick: () => save({ ad_filter_list_url: AD_FILTER_SUGGESTED_LIST }, 'Filter list'),
+        })
+        : null,
+      el('p', { class: 'muted', text: p.ad_filter_list_url
+        ? 'The phone fetches this list once a day and filters against it locally. FamilyGuard does not host it.'
+        : 'Without a list there is nothing to filter, so the switch above does nothing until one is set. Any AdGuard- or hosts-style list works.' })),
+    el('p', { class: 'muted', text: 'The phone routes its own traffic through FamilyGuard to do this, and blocks by name only — it never reads the contents of a connection. Some games that pay themselves with adverts stop at the point where the advert would play; that is the trade.' }));
+
+  const cards = [rules, bedtime, domains, adfilter];
   // Rules are a property of the child and are saved whether or not a phone exists to carry them, so
   // this screen stays fully usable — it just says so, rather than letting a parent set a bedtime and
   // wonder why nothing happened.

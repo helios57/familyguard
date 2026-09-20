@@ -30,10 +30,11 @@ ANDROID="$ROOT/android-dpc"
 GRADLEW="$ANDROID/gradlew"
 INSTRUMENTED="$ROOT/tests/android/instrumented.sh"
 SELF_UPDATE="$ROOT/tests/android/self-update.sh"
+REALTUN="$ANDROID/tools/realtun/run.sh"
 IMAGE_SMOKE="$ROOT/tests/image/smoke.sh"
 MANIFESTS="$ROOT/tests/manifests/render.sh"
 
-ALL_LAYERS=(secret-scan backend manifests image e2e android-unit android-instrumented android-self-update)
+ALL_LAYERS=(secret-scan backend manifests image e2e android-unit android-realtun android-instrumented android-self-update)
 
 usage() {
 	printf 'layers: %s\n' "${ALL_LAYERS[*]}"
@@ -297,6 +298,50 @@ run_android_unit() {
 	esac
 }
 
+# --------------------------------------------------------- android-realtun ----
+#
+# The ad filter against a REAL Linux TCP/IP stack: a real TUN device, a real `curl` as the app, a
+# real Python TLS server as the destination, and the filter's own code between them reading the SNI
+# out of a real ClientHello.
+#
+# It is here because the layer above it structurally cannot answer the question. Every unit test of
+# the packet machine drives a fixture, and a fixture cannot tell a working tunnel from one that
+# hangs: a sequence number one out, a window that never reopens, or a byte of the hello lost while
+# deciding all produce a connection that simply stops, and it is the PEER's stack that notices, not
+# ours. So a green from the JVM layer is a statement about our arithmetic and nothing about whether
+# a phone can browse.
+#
+# It was also unregistered here until 2026-09-20, which is this repository's own recurring defect —
+# a control that exists, passes, and is invoked by nothing. It ran when someone remembered it.
+#
+# Needs root (for `unshare -n`, the TUN device and iptables), so on a machine where `sudo` will
+# prompt or refuse it reports NOT MEASURED with that reason rather than a pass. `-n` is passed to
+# probe non-interactively: a run that blocks on a password prompt inside a sweep is worse than one
+# that says it could not measure.
+run_android_realtun() {
+	section "android-realtun: the ad filter against a real kernel, a real curl and a real TLS server"
+	local why
+	if why="$(android_missing)"; then
+		record android-realtun "NOT MEASURED" "$why"
+		return
+	fi
+	if [ ! -x "$REALTUN" ]; then
+		record android-realtun "NOT MEASURED" "$REALTUN is missing or not executable"
+		return
+	fi
+	if ! sudo -n true 2>/dev/null; then
+		record android-realtun "NOT MEASURED" \
+			"this user cannot sudo without a prompt; the TUN device, the namespace and iptables all need root"
+		return
+	fi
+	"$REALTUN"
+	case $? in
+	0) record android-realtun "PASS" "both arms: the named host was reset, the other completed a real handshake" ;;
+	2) record android-realtun "NOT MEASURED" "the harness reported it could not run — its own reason is above" ;;
+	*) record android-realtun "FAIL" "" ;;
+	esac
+}
+
 # Reads the JUnit XML back and answers three questions the exit status cannot: did anything run, did
 # every class that exists report, and does the XML itself admit a failure. Prints one line; exits 0
 # when the run is fully accounted for and 1 when it is not.
@@ -458,6 +503,7 @@ wants manifests && run_manifests
 wants image && run_image
 wants e2e && run_e2e
 wants android-unit && run_android_unit
+wants android-realtun && run_android_realtun
 wants android-instrumented && run_android_instrumented
 wants android-self-update && run_android_self_update
 

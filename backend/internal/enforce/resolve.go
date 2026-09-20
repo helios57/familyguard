@@ -179,6 +179,8 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 			BedtimeStart:          pol.BedtimeStart,
 			BedtimeEnd:            pol.BedtimeEnd,
 			DNSHost:               pol.DNSHost,
+			AdFilter:              pol.AdFilter,
+			AdFilterListURL:       pol.AdFilterListURL,
 			Timezone:              pol.Timezone,
 			Version:               pol.Version,
 			BlockedPackages:       blocked,

@@ -149,7 +149,8 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 		        COALESCE(s.battery_level, NULL), COALESCE(s.charging, NULL), COALESCE(s.screen_on, NULL),
 		        COALESCE(s.connectivity, ''), COALESCE(s.policy_version, 0), s.last_seen_at,
 		        COALESCE(s.app_version_name, ''), COALESCE(s.app_version_code, 0), s.usage_access,
-		        COALESCE(s.update_error, ''), s.update_error_at, s.power_exempt, s.exact_alarms
+		        COALESCE(s.update_error, ''), s.update_error_at, s.power_exempt, s.exact_alarms,
+		        s.ad_filter_rules, s.ad_filter_fetched_at, s.ad_filter_running
 		   FROM devices d
 		   LEFT JOIN device_state s ON s.device_id = d.id
 		  WHERE ($1::uuid IS NULL OR d.child_id = $1)
@@ -169,7 +170,8 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 			&d.State.Connectivity, &d.State.PolicyVersion, &d.State.LastSeenAt,
 			&d.State.AppVersionName, &d.State.AppVersionCode, &d.State.UsageAccess,
 			&d.State.UpdateError, &d.State.UpdateErrorAt,
-			&d.State.PowerExempt, &d.State.ExactAlarms); err != nil {
+			&d.State.PowerExempt, &d.State.ExactAlarms,
+			&d.State.AdFilterRules, &d.State.AdFilterFetchedAt, &d.State.AdFilterRunning); err != nil {
 			return nil, err
 		}
 		d.State.DeviceID = d.ID
@@ -225,8 +227,9 @@ func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceSt
 		`INSERT INTO device_state (device_id, battery_level, charging, screen_on, connectivity, policy_version,
 		                           app_version_name, app_version_code, usage_access, update_error,
 		                           power_exempt, exact_alarms,
+		                           ad_filter_rules, ad_filter_fetched_at, ad_filter_running,
 		                           update_error_at, last_seen_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, ''), $11, $12,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, ''), $11, $12, $13, $14, $15,
 		         CASE WHEN COALESCE($10, '') = '' THEN NULL ELSE NOW() END, NOW(), NOW())
 		 ON CONFLICT (device_id) DO UPDATE SET
 		     battery_level  = COALESCE(EXCLUDED.battery_level, device_state.battery_level),
@@ -251,6 +254,13 @@ func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceSt
 		     -- the diagnosis rather than the symptom.
 		     power_exempt   = COALESCE(EXCLUDED.power_exempt, device_state.power_exempt),
 		     exact_alarms   = COALESCE(EXCLUDED.exact_alarms, device_state.exact_alarms),
+		     -- Same COALESCE rule again. A zero here is a real measurement — a phone whose filter
+		     -- is on and whose list compiled to nothing — and it must survive an older build's
+		     -- heartbeat, because it is the one number that separates "the filter is on" from
+		     -- "the filter is working".
+		     ad_filter_rules      = COALESCE(EXCLUDED.ad_filter_rules, device_state.ad_filter_rules),
+		     ad_filter_fetched_at = COALESCE(EXCLUDED.ad_filter_fetched_at, device_state.ad_filter_fetched_at),
+		     ad_filter_running    = COALESCE(EXCLUDED.ad_filter_running, device_state.ad_filter_running),
 		     -- Three values, and each one means something different. NULL is a DPC that does not
 		     -- report the field, and leaves what is stored alone: an older build's heartbeat must
 		     -- not erase a newer build's report. '' is a phone saying it has nothing to report, and
@@ -268,7 +278,8 @@ func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceSt
 		     updated_at     = NOW()`,
 		deviceID, st.BatteryLevel, st.Charging, st.ScreenOn, st.Connectivity, st.PolicyVersion,
 		st.AppVersionName, st.AppVersionCode, st.UsageAccess, st.ReportedUpdateError,
-		st.PowerExempt, st.ExactAlarms)
+		st.PowerExempt, st.ExactAlarms,
+		st.AdFilterRules, st.AdFilterFetchedAt, st.AdFilterRunning)
 	return err
 }
 
@@ -291,11 +302,12 @@ func (s *Store) GetDeviceState(ctx context.Context, deviceID uuid.UUID, offlineA
 	err := s.pool.QueryRow(ctx,
 		`SELECT device_id, battery_level, charging, screen_on, connectivity, policy_version, last_seen_at,
 		        app_version_name, app_version_code, usage_access, update_error, update_error_at,
-		        power_exempt, exact_alarms
+		        power_exempt, exact_alarms, ad_filter_rules, ad_filter_fetched_at, ad_filter_running
 		   FROM device_state WHERE device_id = $1`, deviceID).
 		Scan(&st.DeviceID, &st.BatteryLevel, &st.Charging, &st.ScreenOn, &st.Connectivity,
 			&st.PolicyVersion, &st.LastSeenAt, &st.AppVersionName, &st.AppVersionCode,
-			&st.UsageAccess, &st.UpdateError, &st.UpdateErrorAt, &st.PowerExempt, &st.ExactAlarms)
+			&st.UsageAccess, &st.UpdateError, &st.UpdateErrorAt, &st.PowerExempt, &st.ExactAlarms,
+			&st.AdFilterRules, &st.AdFilterFetchedAt, &st.AdFilterRunning)
 	if err != nil {
 		return nil, mapErr(err)
 	}

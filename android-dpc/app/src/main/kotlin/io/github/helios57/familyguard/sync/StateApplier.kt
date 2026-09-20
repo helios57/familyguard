@@ -1,6 +1,9 @@
 package io.github.helios57.familyguard.sync
 
 import io.github.helios57.familyguard.enforce.DesiredState
+import io.github.helios57.familyguard.filter.FilterListState
+import io.github.helios57.familyguard.filter.RefreshResult
+import io.github.helios57.familyguard.policy.AlwaysOnVpnOutcome
 import io.github.helios57.familyguard.policy.AppSuspensionManager
 import io.github.helios57.familyguard.policy.ChromePolicyManager
 import io.github.helios57.familyguard.policy.DeviceOwnerPolicy
@@ -216,6 +219,123 @@ class DnsApplier(private val dns: DnsPolicyManager) : StateApplier {
 }
 
 /**
+ * Everything the ad filter needs from the device, behind one seam so [FilterApplier] is testable.
+ *
+ * One interface rather than four injected lambdas, because these five calls have an *order* that
+ * matters and an interface is where that order can be asserted — see [FilterApplier].
+ */
+interface FilterGateway {
+    /** Persist what the parent asked for, so a service the platform restarts comes back with it. */
+    fun remember(enabled: Boolean, listUrl: String)
+
+    /** How many rules are compiled on this device right now, and from which url. */
+    fun listState(): FilterListState
+
+    /** Fetch the list. Called only when [FilterApplier] has decided it is due. */
+    fun refresh(): RefreshResult
+
+    /** Make this app the always-on VPN, or clear it. Never with lockdown. */
+    fun setAlwaysOn(enabled: Boolean): AlwaysOnVpnOutcome
+
+    /** Start the tunnel, or stop it. Both are idempotent. */
+    fun setRunning(running: Boolean)
+}
+
+/**
+ * Applies `ad_filter` and `ad_filter_list_url` (FR-6.6 to FR-6.9).
+ *
+ * The order below is the whole applier, and each step is ordered against a failure it would
+ * otherwise cause:
+ *
+ *  1. **Persist first.** The service can be restarted by the platform at any moment, including
+ *     between two of these steps, and it reads what it should be doing from storage. Persisting
+ *     last would leave a window where a restart brings the filter back up for a child whose parent
+ *     has just switched it off.
+ *  2. **Switch off before anything else, and return.** Turning the filter off must be the shortest
+ *     path in this file, because it is the path a parent takes when something is wrong. It does not
+ *     wait for a list, a network or a read-back.
+ *  3. **Fetch the list before starting the tunnel.** [io.github.helios57.familyguard.filter.TunnelPlan]
+ *     refuses to run with an empty index, so starting first would mean the first sync after a
+ *     parent switches the filter on leaves it visibly off.
+ *  4. **Always-on before start.** Always-on is what grants the VPN consent this app can never
+ *     obtain by asking, so a start before it is a start the platform refuses.
+ *
+ * A list that could not be fetched is a reported problem **and** a tunnel that still starts if
+ * something is cached: an out-of-date list filters nearly as well as a current one, and refusing to
+ * run over a failed refresh would turn a captive portal into a filter that is off.
+ */
+class FilterApplier(
+    private val gateway: FilterGateway,
+    private val now: () -> Long = System::currentTimeMillis,
+    private val refreshInterval: Long = REFRESH_INTERVAL_MILLIS,
+) : StateApplier {
+
+    override fun apply(state: DesiredState): ApplyOutcome {
+        gateway.remember(state.adFilter, state.adFilterListUrl)
+
+        if (!state.adFilter) {
+            gateway.setRunning(false)
+            val cleared = gateway.setAlwaysOn(false)
+            return ApplyOutcome(
+                "off (${cleared.summary})",
+                cleared.failure?.let { mapOf("always_on" to it) } ?: emptyMap(),
+            )
+        }
+
+        val problems = LinkedHashMap<String, String>()
+        var listState = gateway.listState()
+        if (isRefreshDue(listState, state.adFilterListUrl, now(), refreshInterval)) {
+            when (val result = gateway.refresh()) {
+                is RefreshResult.Updated -> listState = result.state
+                is RefreshResult.Unchanged -> listState = result.state
+                is RefreshResult.Failed -> problems["list"] = result.reason
+            }
+        }
+
+        val alwaysOn = gateway.setAlwaysOn(true)
+        alwaysOn.failure?.let { problems["always_on"] = it }
+        gateway.setRunning(true)
+
+        return ApplyOutcome("on rules=${listState.rules} (${alwaysOn.summary})", problems)
+    }
+
+    companion object {
+        /**
+         * How long a cached list is good for.
+         *
+         * A day rather than every sync: the body is several megabytes and a sync happens whenever a
+         * parent changes anything, so re-fetching per sync would be a multi-megabyte download every
+         * time somebody moved a bedtime by ten minutes. The lists themselves are published daily at
+         * best, so this loses nothing.
+         */
+        const val REFRESH_INTERVAL_MILLIS = 24L * 60 * 60 * 1000
+
+        /**
+         * Whether to go to the network for the list.
+         *
+         * Pure and public so the policy is one testable expression rather than a condition buried in
+         * an applier. A changed url is due **immediately**: that is a parent acting, and making them
+         * wait a day for it would read as the console not working.
+         */
+        fun isRefreshDue(
+            state: FilterListState,
+            url: String,
+            now: Long,
+            interval: Long = REFRESH_INTERVAL_MILLIS,
+        ): Boolean {
+            if (url.isBlank()) return false
+            if (state.isEmpty()) return true
+            if (state.url != url) return true
+            // A clock that has moved backwards — a phone that just learned the real time, which is
+            // the normal state of a device minutes after a factory reset — must not park the next
+            // fetch a day in the future.
+            if (now < state.fetchedAt) return true
+            return now - state.fetchedAt >= interval
+        }
+    }
+}
+
+/**
  * The appliers, in the order that decides what a half-applied phone is left enforcing.
  *
  * Managed apps first, when there are any: an application installed in this pass is then suspended
@@ -241,11 +361,16 @@ class DnsApplier(private val dns: DnsPolicyManager) : StateApplier {
  * empty declared set is indistinguishable from "the parent withdrew everything" — a parent
  * unlocking a phone in an emergency would have every application this system installed removed
  * from it. Releasing a lock is not a statement about which apps a child should have.
+ * @param filter the FR-6.6 pass, or null to leave the ad filter exactly as it is. **The recovery
+ * release passes null, and must** — for the same reason as [managedApps]: its released state
+ * carries `ad_filter = false` by default, and a parent unlocking a phone in an emergency has not
+ * asked for the filter to be switched off.
  */
 fun deviceApplier(
     policy: DeviceOwnerPolicy?,
     serverUrl: String,
     managedApps: StateApplier? = null,
+    filter: StateApplier? = null,
 ): StateApplier {
     if (policy == null) return NoDeviceOwnerApplier
     return CompositeApplier(
@@ -255,6 +380,10 @@ fun deviceApplier(
             add("apps" to AppApplier(policy.apps))
             add("chrome" to ChromeApplier(policy.chrome, ChromeApplier.allowlistFor(serverUrl)))
             add("dns" to DnsApplier(policy.dns))
+            // After DNS and before the lock: it is the other applier that can be refused for a
+            // reason outside the device (a list server that is not answering), and like DNS a
+            // refusal there must not cost the rest of the pass.
+            filter?.let { add("filter" to it) }
             add("lock" to LockApplier(policy.lock))
         }
     )

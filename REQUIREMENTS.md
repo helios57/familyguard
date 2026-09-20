@@ -200,6 +200,15 @@ Applied at provisioning and re-applied on every boot:
   milliseconds and the name arrives in clear text. This is the one deliberate breakage in the
   feature, and it is the price of covering the advertising libraries that reach for QUIC first. It
   costs the fallback delay on the first connection to a host, once.
+- FR-6.10 A parent can switch the filter on and set its list **from the console**, and the console
+  shows what the **phone measured** rather than what was asked for: whether a tunnel is actually up,
+  how many rules it loaded, and when it last fetched the list. The two are separate questions and
+  can disagree — a switch that is on and a tunnel that never came up is the state a parent has to be
+  able to see, and the one a console that echoes the setting back would hide. Every one of the three
+  is three-valued: *not reported* is a phone that has not said, never a phone with the filter off,
+  because the Play build carries no filter to report on at all (FR-15.8). A list URL must be
+  `https://`; anything else is refused by the console and by the phone, since whatever can rewrite a
+  plain-HTTP list decides what the phone refuses to connect to — including, once, this control plane.
 
 ### FR-7 YouTube killswitch
 One toggle per child that blocks YouTube across every layer available to us:
@@ -315,6 +324,15 @@ time on a device that is already enrolled and already hardened.
   nothing about whether the install happened. Without this requirement every failure downstream of
   it is invisible — the command shows acknowledged, the phone keeps reporting, and the version
   simply never changes, which looks identical to a phone that is already current.
+- FR-15.8 There are **two builds of this app and they are not the same binary**, because Google Play
+  forbids what each other half needs. Play's Device and Network Abuse policy bans ad filtering
+  outright, and Play refuses the `UPDATE_PACKAGES_WITHOUT_USER_ACTION` declaration that FR-15.6
+  rests on — measured, with no declaration form and no appeal. So the self-hosted build carries the
+  ad filter and updates itself, and the Play build carries neither. The difference is a build flag
+  (`-PplayBuild=true`), not a fork: one source tree, one signer, one set of tests, and the feature
+  compiled out at its edges rather than branched around. A phone running the Play build reports
+  *nothing* about the filter — never "off" — so FR-6.10's three-valued rule is what keeps the
+  console honest about which build a phone is running.
 
 ### FR-16 Applications the parent chooses (managed apps)
 A locked-down phone cannot install anything, which is the point — and it is also why a child ends

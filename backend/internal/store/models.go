@@ -140,6 +140,22 @@ type DeviceState struct {
 	PowerExempt *bool `json:"power_exempt,omitempty"`
 	ExactAlarms *bool `json:"exact_alarms,omitempty"`
 
+	// AdFilterRules, AdFilterFetchedAt and AdFilterRunning are what the PHONE says about its ad
+	// filter (FR-6.6), which is a different question from Policy.AdFilter — that one says a parent
+	// turned the switch on.
+	//
+	// The switch being on does not mean the phone has a list, that the list compiled, or that the
+	// tunnel came up, and every one of those fails quietly: a captive portal serves a login page
+	// with a perfectly good 200, the watchdog stands down a tunnel that carried nothing, a platform
+	// can decline always-on. Without these the console would show "Ad filter: on" over a phone
+	// filtering nothing.
+	//
+	// Nil is "this phone has not said" — an older DPC does not send them — and is a third state,
+	// distinct from zero rules. Only a measured zero is a finding.
+	AdFilterRules     *int       `json:"ad_filter_rules,omitempty"`
+	AdFilterFetchedAt *time.Time `json:"ad_filter_fetched_at,omitempty"`
+	AdFilterRunning   *bool      `json:"ad_filter_running,omitempty"`
+
 	// AppVersionName and AppVersionCode are the DPC build actually running on the phone, as the
 	// phone reports it. They exist because the APK this server hosts is installed out of band —
 	// it is a file on the node, not part of the image — so before this, nothing anywhere could
@@ -180,16 +196,25 @@ type Policy struct {
 	// AllowUninstall withholds no_uninstall_apps, so apps can be removed over adb or from Settings
 	// (FR-5.7). False everywhere it is not deliberately turned on: uninstalling is how a child
 	// escapes a suspension.
-	AllowUninstall    bool      `json:"allow_uninstall"`
-	YouTubeBlocked    bool      `json:"youtube_blocked"`
-	DailyLimitMinutes int       `json:"daily_limit_minutes"`
-	BedtimeEnabled    bool      `json:"bedtime_enabled"`
-	BedtimeStart      string    `json:"bedtime_start"`
-	BedtimeEnd        string    `json:"bedtime_end"`
-	DNSHost           string    `json:"dns_host"`
-	Timezone          string    `json:"timezone"`
-	Version           int64     `json:"version"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	AllowUninstall    bool   `json:"allow_uninstall"`
+	YouTubeBlocked    bool   `json:"youtube_blocked"`
+	DailyLimitMinutes int    `json:"daily_limit_minutes"`
+	BedtimeEnabled    bool   `json:"bedtime_enabled"`
+	BedtimeStart      string `json:"bedtime_start"`
+	BedtimeEnd        string `json:"bedtime_end"`
+	DNSHost           string `json:"dns_host"`
+	// AdFilter runs the on-device advertising and tracker filter (FR-6.6 to FR-6.9): a local
+	// VpnService that reads the server name out of a TLS ClientHello and resets what a list names.
+	// It is the only layer in this product that reaches an advertisement inside a game, because an
+	// ad SDK that ships its server's address never asks a resolver for a name.
+	AdFilter bool `json:"ad_filter"`
+	// AdFilterListURL is where the phone fetches that list. A url and nothing else — this project
+	// ships the fetcher and never the data. Empty means the filter cannot run whatever AdFilter
+	// says, which is a state the engine computes rather than one the console has to remember.
+	AdFilterListURL string    `json:"ad_filter_list_url"`
+	Timezone        string    `json:"timezone"`
+	Version         int64     `json:"version"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type AppRule struct {

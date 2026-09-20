@@ -108,6 +108,8 @@ func TestVectorsCoverTheEnforcementRequirements(t *testing.T) {
 		"FR-5.6",  // developer options and adb, as a switch
 		"FR-6.2",  // per-child filtering endpoint
 		"FR-6.4",  // domain removal restores access
+		"FR-6.6",  // the on-device ad filter, and the list url that gates it
+		"FR-6.7",  // the tunnel a parent can always switch off
 		"FR-7.1",  // youtube apps
 		"FR-7.2",  // youtube dns
 		"FR-7.3",  // youtube browser blocklist

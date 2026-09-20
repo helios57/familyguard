@@ -142,6 +142,18 @@ type heartbeatRequest struct {
 	// above it: a phone that has not been updated must not be able to clear a finding.
 	PowerExempt *bool `json:"power_exempt"`
 	ExactAlarms *bool `json:"exact_alarms"`
+
+	// AdFilterRules, AdFilterFetchedAt and AdFilterRunning are what the phone measured about its
+	// own ad filter (FR-6.6) — how many rules it has compiled, when it fetched them, and whether
+	// the tunnel is actually up. Pointers, absent from an older DPC, and absence carried through
+	// as absence for the same reason as everything above: a phone that has not been updated must
+	// not be able to clear a finding.
+	//
+	// AdFilterFetchedAt is RFC 3339 as the phone's clock reported it, so a phone whose clock is
+	// wrong shows a wrong time rather than silently showing none.
+	AdFilterRules     *int    `json:"ad_filter_rules"`
+	AdFilterFetchedAt *string `json:"ad_filter_fetched_at"`
+	AdFilterRunning   *bool   `json:"ad_filter_running"`
 }
 
 // maxUpdateErrorRunes bounds what one phone may write into the field a parent reads.
@@ -166,6 +178,34 @@ func clampUpdateError(reported *string) *string {
 		text = string(r[:maxUpdateErrorRunes])
 	}
 	return &text
+}
+
+// clampRuleCount refuses a negative rule count rather than storing one.
+//
+// Not defensiveness for its own sake: the column is what a parent reads as "your filter is working",
+// and a negative number there would render as a number rather than as nonsense. A nil stays nil —
+// the three states matter here as much as anywhere else in this file.
+func clampRuleCount(reported *int) *int {
+	if reported == nil || *reported < 0 {
+		return nil
+	}
+	return reported
+}
+
+// parseReportedTime turns the phone's RFC 3339 stamp into a time, or nil.
+//
+// A stamp that will not parse is dropped rather than stored as the zero time: the zero time renders
+// as "1 January year one", which reads as a bug in the console rather than as a phone that sent
+// something unusable.
+func parseReportedTime(reported *string) *time.Time {
+	if reported == nil || strings.TrimSpace(*reported) == "" {
+		return nil
+	}
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(*reported))
+	if err != nil {
+		return nil
+	}
+	return &parsed
 }
 
 // heartbeat records liveness and tells the device whether it is behind.
@@ -196,6 +236,10 @@ func (s *Server) heartbeat(c *gin.Context) {
 		UsageAccess:    req.UsageAccess,
 		PowerExempt:    req.PowerExempt,
 		ExactAlarms:    req.ExactAlarms,
+
+		AdFilterRules:     clampRuleCount(req.AdFilterRules),
+		AdFilterFetchedAt: parseReportedTime(req.AdFilterFetchedAt),
+		AdFilterRunning:   req.AdFilterRunning,
 
 		ReportedUpdateError: clampUpdateError(req.UpdateError),
 	}); err != nil {
