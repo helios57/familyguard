@@ -399,3 +399,20 @@ type RecoverySecret struct {
 	Iterations int
 	Hash       []byte
 }
+
+// UsageSession is one stretch of one package being in the foreground, as the platform timestamped
+// it on the phone (FR-3.7).
+//
+// Milliseconds are deliberately not carried to the console: the platform's own event timestamps are
+// not that precise, and a timeline that printed 09:12:04.318 would be claiming a precision nobody
+// measured. Seconds is what the phone sends and what a parent reads.
+type UsageSession struct {
+	PackageName string    `json:"package_name"`
+	StartedAt   time.Time `json:"started_at"`
+	EndedAt     time.Time `json:"ended_at"`
+	Seconds     int       `json:"seconds"`
+	// Joined from the device's inventory, exactly as UsageSample does it, and empty for a package
+	// that has since been uninstalled.
+	Label     string `json:"label"`
+	SystemApp bool   `json:"system_app"`
+}

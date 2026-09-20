@@ -41,6 +41,12 @@ const state = {
   // the re-render a server event triggers. A parent who has typed "tik" into the app search does
   // not want a heartbeat to clear it.
   appFilter: { q: '', rule: 'all', system: false },
+  // Which day the Activity timeline is showing. Null means "whatever the child's today is", which
+  // only the server can answer — the child's timezone is policy, and the parent may be in another.
+  // `timelineToday` is the server's answer to that, remembered so the forward step knows where to
+  // stop rather than walking into empty days that were never going to have anything in them.
+  timelineDay: null,
+  timelineToday: null,
 };
 
 /* ---- session ------------------------------------------------------------ */
@@ -227,6 +233,15 @@ const fmtMinutes = (m) => {
   return h ? h + ' h ' + (m % 60) + ' min' : m + ' min';
 };
 
+/* One sitting's length. Seconds below a minute rather than "0 min": this is a single interval with
+ * a start and an end a parent can see on the strip, and rounding it to nothing would contradict the
+ * picture next to it. Whole days' worth of usage still goes through fmtMinutes. */
+const fmtDuration = (seconds) => {
+  const s = Math.max(0, Math.round(seconds || 0));
+  if (s < 60) return s + ' s';
+  return fmtMinutes(Math.round(s / 60));
+};
+
 /* ---- chrome: one navigation, in two places ------------------------------ */
 
 /* `#mainnav` and `#child-switcher` are single elements that MOVE between the header row and the
@@ -373,6 +388,10 @@ function selectChild(id) {
   // A different child is a different set of apps; carrying the previous child's search across is a
   // filter the parent did not ask for and cannot see the cause of.
   state.appFilter = { q: '', rule: 'all', system: false };
+  // Same reasoning as the filter above, and one more: a day that exists for one child's timezone
+  // may not be the other's today at all.
+  state.timelineDay = null;
+  state.timelineToday = null;
   renderChildSwitcher();
   closeDrawer();
   refresh();
@@ -1855,13 +1874,22 @@ function renderApps(data) {
 async function loadActivity() {
   const devices = await api('/devices?child_id=' + encodeURIComponent(state.childId));
   const list = (devices.devices || []).filter((d) => d.enrolled);
-  const [usage, locations, audit, policy] = await Promise.all([
+  const day = state.timelineDay ? '?day=' + encodeURIComponent(state.timelineDay) : '';
+  const [usage, timelines, locations, audit, policy] = await Promise.all([
     Promise.all(list.map((d) => api('/devices/' + d.id + '/usage').catch(() => null))),
+    Promise.all(list.map((d) => api('/devices/' + d.id + '/usage/timeline' + day).catch(() => null))),
     Promise.all(list.map((d) => api('/devices/' + d.id + '/locations?limit=5').catch(() => null))),
     api('/audit?limit=40').catch(() => ({ entries: [] })),
     api('/children/' + state.childId + '/policy'),
   ]);
-  return { devices: list, usage, locations, audit: audit.entries || [], policy };
+  // The server decides what "today" is, in the child's timezone. Asked once, on the first load that
+  // did not name a day, and never overwritten — a parent who has stepped back three days must not
+  // have the forward bound quietly redefined under them by a background refresh.
+  if (!state.timelineDay) {
+    const answered = timelines.find((t) => t && t.day);
+    if (answered) state.timelineToday = answered.day;
+  }
+  return { devices: list, usage, timelines, locations, audit: audit.entries || [], policy };
 }
 
 /**
@@ -1904,6 +1932,159 @@ function appUsageList(packages) {
       : null);
 }
 
+/* ---- the day as a timeline (FR-3.7) -------------------------------------- */
+
+/** `2026-09-20` plus or minus whole days, done in UTC where a day is always 86400000 ms. */
+function shiftDay(day, by) {
+  const [y, m, d] = day.split('-').map(Number);
+  const at = new Date(Date.UTC(y, m - 1, d) + by * 86400000);
+  return at.toISOString().slice(0, 10);
+}
+
+/**
+ * A stable colour per package, so the same app is the same colour every time the card is drawn.
+ *
+ * Derived from the name rather than from the row's position: position changes with the day, and a
+ * strip where yesterday's blue is today's orange teaches a parent nothing. Mid lightness and modest
+ * saturation so it reads on both themes, which are the console's two grounds.
+ */
+function packageHue(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+  return 'hsl(' + h + ' 58% 48%)';
+}
+
+/**
+ * What ran when, for one device and one day.
+ *
+ * **Two answers, not one.** The card above this one says how long each app was used; this one says
+ * when. "Ninety minutes of YouTube" is the same number whether it was one afternoon or a phone
+ * picked up thirty times, and a parent who wants to know what their child was doing at nine
+ * o'clock cannot read it off a total at all.
+ *
+ * The strip is SHAPE and the list is the MEASURE, deliberately. A 24-hour strip on a 320-pixel
+ * phone gives about 13 pixels per hour, so a four-minute sitting is under a pixel wide — drawn
+ * honestly it would be invisible, and drawn to a minimum width it would be a lie about duration.
+ * So the strip carries a minimum width and says so, and every number a parent might act on comes
+ * from the list underneath, which is text.
+ *
+ * `from`/`to` come from the server rather than being computed here, and the positions are fractions
+ * of that span. That is what makes the 23- and 25-hour days right: on the morning the clocks go
+ * forward the day really is 23 hours long, and a strip built from a fixed 24 would place every
+ * afternoon sitting an hour off.
+ */
+function usageTimelineCard(dev, timeline) {
+  if (!timeline) {
+    return el('div', { class: 'card' },
+      el('div', { class: 'card-head' }, el('h2', { text: 'What ran when' })),
+      el('p', { class: 'warn', text: 'The timeline for ' + dev.name + ' could not be loaded. The totals above are unaffected.' }));
+  }
+
+  const sessions = timeline.sessions || [];
+  const from = Date.parse(timeline.from);
+  const to = Date.parse(timeline.to);
+  const span = Math.max(1, to - from);
+
+  // The child's timezone, not the parent's. A parent travelling reads their child's evening as an
+  // evening, and a browser that cannot resolve the zone name says so rather than silently drawing
+  // the parent's own hours onto the child's day.
+  let clock = null;
+  try {
+    const f = new Intl.DateTimeFormat([], {
+      timeZone: timeline.timezone, hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+    clock = (ms) => f.format(new Date(ms));
+  } catch (e) {
+    clock = null;
+  }
+  const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const hhmm = clock || ((ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+  // "14:55–14:55" reads as a bug rather than as a twenty-second sitting. Only the strip's titles can
+  // reach this: the list drops anything under a minute, and a sitting of a full minute always has a
+  // different minute at each end.
+  const range = (a, b) => (hhmm(a) === hhmm(b) ? hhmm(a) : hhmm(a) + '\u2013' + hhmm(b));
+
+  const pct = (ms) => Math.max(0, Math.min(100, ((ms - from) / span) * 100));
+  const blocks = sessions.map((s) => {
+    const left = pct(Date.parse(s.started_at));
+    const right = pct(Date.parse(s.ended_at));
+    return el('div', {
+      class: 'tl-block',
+      style: 'left:' + left.toFixed(3) + '%;width:' + Math.max(0, right - left).toFixed(3) + '%;background:' + packageHue(s.package_name),
+      title: range(Date.parse(s.started_at), Date.parse(s.ended_at)) + ' \u00b7 '
+        + (s.label || s.package_name) + ' \u00b7 ' + fmtDuration(s.seconds),
+    });
+  });
+
+  // Every three hours: eight labels fit a narrow phone, and each one lands on a real local hour
+  // even on a day that has 23 or 25 of them.
+  const ticks = [];
+  for (let t = from; t < to; t += 3 * 3600000) {
+    ticks.push(el('span', { class: 'tl-tick', style: 'left:' + pct(t).toFixed(3) + '%', text: hhmm(t) }));
+  }
+
+  const longEnough = sessions.filter((s) => s.seconds >= 60);
+  const brief = sessions.length - longEnough.length;
+  const total = sessions.reduce((sum, s) => sum + s.seconds, 0);
+
+  const step = (label, by, disabled) => el('button', {
+    class: 'btn btn-quiet', type: 'button', text: label, disabled: disabled || false,
+    'aria-label': by < 0 ? 'Previous day' : 'Next day',
+    onclick: () => { state.timelineDay = shiftDay(timeline.day, by); refresh(); },
+  });
+  const atToday = !!state.timelineToday && timeline.day >= state.timelineToday;
+
+  let body;
+  if (!sessions.length) {
+    // These two look identical on screen and have opposite remedies: one is a child who did not use
+    // their phone, the other is a device that is not reporting. Only the server can tell them
+    // apart, which is why it answers `ever_reported` on every request rather than on a second one.
+    body = timeline.ever_reported
+      ? el('p', { class: 'muted', text: 'Nothing was opened on ' + dev.name + ' on this day.' })
+      : el('p', { class: 'warn', text: dev.name + ' has never reported a sitting. The totals above are '
+          + 'still measured; the timeline needs a phone running a build that records them, which it '
+          + 'will send at its next sync after updating.' });
+  } else {
+    body = el('div', {},
+      el('div', {
+        class: 'tl-track', role: 'img',
+        'aria-label': sessions.length + ' sittings on ' + timeline.day + ', ' + fmtDuration(total) + ' in total',
+      }, blocks),
+      el('div', { class: 'tl-axis' }, ticks),
+      el('p', { class: 'muted', text: 'The strip shows when, not how much — very short sittings are '
+        + 'drawn wider than they were so they stay visible. The times below are exact.' }),
+      longEnough.length
+        ? el('ul', { class: 'list tl-list' }, longEnough.map((s) => el('li', {},
+            el('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + packageHue(s.package_name) }),
+            el('span', { class: 'label' },
+              el('b', { text: (s.label || s.package_name) }),
+              // The label is joined from the phone's inventory and is empty for an app that has
+              // since been uninstalled — the package name is the honest fallback, not a placeholder.
+              el('small', { text: hhmm(Date.parse(s.started_at)) + '–' + hhmm(Date.parse(s.ended_at))
+                + (s.label ? ' · ' + s.package_name : '') + (s.system_app ? ' · system' : '') })),
+            el('span', { class: 'badge', text: fmtDuration(s.seconds) }))))
+        : el('p', { class: 'muted', text: 'Every sitting on this day was under a minute.' }),
+      brief
+        ? el('p', { class: 'muted', text: brief + ' sitting(s) under a minute are drawn above but not listed.' })
+        : null);
+  }
+
+  return el('div', { class: 'card' },
+    el('div', { class: 'card-head' },
+      el('h2', { text: 'What ran when' }),
+      el('span', { class: 'badge', text: sessions.length + ' sitting(s)' })),
+    el('div', { class: 'toolbar tl-nav' },
+      step('\u25c0', -1, false),
+      // The device name belongs here rather than in the heading. A child with two phones gets two
+      // of these cards with the same title, and a parent reading "what ran when" over the wrong
+      // phone's day has no way to notice.
+      el('span', { class: 'muted', text: dev.name + ' \u00b7 ' + timeline.day + ' \u00b7 ' + timeline.timezone }),
+      step('\u25b6', 1, atToday)),
+    clock ? null : el('p', { class: 'warn', text: 'This browser does not know the timezone '
+      + timeline.timezone + ', so the times below are shown in ' + localZone + ' instead.' }),
+    body);
+}
+
 function renderActivity(data) {
   if (!data.devices.length) {
     return [emptyCard('◔', 'Nothing recorded yet',
@@ -1937,6 +2118,8 @@ function renderActivity(data) {
           : null,
         appUsageList(usage.packages || [])));
     }
+
+    cards.push(usageTimelineCard(dev, data.timelines[i]));
 
     const locs = data.locations[i];
     if (locs && (locs.locations || []).length) {

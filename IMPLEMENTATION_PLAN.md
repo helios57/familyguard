@@ -6810,3 +6810,152 @@ Cumulative: **66 probes, 65 red and one deliberate green.**
   the wide anonymous budget and not the four limiters.
 - **The other tabs still refresh everything on a write.** Only the path a parent uses a hundred
   times in a row was changed.
+
+---
+
+## Phase 30 — what ran when, not only how long (FR-3.7)
+
+> `I want the recording and precise tracking what app was running when for how long. This info
+> should also be shown in the web app (admin).`
+
+Phase 27 answered the first half of the owner's usage complaint — *"i dont see which app was used
+how long today"* — with a labelled, un-truncated totals list. This is the other half, and it is a
+different question. Ninety minutes of YouTube is the same number whether it was one afternoon or a
+phone picked up thirty times, and a parent who wants to know what their child was doing at nine
+o'clock cannot read it off a total at all.
+
+### 30.1 — the phone already computed it, and threw it away
+
+`SpanFolder.fold(events, windowEnd, carried)` returns `ForegroundWindow(closed, open)`, and `closed`
+carries **true starts** — the instant the app was actually opened, however many five-minute polls
+ago. That type and that guarantee exist because of the continuous-session defect (Phase 21: 4
+minutes credited for a 29-minute session), and its own KDoc already says two consumers want two
+different things from it:
+
+| consumer | wants | why |
+|---|---|---|
+| day totals | the part inside **this** window | crediting the true start again would count a session once per poll it survives |
+| the record | the **whole** interval | a two-hour film must not read as twenty-four five-minute sittings |
+
+Only the first existed. `UsageTracker.tick()` clamped `window.closed` into `measured` and dropped
+the originals on the next line. So the expensive half — folding platform transitions into sessions
+with true starts, across polls, across screen-off — was already correct and already tested; the
+work here is a second consumer of the same fold.
+
+### 30.2 — a sitting is an EVENT, so it is queued and acknowledged
+
+This is the one structural difference from everything else the phone reports, and it decides the
+whole design:
+
+| | day totals | sittings |
+|---|---|---|
+| shape | a running total | an interval that happened once |
+| a report that never arrives | repaired by the next one, which carries the same number plus more | **gone** |
+| server merge | `GREATEST(stored, reported)` | `ON CONFLICT … GREATEST` on `ended_at` only |
+| delivery | fire and re-note the day | durable queue + explicit acknowledge |
+
+`SessionLog` is that queue: encrypted prefs, `record(spans, now)` / `batch(limit)` /
+`acknowledge(sent)` / `dropped()`. It drops three things and **counts every one**, because a queue
+that silently throws work away is indistinguishable from a phone that measured nothing — sub-second
+spans (app transitions, and they round to zero seconds on the wire), anything past the server's
+backfill window (it can never be delivered), and the oldest when 2 000 is reached.
+
+`acknowledge` takes the **list**, not a count. "Forget the first n" agrees with it whenever the
+batch is still a prefix of the queue — which is almost always, and is why the obvious test for this
+passes against either implementation. They diverge when a `record` between the send and the
+acknowledgement **prunes**: the sent sittings are gone, and "the first n" then eats n that were
+never delivered.
+
+The batch rides on whichever outstanding day goes first, so one poll costs one request; a flush with
+sittings and no outstanding day sends them with an empty report, because a sitting held back until
+the child next picks up the phone is one a parent cannot see tonight.
+
+### 30.3 — intervals are stored whole, and the day is asked at read time
+
+`usage_sessions(device_id, package_name, started_at, ended_at, reported_at)`, PK on the first three.
+
+- **Never split at a midnight.** Splitting means deciding *whose* midnight — the phone's current
+  zone and the policy's can differ and can change between the measurement and the send. The reader
+  asks the overlap question instead (`ended_at > day_start AND started_at < day_end`) with the
+  child's timezone, which is also the only form that stays right when a family moves.
+- **The PK IS the idempotency.** A retry of the same sitting is the same row, and `GREATEST` on
+  `ended_at` means a second copy can lengthen it (the app was still open when the first went out)
+  and can never shorten it.
+- **`localDay` uses `AddDate(0, 0, 1)`, not `Add(24h)`.** On the morning the clocks go forward the
+  day really is 23 hours long, and a fixed 24 would clip the evening onto the next day.
+
+`GET /devices/:id/usage/timeline` answers `{day, timezone, from, to, sessions, ever_reported}`.
+`ever_reported` is asked on **every** request rather than on a second one: "nothing was opened
+today" and "this phone has never reported a sitting" look identical on screen and have opposite
+remedies, and only the server can tell them apart.
+
+### 30.4 — the console: the strip is shape, the list is the measure
+
+At 320 px a 24-hour track gives about 13 pixels an hour, so a four-minute sitting is under a pixel
+wide. Drawn honestly it is invisible; drawn to a minimum width it is a lie about duration. So the
+strip carries `min-width: 2px` **and says so in words**, and every number a parent might act on is
+text in the list below it. Sub-minute sittings are drawn and counted, never listed as "0 min".
+
+Positions are fractions of the server's own `from`/`to`, not of a fixed 24 hours — which is what
+makes the 23- and 25-hour days right — and every clock face is formatted with
+`Intl.DateTimeFormat({timeZone: <the child's>})`, so a parent in another country reads their child's
+evening as an evening. A browser that cannot resolve the zone says which zone it used instead.
+
+Colours are hashed from the package name, so the same app is the same colour every time the card is
+drawn; a strip where yesterday's blue is today's orange teaches nothing. The swatch is
+`aria-hidden` and never the only carrier of a distinction — the row names the app in text.
+
+### 30.5 — calibration: 7 probes, 7 red
+
+| # | file | the one value | measured |
+|---|---|---|---|
+| 1 | `UsageTracker.kt` | the record is clamped to the poll window, like the totals | **RED** — *a session that survived several polls is ONE sitting, with its true start* |
+| 2 | `UsageTracker.kt` | the record is scaled by the monotonic budget | **RED** ×2 — including *a sitting keeps the platform's own interval even when the budget clipped the total* |
+| 3 | `SessionLog.kt` | `acknowledge` drops the first n instead of the ones that were sent | **RED** — *a prune between the send and the acknowledgement does not eat an undelivered sitting* |
+| 4 | `UsageReporter.kt` | a flush with no outstanding day returns before delivering the sittings | **RED** ×2 — the sittings-only path, including its failure |
+| 5 | `app.js` | the card formats hours in the **browser's** timezone | **RED** ×3 in a real browser — the strip, the list and the axis all shifted six hours |
+| 6 | `telemetry.go` | the upsert takes the latest report instead of the longest | **RED** — *a shorter retry SHORTENED a stored sitting* |
+| 7 | `devices.go` | the day window is cut at UTC midnight, not the child's | **RED** — the axis only; the sittings still fell inside the UTC day, which is why the axis assertion was worth writing |
+
+**Probe 3 was taken twice, and the first one stayed green.** That is the finding, not a footnote: the
+test as first written had the sent batch as a prefix of the queue, so the count form and the identity
+form agreed and it proved nothing about the claim in its own name. It was rewritten around a prune
+before the probe was re-taken.
+
+**Probe 7's first shape was a compile error, not a gate firing.** Replacing `time.ParseInLocation`
+with `time.Parse` left `loc` declared and unused; the build failed and the suite reported NOT
+MEASURED. Reshaped to keep the structure and change one value (`loc = time.UTC` after the load), it
+went red on an assertion.
+
+The e2e picks its timezone **from the clock** — one candidate per UTC offset, choosing the zone in
+which "now" is between 16:00 and 19:59 — so the fixture's 09:00–14:55 sittings are always in the
+past and always inside the child's today. Anchoring to a fixed zone makes the suite red for two
+hours a night, and a suite that is red on a schedule is one whose reds stop being read. The
+candidate list was swept over two years of hourly instants: no gap. It also strengthens the test —
+the chosen zone is almost never the browser's, so every hour the console draws had to come from the
+child's policy.
+
+**An eighth red nobody planned: the emptiness suite's collection ratchet.** `TestAFreshSystemShowsAsEmpty` reads every list the store can return and asserts it arrives as the literal `[]` rather than `null` — because `for (const s of null)` throws in the browser and renders nothing at all, with no error. It matches `func (s *Store) X(…) ([]` across the store source, so a new collection cannot arrive without an entry, and it went red naming `UsageSessionsBetween` on the first full sweep after this phase was written. The timeline is the emptiest thing in the product on a fresh phone, so that was the right place to catch it. Registered at `stageCreated` against `/devices/:id/usage/timeline`; the ratchet is two-way, so the entry cannot outlive the function either.
+
+**And a ninth, from the mobile suite: the day stepper's arrows were 42 px wide.** `.btn` set `min-height: var(--tap)` and nothing about width, which is invisible for every button whose label is a word and two pixels short for one whose label is a glyph. `TestConsoleRendersOnAPhone` named both arrows on the activity tab, and `TestTheConsoleDrawsWhatRanWhen` named all four of its own — through the `b.measure(t, "activity/timeline").check(...)` line added for the strip's absolute positioning, which found a different defect than the one it was written for. Fixed on `.btn` rather than on `.tl-nav`, because the missing dimension is the root cause and the next icon-only button would repeat it: of every button the mobile suite renders across the five tabs, those two were the only ones under the floor, so the `min-width` widens nothing that was already right.
+
+Cumulative: **73 probes, 72 red and one deliberate green.**
+
+### 30.6 — what is NOT proven
+
+- **No phone has reported a sitting yet.** The whole device half is exercised by JVM unit tests and
+  the server half by the e2e; the join between them — a real `UsageStatsManager` stream folded into
+  sittings and POSTed — waits on 0.6.13 reaching the family phone.
+- **The queue's disk format has never round-tripped on a device.** `EncryptedSessionStore` is the
+  same encrypted-prefs mechanism the ledger and the inventory digest already use, and
+  `InMemorySessionStore` proves the queue's behaviour, but no instrumented test ran (no emulator
+  attached, as in every sweep since Phase 24).
+- **The volume is an estimate.** 2 000 comes from 43 packages and 99 minutes measured on the family
+  phone on 2026-09-20; the real number of sittings a day is not yet measured, because nothing has
+  ever recorded one.
+- **`SessionLog.clear()` is not called from production**, exactly like `UsageLedger.clear()` beside
+  it and with the same KDoc — there is no un-enrollment path on the device that forgets measured
+  usage, and this phase did not add one. Both are reachable only from tests today.
+- **Only today's timeline is reachable from the totals card.** The day stepper walks backwards one
+  day at a time; there is no way to jump to a date, and no correlation drawn between the seven-day
+  bar chart above and the strip below.

@@ -127,6 +127,34 @@ Applied at provisioning and re-applied on every boot:
   reported while the parent is still holding the phone. A notice that survives the act it asked for
   is read as the app being broken, and on a phone that cannot reach the server there is no next sync
   to correct it.
+- FR-3.7 The device records **what ran when**, not only how long: each sitting is kept as an interval
+  — package, start, end — and the console can draw a child's day as a timeline as well as a set of
+  totals. The two answer different questions and neither substitutes for the other. "Ninety minutes
+  of YouTube" says nothing about whether that was one afternoon or a phone picked up thirty times,
+  and a parent who wants to know what their child was doing at nine o'clock cannot read it off a
+  total at all.
+
+  Three properties make the record trustworthy, and each is a way it would otherwise be quietly
+  wrong:
+
+  - **A sitting is stored whole, never split at a midnight.** Splitting means deciding *whose*
+    midnight, and the phone's current zone and the policy's can differ and can change between the
+    measurement and the send. The interval is kept as the platform timestamped it and the overlap
+    question is asked at read time, with the child's timezone.
+  - **A sitting carries its TRUE start**, even when the poll that reports it opened hours later. The
+    day totals deliberately want the opposite — the part that fell inside the window being credited,
+    or a session would be counted again on every poll it survives — so the record is kept separately
+    from them rather than derived from them. Without this a two-hour film reads as twenty-four
+    five-minute sittings, which is indistinguishable from a child who opened it twenty-four times.
+  - **A sitting is an event, so it is delivered with an acknowledgement.** Day totals are cumulative
+    and the server merges them with `GREATEST`, so a report that never arrives is repaired by the
+    next one; a sitting that is dropped before the server has it is simply gone. The phone keeps a
+    durable queue and forgets only what the server has said it holds, and a re-delivered sitting
+    cannot shorten the one already stored.
+
+  The console distinguishes **"no sittings in this day"** from **"this phone has never reported
+  one"**. They look identical on screen and have opposite remedies — the first is a child who did
+  not use their phone, the second is a device that is not reporting.
 
 ### FR-4 Bedtime
 - FR-4.1 Per-child bedtime window with start and end time; the window may cross midnight.

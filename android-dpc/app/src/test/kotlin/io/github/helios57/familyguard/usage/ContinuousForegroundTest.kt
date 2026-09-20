@@ -35,9 +35,12 @@ class ContinuousForegroundTest {
     private val ledger = UsageLedger(store)
     private val screen = ScreenOnClock(screenOn = true, startMillis = 0)
 
+    private val sessions = SessionLog(InMemorySessionStore())
+
     private fun trackerOver(events: List<ForegroundEvent>) = UsageTracker(
         reader = EventStreamReader(events),
         ledger = ledger,
+        sessions = sessions,
         screen = screen,
         zone = { zurich },
         wallClock = { wall },
@@ -78,6 +81,46 @@ class ContinuousForegroundTest {
         repeat(6) { advance(tracker, minutes = 5) }
 
         assertEquals(11L, tracker.totalsFor(day).getValue(VIDEO) / minute)
+    }
+
+    /**
+     * The same continuous session as a RECORD (FR-3.7), which is the half the day totals throw away.
+     *
+     * The fold hands a carried span to `closed` exactly once — in the window it ends in — with the
+     * start the app was actually opened at. So a sitting that survived several polls is one row with
+     * its true start, not one row per poll: were it otherwise, a parent looking at the timeline
+     * would see an eleven-minute film as three five-minute ones and have no way to tell that from a
+     * child who really did open it three times.
+     */
+    @Test
+    fun `a session that survived several polls is ONE sitting, with its true start`() {
+        val tracker = trackerOver(
+            listOf(
+                resumed(VIDEO, "2026-08-17T10:01+02:00"),
+                paused(VIDEO, "2026-08-17T10:12+02:00"),
+            ),
+        )
+        tracker.tick()
+
+        repeat(6) { advance(tracker, minutes = 5) }
+
+        assertEquals(
+            listOf(
+                UsageSession(VIDEO, at("2026-08-17T10:01+02:00"), at("2026-08-17T10:12+02:00")),
+            ),
+            sessions.batch(10),
+        )
+    }
+
+    /** A sitting that has not ended is not a sitting yet: it is queued by the poll that closes it. */
+    @Test
+    fun `an app still in the foreground is not queued until it closes`() {
+        val tracker = trackerOver(listOf(resumed(VIDEO, "2026-08-17T10:01+02:00")))
+        tracker.tick()
+
+        repeat(6) { advance(tracker, minutes = 5) }
+
+        assertEquals(emptyList<UsageSession>(), sessions.batch(10))
     }
 
     /** Two apps, one handover, no pause between them — the second closes the first (FR-3.1). */

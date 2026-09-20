@@ -197,12 +197,40 @@ data class InventoryResponse(
 data class UsageRequest(
     @SerialName("day") val day: String = "",
     @SerialName("samples") val samples: Map<String, Long> = emptyMap(),
+    /**
+     * The sittings this phone has measured and not yet delivered (FR-3.7).
+     *
+     * Rides along with the day totals rather than having a request of its own, because the two are
+     * measured by the same poll and a second POST would double the wake-ups for the same fact. They
+     * are otherwise independent: [day] and [samples] describe a cumulative total the server merges
+     * with `GREATEST`, while these are events that happen once, so the server's count of what it
+     * STORED comes back in [UsageResponse.sessions] and nothing is dropped from the phone's queue
+     * until it does.
+     */
+    @SerialName("sessions") val sessions: List<UsageSessionReport> = emptyList(),
+)
+
+/**
+ * One sitting: what ran, from when, to when.
+ *
+ * Instants rather than a day plus offsets. A sitting that crosses midnight is ONE sitting, and
+ * splitting it here would mean deciding whose midnight — the phone's current zone or the policy's,
+ * which can differ and can change between the measurement and the send. The server keeps the
+ * interval whole and asks the overlap question with the child's timezone at read time.
+ */
+@Serializable
+data class UsageSessionReport(
+    @SerialName("package_name") val packageName: String = "",
+    @SerialName("started_at") val startedAt: String = "",
+    @SerialName("ended_at") val endedAt: String = "",
 )
 
 @Serializable
 data class UsageResponse(
     @SerialName("day") val day: String = "",
     @SerialName("minutes") val minutes: Int = 0,
+    /** How many sessions the server STORED — not how many were sent. See [UsageRequest.sessions]. */
+    @SerialName("sessions") val sessions: Int = 0,
 )
 
 /**

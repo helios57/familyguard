@@ -366,7 +366,37 @@ type usageRequest struct {
 	// which is the only party that knows the policy's zone and whose clock a child cannot change.
 	Day     string           `json:"day"`
 	Samples map[string]int64 `json:"samples"`
+	// Sessions is what ran WHEN (FR-3.7), and it rides the same request as the day totals on
+	// purpose: they are two views of one measurement the phone already made, and a second endpoint
+	// would give them two different clocks, two retry states and two ways to disagree.
+	//
+	// Optional. A DPC that predates this field sends nothing, which is not the same as a phone that
+	// saw no activity — the console distinguishes them by whether this device has EVER filed one.
+	Sessions []usageSession `json:"sessions"`
 }
+
+// usageSession is one sitting as the phone's platform timestamped it.
+//
+// RFC3339 with an offset, not milliseconds since the epoch: the phone and the server have different
+// clocks and the console prints these in the CHILD's timezone, so the instant has to survive both
+// hops unambiguously. `time.Time` refuses a string that is not a real instant, which is the
+// validation for this field.
+type usageSession struct {
+	PackageName string    `json:"package_name"`
+	StartedAt   time.Time `json:"started_at"`
+	EndedAt     time.Time `json:"ended_at"`
+}
+
+// maxUsageSessionsPerReport bounds one request. A phone catching up after a week offline has more
+// than this to deliver and sends the rest on the next tick; a phone with a broken clock or a bug
+// cannot turn one report into an unbounded insert.
+const maxUsageSessionsPerReport = 1000
+
+// usageSessionSkew is how far into the future a session may end and still be stored. Phones drift,
+// and refusing a sitting that ended two seconds "after" the server's own clock would drop real
+// usage at every boundary. Beyond it, a clock is wrong rather than drifting and a session parked in
+// next week would sit at the top of every timeline until it arrived.
+const usageSessionSkew = 5 * time.Minute
 
 func (s *Server) deviceUsageReport(c *gin.Context) {
 	dev := deviceOf(c)
@@ -406,13 +436,57 @@ func (s *Server) deviceUsageReport(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
+	sessions := acceptableSessions(req.Sessions, s.now())
+	if err := s.store.RecordUsageSessions(c.Request.Context(), dev.ID, sessions); err != nil {
+		s.fail(c, err)
+		return
+	}
 	minutes, err := s.store.UsageMinutesForDay(c.Request.Context(), dev.ID, day)
 	if err != nil {
 		s.fail(c, err)
 		return
 	}
 	s.hub.PublishParents(Event{Type: "usage", DeviceID: dev.ID.String(), ChildID: dev.ChildID.String()})
-	c.JSON(http.StatusOK, gin.H{"day": day, "minutes": minutes})
+	// `sessions` is the number STORED, not the number sent, and the difference is the point: the
+	// phone drops what it has delivered, so a count it can compare against what it sent is the only
+	// way a silently discarded session becomes visible from the device side.
+	c.JSON(http.StatusOK, gin.H{"day": day, "minutes": minutes, "sessions": len(sessions)})
+}
+
+// acceptableSessions drops what cannot be a sitting and keeps the rest, rather than failing the
+// whole report.
+//
+// Failing would be worse than it looks: the phone re-sends what it could not deliver, so one
+// malformed row — a package name the platform reported empty, a session a clock change inverted —
+// would block every good session behind it forever. They are dropped, and the response says how
+// many survived.
+func acceptableSessions(in []usageSession, now time.Time) []store.UsageSession {
+	out := make([]store.UsageSession, 0, len(in))
+	oldest := now.AddDate(0, 0, -usageBackfillDays)
+	newest := now.Add(usageSessionSkew)
+	for _, s := range in {
+		if len(out) >= maxUsageSessionsPerReport {
+			break
+		}
+		if strings.TrimSpace(s.PackageName) == "" || len(s.PackageName) > 255 {
+			continue
+		}
+		if !s.EndedAt.After(s.StartedAt) {
+			continue
+		}
+		// The same window the day totals use, for the same reason: a phone that was off for a week
+		// has real history to file, and a phone with a tampered clock must not be able to park
+		// anything outside it.
+		if s.StartedAt.Before(oldest) || s.EndedAt.After(newest) {
+			continue
+		}
+		out = append(out, store.UsageSession{
+			PackageName: s.PackageName,
+			StartedAt:   s.StartedAt,
+			EndedAt:     s.EndedAt,
+		})
+	}
+	return out
 }
 
 // earliestBackfill is today minus the backfill window, in the same calendar the day key uses.

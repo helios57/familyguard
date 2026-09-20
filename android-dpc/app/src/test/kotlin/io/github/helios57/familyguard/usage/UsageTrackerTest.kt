@@ -29,9 +29,13 @@ class UsageTrackerTest {
     private var monotonic = 0L
     private var zone = zurich
 
+    private val sessionStore = InMemorySessionStore()
+    private val sessions = SessionLog(sessionStore)
+
     private val tracker = UsageTracker(
         reader = reader,
         ledger = ledger,
+        sessions = sessions,
         screen = screen,
         zone = { zone },
         wallClock = { wall },
@@ -169,6 +173,61 @@ class UsageTrackerTest {
             2 * minute,
             (tick as UsageTick.Measured).byDay.getValue("2026-08-17").getValue(GAME),
         )
+    }
+
+    // ---- the record of what ran when (FR-3.7) --------------------------------------------------
+
+    /**
+     * The sitting is the platform's interval, NOT the part of it the ledger credited.
+     *
+     * The two numbers differ whenever the budget is short — a clock jump, or a window that began
+     * before the poll — and scaling the interval by the budget would produce a sitting that never
+     * happened. FR-3.2's ceiling protects the quota; a timeline is a record of what was observed.
+     */
+    @Test
+    fun `a sitting keeps the platform's own interval even when the budget clipped the total`() {
+        tracker.tick()
+        reader.spans = listOf(span(GAME, "2026-08-17T10:00+02:00", "2026-08-17T10:20+02:00"))
+        wall += 20 * minute
+        monotonic += 2 * minute
+
+        val tick = tracker.tick()
+
+        assertEquals(
+            "the ledger credited only the two minutes the monotonic clock allowed",
+            2 * minute,
+            (tick as UsageTick.Measured).byDay.getValue("2026-08-17").getValue(GAME),
+        )
+        assertEquals(
+            listOf(UsageSession(GAME, at("2026-08-17T10:00+02:00"), at("2026-08-17T10:20+02:00"))),
+            sessions.batch(10),
+        )
+    }
+
+    /** A window that could not be measured has nothing to record either — never an empty sitting. */
+    @Test
+    fun `a window the platform refused records no sitting`() {
+        tracker.tick()
+        reader.spans = null
+        reader.reason = "usage access is off"
+
+        val tick = advance(minutes = 30)
+
+        assertTrue(tick is UsageTick.NotMeasured)
+        assertTrue(sessions.batch(10).isEmpty())
+    }
+
+    /** The screen was off for the whole window: nothing ran, so nothing is recorded. */
+    @Test
+    fun `a window with no budget records no sitting`() {
+        tracker.tick()
+        reader.spans = listOf(span(GAME, "2026-08-17T10:00+02:00", "2026-08-17T10:20+02:00"))
+        tracker.onScreenOff(monotonic)
+        wall += 30 * minute
+        monotonic += 30 * minute
+
+        assertEquals(UsageTick.Idle, tracker.tick())
+        assertTrue(sessions.batch(10).isEmpty())
     }
 
     // ---- the plumbing the service uses ----------------------------------------------------------

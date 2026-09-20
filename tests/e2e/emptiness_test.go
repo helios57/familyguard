@@ -308,6 +308,11 @@ func allCollections(childID, deviceID string) []collection {
 		{"/devices/" + deviceID + "/commands", "commands", "ListCommands", stageCreated},
 		{"/devices/" + deviceID + "/usage", "packages", "UsageForDay", stageCreated},
 		{"/devices/" + deviceID + "/usage", "history", "UsageHistory", stageCreated},
+		// The record of what ran when (FR-3.7). Its own endpoint rather than a field of
+		// /usage, because the two answer different questions and the timeline is asked for one
+		// day at a time; on a fresh phone it is the emptiest thing in the product — a device
+		// that has never been switched on has no sittings, and the console iterates the list.
+		{"/devices/" + deviceID + "/usage/timeline", "sessions", "UsageSessionsBetween", stageCreated},
 		{"/children/" + childID + "/managed-apps", "managed_apps", "ManagedPackages", stageCreated},
 		{"/device/commands", "commands", "PendingCommands", stageEnrolled},
 	}

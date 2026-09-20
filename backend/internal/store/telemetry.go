@@ -253,3 +253,79 @@ func (s *Store) PruneLocations(ctx context.Context, olderThan time.Duration) (in
 	}
 	return tag.RowsAffected(), nil
 }
+
+// RecordUsageSessions stores what ran when (FR-3.7).
+//
+// The merge keeps the LATER end for a session the server already has. A phone re-sends what it
+// could not deliver, and a session is identified by the instant it began, so a re-send is the same
+// sitting — possibly observed for longer the second time, never for less. Taking the reported value
+// unconditionally would let a truncated retry shorten a sitting the server had already seen whole.
+//
+// A session whose end is not after its start is dropped here rather than rejected: the device
+// filters them, the table refuses them, and a request is not worth failing over a transition the
+// platform happened to report twice.
+func (s *Store) RecordUsageSessions(ctx context.Context, deviceID uuid.UUID, sessions []UsageSession) error {
+	if len(sessions) == 0 {
+		return nil
+	}
+	return s.tx(ctx, func(tx pgx.Tx) error {
+		for _, sess := range sessions {
+			if sess.PackageName == "" || !sess.EndedAt.After(sess.StartedAt) {
+				continue
+			}
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO usage_sessions (device_id, package_name, started_at, ended_at)
+				 VALUES ($1, $2, $3, $4)
+				 ON CONFLICT (device_id, package_name, started_at) DO UPDATE
+				   SET ended_at    = GREATEST(usage_sessions.ended_at, EXCLUDED.ended_at),
+				       reported_at = NOW()`,
+				deviceID, sess.PackageName, sess.StartedAt.UTC(), sess.EndedAt.UTC()); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// UsageSessionsBetween returns every session that OVERLAPS the window, oldest first.
+//
+// Overlap rather than containment, because a sitting that began at 23:50 belongs to both days it
+// touches and a parent looking at either one should see it. The console clamps what it draws to the
+// day it is showing; the times returned here are the real ones, so the card can say "started
+// 23:50 yesterday" rather than inventing a start at midnight.
+func (s *Store) UsageSessionsBetween(ctx context.Context, deviceID uuid.UUID, from, to time.Time) ([]UsageSession, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT u.package_name, u.started_at, u.ended_at,
+		        COALESCE(i.label, ''), COALESCE(i.system_app, false)
+		   FROM usage_sessions u
+		   LEFT JOIN installed_apps i
+		          ON i.device_id = u.device_id AND i.package_name = u.package_name
+		  WHERE u.device_id = $1 AND u.ended_at > $2 AND u.started_at < $3
+		  ORDER BY u.started_at`, deviceID, from.UTC(), to.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []UsageSession{}
+	for rows.Next() {
+		var u UsageSession
+		if err := rows.Scan(&u.PackageName, &u.StartedAt, &u.EndedAt, &u.Label, &u.SystemApp); err != nil {
+			return nil, err
+		}
+		u.Seconds = int(u.EndedAt.Sub(u.StartedAt).Seconds())
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// UsageSessionsEverReported says whether this device has EVER filed a session.
+//
+// The console needs it to tell two states apart that look identical in an empty list: a child who
+// did not pick up the phone, and a phone running a DPC too old to report sessions at all. Drawing
+// "nothing ran today" over the second is the same defect as a console that guesses — see FR-6.11.
+func (s *Store) UsageSessionsEverReported(ctx context.Context, deviceID uuid.UUID) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM usage_sessions WHERE device_id = $1)`, deviceID).Scan(&exists)
+	return exists, err
+}

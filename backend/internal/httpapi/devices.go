@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/helios57/familyguard/backend/internal/auth"
 	"github.com/helios57/familyguard/backend/internal/enforce"
+	"github.com/helios57/familyguard/backend/internal/policy"
 	"github.com/helios57/familyguard/backend/internal/provisioning"
 	"github.com/helios57/familyguard/backend/internal/store"
 )
@@ -347,6 +349,82 @@ func (s *Server) deviceUsage(c *gin.Context) {
 		"day": day, "timezone": pol.Timezone, "minutes": minutes,
 		"packages": samples, "history": history,
 	})
+}
+
+// deviceUsageTimeline is what ran WHEN on one local day (FR-3.7).
+//
+// Separate from deviceUsage rather than folded into it: the day totals are small and every console
+// view wants them, while a timeline is a few hundred rows that only one card draws. A parent opening
+// the Activity tab should not pay for a list they may never scroll to.
+func (s *Server) deviceUsageTimeline(c *gin.Context) {
+	id, ok := uuidParam(c, "id")
+	if !ok {
+		return
+	}
+	dev, err := s.store.GetDevice(c.Request.Context(), id)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	pol, err := s.store.GetPolicy(c.Request.Context(), dev.ChildID)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	day := strings.TrimSpace(c.Query("day"))
+	if day == "" {
+		if day, err = enforce.DayKey(pol, s.now()); err != nil {
+			s.fail(c, err)
+			return
+		}
+	} else if !validDay(day) {
+		failWith(c, http.StatusBadRequest, "invalid_input", "day must look like 2026-08-17")
+		return
+	}
+	from, to, err := localDay(pol.Timezone, day)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+
+	sessions, err := s.store.UsageSessionsBetween(c.Request.Context(), id, from, to)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	// Asked even when the list is not empty, because the two answers are read together and a second
+	// round trip to learn why a day is blank is a round trip the parent spends staring at nothing.
+	ever, err := s.store.UsageSessionsEverReported(c.Request.Context(), id)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"day": day, "timezone": pol.Timezone,
+		"from": from, "to": to,
+		"sessions": sessions,
+		// "This phone has never reported a sitting" is a different statement from "this child did
+		// not use the phone today", and only the server can tell them apart. Without it the console
+		// would have to guess, and a console that guesses was the defect FR-6.11 was written for.
+		"ever_reported": ever,
+	})
+}
+
+// localDay is the half-open window [midnight, next midnight) for a calendar day in one timezone.
+//
+// AddDate(0, 0, 1) rather than Add(24h): on the day a DST change lands the local day is 23 or 25
+// hours long, and adding a fixed 24 hours would either clip an hour of the evening or reach an hour
+// into the next day. A timeline is the one view where that is visible.
+func localDay(timezone, day string) (time.Time, time.Time, error) {
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("%w: timezone %q: %v", policy.ErrInvalidInput, timezone, err)
+	}
+	start, err := time.ParseInLocation("2006-01-02", day, loc)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("%w: day %q: %v", policy.ErrInvalidInput, day, err)
+	}
+	return start, start.AddDate(0, 0, 1), nil
 }
 
 func (s *Server) deviceLocations(c *gin.Context) {

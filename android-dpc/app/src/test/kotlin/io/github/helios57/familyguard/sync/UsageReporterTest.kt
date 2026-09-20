@@ -1,7 +1,11 @@
 package io.github.helios57.familyguard.sync
 
+import io.github.helios57.familyguard.usage.ForegroundSpan
+import io.github.helios57.familyguard.usage.InMemorySessionStore
 import io.github.helios57.familyguard.usage.InMemoryUsageStore
+import io.github.helios57.familyguard.usage.SessionLog
 import io.github.helios57.familyguard.usage.UsageLedger
+import io.github.helios57.familyguard.usage.UsageSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -20,11 +24,15 @@ class UsageReporterTest {
     private val store = InMemoryUsageStore()
     private val ledger = UsageLedger(store)
     private val sends = mutableListOf<Pair<String, Map<String, Long>>>()
+    private val sittings = mutableListOf<List<UsageSession>>()
+    private val sessionStore = InMemorySessionStore()
+    private val sessions = SessionLog(sessionStore)
     private var failWith: IOException? = null
 
-    private fun reporter() = UsageReporter(ledger) { day, samples ->
+    private fun reporter() = UsageReporter(ledger, sessions) { day, samples, attached ->
         failWith?.let { throw it }
         sends += day to samples
+        sittings += attached
     }
 
     @Test
@@ -110,7 +118,8 @@ class UsageReporterTest {
         measure("2026-08-16", 10 * 60_000L)
         measure("2026-08-17", 20 * 60_000L)
 
-        val afterRestart = UsageReporter(UsageLedger(store)) { day, samples -> sends += day to samples }
+        val afterRestart =
+            UsageReporter(UsageLedger(store), sessions) { day, samples, _ -> sends += day to samples }
 
         assertEquals(setOf("2026-08-16", "2026-08-17"), afterRestart.outstanding())
         assertTrue(afterRestart.flush().ok)
@@ -121,7 +130,7 @@ class UsageReporterTest {
     fun `one failing day does not stop the others`() {
         measure("2026-08-16", 10 * 60_000L)
         measure("2026-08-17", 20 * 60_000L)
-        val reporter = UsageReporter(ledger) { day, samples ->
+        val reporter = UsageReporter(ledger, sessions) { day, samples, _ ->
             if (day == "2026-08-16") throw IOException("no route to host")
             sends += day to samples
         }
@@ -179,6 +188,103 @@ class UsageReporterTest {
     fun `the summary distinguishes a clean flush from a partial one`() {
         assertTrue(FlushResult(sent = listOf(DAY)).toString().contains("usage sent for 1 day"))
         assertTrue(FlushResult(failed = mapOf(DAY to "boom")).toString().contains("failed="))
+    }
+
+    // ---- the sittings that ride along with the day totals (FR-3.7) ----
+
+    @Test
+    fun `the sittings ride on the first day that lands, and only that one`() {
+        measure("2026-08-16", 10 * 60_000L)
+        measure("2026-08-17", 20 * 60_000L)
+        record(GAME, 10_000L, 70_000L)
+        val reporter = reporter()
+        reporter.note(listOf("2026-08-16", "2026-08-17"))
+
+        val result = reporter.flush()
+
+        assertEquals(1, result.sessions)
+        assertEquals(listOf(1, 0), sittings.map { it.size })
+        assertEquals(0, sessions.pending())
+    }
+
+    /**
+     * The loss this guards. The queue is emptied by the acknowledgement, not by the attempt — a
+     * sitting is an event, so one that is thrown away before the server has it is simply gone.
+     */
+    @Test
+    fun `a failed send keeps the sittings queued for the next flush`() {
+        measure(DAY, 20 * 60_000L)
+        record(GAME, 10_000L, 70_000L)
+        val reporter = reporter()
+        reporter.note(listOf(DAY))
+        failWith = IOException("no route to host")
+
+        val failed = reporter.flush()
+
+        assertEquals(0, failed.sessions)
+        assertEquals(1, sessions.pending())
+
+        failWith = null
+        val retried = reporter.flush()
+
+        assertEquals(1, retried.sessions)
+        assertEquals(listOf(1), sittings.map { it.size })
+        assertEquals(0, sessions.pending())
+    }
+
+    /**
+     * A phone that measured a sitting and owes the server no day total. The day totals are
+     * cumulative and repair themselves; a sitting held back until the child next uses the phone
+     * would be one a parent cannot see tonight.
+     */
+    @Test
+    fun `sittings with no outstanding day are sent on their own`() {
+        record(GAME, 10_000L, 70_000L)
+
+        val result = reporter().flush()
+
+        assertEquals(1, result.sessions)
+        assertEquals(listOf("" to emptyMap<String, Long>()), sends)
+        assertEquals(0, sessions.pending())
+    }
+
+    /** …and that send failing is a failure, not a quiet drop. */
+    @Test
+    fun `a failed sittings-only send is reported and keeps them queued`() {
+        record(GAME, 10_000L, 70_000L)
+        val reporter = reporter()
+        failWith = IOException("no route to host")
+
+        val result = reporter.flush()
+
+        assertFalse(result.ok)
+        assertEquals(mapOf("sessions" to "no route to host"), result.failed)
+        assertEquals(1, sessions.pending())
+    }
+
+    /** A day whose totals were pruned still lets the sittings through. */
+    @Test
+    fun `sittings are delivered even when every outstanding day has been pruned`() {
+        record(GAME, 10_000L, 70_000L)
+        val reporter = reporter()
+        reporter.note(listOf("2026-01-01"))
+
+        val result = reporter.flush()
+
+        assertTrue(result.ok)
+        assertTrue(result.sent.isEmpty())
+        assertEquals(1, result.sessions)
+        assertEquals(listOf("" to emptyMap<String, Long>()), sends)
+    }
+
+    @Test
+    fun `a flush with neither a day nor a sitting sends nothing`() {
+        assertTrue(reporter().flush().ok)
+        assertTrue(sends.isEmpty())
+    }
+
+    private fun record(pkg: String, fromMillis: Long, toMillis: Long) {
+        sessions.record(listOf(ForegroundSpan(pkg, fromMillis, toMillis)), nowMillis = toMillis)
     }
 
     private fun measure(day: String, millis: Long) {

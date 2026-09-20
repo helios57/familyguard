@@ -39,6 +39,14 @@ sealed interface UsageTick {
 class UsageTracker(
     private val reader: ForegroundReader,
     private val ledger: UsageLedger,
+    /**
+     * Where the sittings go (FR-3.7).
+     *
+     * A separate collaborator from [ledger] because they answer different questions from the same
+     * fold, and they disagree about the one thing that matters most here: the ledger wants the part
+     * of a session that fell inside the window it is crediting, and this wants the session.
+     */
+    private val sessions: SessionLog,
     private val screen: ScreenOnClock,
     /** The *policy's* timezone, so day keys match the ones the server's quota reads. */
     private val zone: () -> ZoneId,
@@ -107,6 +115,16 @@ class UsageTracker(
             return UsageTick.NotMeasured(reader.unavailableReason())
         }
         carried = window.open
+
+        // The sittings, with their TRUE starts, before the clamping below throws them away. A span
+        // reaches `closed` exactly once — in the window it ends in, however many windows it spanned
+        // — so recording here cannot draw one sitting twice.
+        //
+        // Deliberately NOT clamped and NOT scaled by the budget. The budget is the quota's ceiling
+        // against a tampered clock (FR-3.2), and scaling an interval by it would produce a sitting
+        // that never happened: a timeline is a record of what the platform observed, and the quota
+        // stays the ledger's arithmetic rather than this one's.
+        sessions.record(window.closed, now)
 
         // Two different questions, one fold. The day totals want the time that fell inside *this*
         // window — a session seeded from the previous one has already been credited up to `from`,

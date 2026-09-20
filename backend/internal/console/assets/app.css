@@ -425,7 +425,13 @@ p { margin: 0 0 0.6em; }
 /* ---- controls ----------------------------------------------------------- */
 
 .btn {
+  /* Both dimensions, not just the height. `padding: 10px 14px` around a one-glyph label lands at
+     42px wide — close enough to read as fine and two pixels under the floor a thumb needs, which is
+     what the day stepper's arrows measured. Of every button the mobile suite renders across the
+     five tabs, those two were the only ones under it, so this floor widens nothing that was already
+     right — it catches the icon-only ones, this and the next. */
   min-height: var(--tap);
+  min-width: var(--tap);
   padding: 10px 14px;
   border-radius: 10px;
   border: 1px solid var(--line);
@@ -619,6 +625,76 @@ input[type="checkbox"] { width: auto; min-height: auto; }
 .meter { height: 10px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
 .meter > span { display: block; height: 100%; background: var(--ok); }
 .meter > span.over { background: var(--danger); }
+
+/* ---- the day as a timeline (FR-3.7) ------------------------------------- */
+
+/* The strip is SHAPE; the list underneath is the measure. At 320 px a 24-hour track gives about
+   13 px an hour, so a four-minute sitting is under a pixel — `min-width` keeps it visible, which
+   means the strip deliberately over-draws the shortest blocks. The card says so in words, and every
+   number a parent might act on is text below it. */
+.tl-track {
+  position: relative;
+  height: 34px;
+  margin-top: 8px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.tl-block {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  border-radius: 2px;
+  opacity: 0.9;
+}
+
+/* The hour labels. Absolutely positioned at the same fractions the blocks use, so a 23- or 25-hour
+   day labels itself correctly instead of being stretched onto a fixed 24. `translateX(-50%)` puts
+   each label under its own instant rather than to the right of it; the first and last would then
+   overhang, which the padding on the row absorbs. */
+.tl-axis {
+  position: relative;
+  height: 1.1rem;
+  margin: 4px 0 8px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  overflow: hidden;
+}
+.tl-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.tl-tick:first-child { transform: none; }
+
+/* The list's tie back to the strip. Purely decorative — the row already names the app in text — so
+   it is aria-hidden and never the only carrier of a distinction. */
+.swatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  border-radius: 3px;
+}
+/* Three children instead of the list's usual two, and `space-between` would then strand the label
+   in the middle of the row with air on both sides. The label takes the slack; the badge stays at
+   the right edge where every other list in this console puts it. */
+.tl-list li { justify-content: flex-start; }
+.tl-list .label { flex: 1 1 auto; }
+
+/* `.toolbar` is a stacking grid, which is right for the app filter's three full-width controls and
+   wrong for three things that belong on one line. Two arrows and a date read as a stepper only when
+   the arrows are at the ends of the row they step. */
+.tl-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+/* The stepper keeps its width; only the date between the arrows gives way on a narrow phone. */
+.tl-nav .btn { flex: 0 0 auto; }
+.tl-nav .muted { text-align: center; font-size: 0.85rem; }
 
 /* ---- sheet -------------------------------------------------------------- */
 

@@ -68,6 +68,7 @@ import io.github.helios57.familyguard.net.InventoryApp
 import io.github.helios57.familyguard.net.InventoryRequest
 import io.github.helios57.familyguard.net.RecoveryEventRequest
 import io.github.helios57.familyguard.net.UsageRequest
+import io.github.helios57.familyguard.net.UsageSessionReport
 import io.github.helios57.familyguard.policy.DeviceOwnerPolicy
 import io.github.helios57.familyguard.recovery.AndroidRecoveryStore
 import io.github.helios57.familyguard.recovery.LinkRefused
@@ -84,8 +85,10 @@ import io.github.helios57.familyguard.update.androidUpdateReport
 import io.github.helios57.familyguard.update.androidUpdateSchedule
 import io.github.helios57.familyguard.update.runningVersionCode
 import io.github.helios57.familyguard.usage.DayAttribution
+import io.github.helios57.familyguard.usage.EncryptedSessionStore
 import io.github.helios57.familyguard.usage.EncryptedUsageStore
 import io.github.helios57.familyguard.usage.ScreenOnClock
+import io.github.helios57.familyguard.usage.SessionLog
 import io.github.helios57.familyguard.usage.UsageAccess
 import io.github.helios57.familyguard.usage.UsageLedger
 import io.github.helios57.familyguard.usage.UsageStatsForegroundReader
@@ -111,6 +114,7 @@ import java.net.URL
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -915,11 +919,13 @@ class ConnectionService : Service() {
      */
     private fun reporting(api: ApiClient, policy: DeviceOwnerPolicy?): Reporting {
         val ledger = UsageLedger(EncryptedUsageStore(this))
+        val sessions = SessionLog(EncryptedSessionStore(this))
         val power = getSystemService(PowerManager::class.java)
         val zone = PolicyZone()
         val tracker = UsageTracker(
             reader = UsageStatsForegroundReader(this),
             ledger = ledger,
+            sessions = sessions,
             screen = ScreenOnClock(
                 screenOn = power?.isInteractive ?: false,
                 startMillis = SystemClock.elapsedRealtime(),
@@ -933,8 +939,20 @@ class ConnectionService : Service() {
             tracker = tracker,
             ledger = ledger,
             zone = zone,
-            usage = UsageReporter(ledger) { day, samples ->
-                api.reportUsage(UsageRequest(day, samples))
+            usage = UsageReporter(ledger, sessions) { day, samples, sittings ->
+                api.reportUsage(
+                    UsageRequest(
+                        day = day,
+                        samples = samples,
+                        sessions = sittings.map {
+                            UsageSessionReport(
+                                packageName = it.packageName,
+                                startedAt = rfc3339(it.startMillis),
+                                endedAt = rfc3339(it.endMillis),
+                            )
+                        },
+                    )
+                )
             },
             inventory = InventoryReporter(
                 reader = PlatformInstalledAppReader(this, restraint = policy?.apps?.gateway),
@@ -1760,6 +1778,17 @@ class ConnectionService : Service() {
          */
         private val RFC3339: DateTimeFormatter =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")
+
+        /**
+         * [epochMillis] as an instant the backend parses, in UTC.
+         *
+         * Seconds precision, like every other timestamp this app sends. That is not a rounding loss
+         * a session can hide behind: the queue refuses anything under a second, and a span of at
+         * least a second always has a different second at each end, so `ended_at > started_at` —
+         * which the server's own CHECK constraint requires — survives the truncation.
+         */
+        private fun rfc3339(epochMillis: Long): String =
+            RFC3339.format(Instant.ofEpochMilli(epochMillis).atOffset(ZoneOffset.UTC))
 
         /**
          * How often the device re-measures and re-enforces while the screen is on.
