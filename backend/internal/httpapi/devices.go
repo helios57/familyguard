@@ -399,9 +399,26 @@ func (s *Server) deviceUsageTimeline(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
+	// The table under the chart, and it is deliberately a DIFFERENT measurement from the chart
+	// above it. The chart is built from sittings, which only exist from 0.6.13 onward; these are the
+	// cumulative day totals, which the phone has been reporting since 0.6.0 and which the quota is
+	// enforced against. On a day before this build they are all a parent has, and showing them is
+	// better than an empty tab — so the console draws the table whenever it has rows, whether or not
+	// the chart above it has any.
+	apps, err := s.store.UsageForDay(c.Request.Context(), id, day)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"day": day, "timezone": pol.Timezone,
 		"from": from, "to": to,
+		"hours": hourlyScreenTime(sessions, from, to),
+		"apps":  apps,
+		// Still served, though the console no longer draws them: the sittings ARE the record FR-3.7
+		// is about, the chart above is a summary of them, and a summary is not something to hand an
+		// API caller instead of the thing it was computed from.
 		"sessions": sessions,
 		// "This phone has never reported a sitting" is a different statement from "this child did
 		// not use the phone today", and only the server can tell them apart. Without it the console
@@ -576,4 +593,51 @@ func validDay(v string) bool {
 	}
 	_, err := time.Parse("2006-01-02", v)
 	return err == nil
+}
+
+// hourBucket is one hour of a local day and the screen time inside it.
+//
+// `Start` is the instant the hour began, not an index: on the two days a year the clocks move, a
+// local day has 23 or 25 hours and the nth bucket is not the nth hour of the clock. The console
+// labels each bucket from this instant in the child's zone, so the axis reads as the day the child
+// actually lived rather than as a fixed 0–23.
+type hourBucket struct {
+	Start   time.Time `json:"start"`
+	Seconds int       `json:"seconds"`
+}
+
+// hourlyScreenTime splits every sitting across the hour boundaries it crosses.
+//
+// A sitting is stored whole — a film from 19:40 to 21:10 is one row — so asking "how long was the
+// screen on between 20:00 and 21:00" cannot be answered by grouping rows. It is answered by
+// intersecting each interval with each hour, which is why an hour can hold minutes from a sitting
+// that started in a different one, and why the totals across the day still add up to the same
+// number the table below the chart reports.
+//
+// The buckets are walked by adding an hour to an *instant*, not by incrementing a clock field: on
+// the morning the clocks go forward 02:00 does not exist, and a loop over local hour numbers would
+// either invent it or skip an hour of real time.
+func hourlyScreenTime(sessions []store.UsageSession, from, to time.Time) []hourBucket {
+	out := []hourBucket{}
+	for start := from; start.Before(to); start = start.Add(time.Hour) {
+		end := start.Add(time.Hour)
+		if end.After(to) {
+			end = to
+		}
+		var seconds int
+		for _, s := range sessions {
+			lo, hi := s.StartedAt, s.EndedAt
+			if lo.Before(start) {
+				lo = start
+			}
+			if hi.After(end) {
+				hi = end
+			}
+			if d := hi.Sub(lo); d > 0 {
+				seconds += int(d.Seconds())
+			}
+		}
+		out = append(out, hourBucket{Start: start, Seconds: seconds})
+	}
+	return out
 }

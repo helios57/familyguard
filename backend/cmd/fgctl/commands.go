@@ -51,6 +51,7 @@ func commands() []command {
 		{"keys", "", "the API keys of this family", true, cmdKeys},
 		{"rm-device", "<device-id> --yes", "delete a device (not exposed over MCP)", true, cmdRemoveDevice},
 		{"rm-child", "<child-id> --yes", "delete a child and its devices (not exposed over MCP)", true, cmdRemoveChild},
+		{"adb", "<device-id> [--pair] [--port n] [--listen addr] [--once]", "relay a local port to the phone's own adb (needs Allow debugging)", true, cmdADB},
 		{"mcp", "", "serve these operations over MCP on stdio", true, cmdMCP},
 	}
 	// The verbs are the commands people actually reach for, so they are listed, not hidden behind

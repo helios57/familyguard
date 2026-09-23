@@ -72,6 +72,7 @@ type Server struct {
 	resolver *enforce.Resolver
 	catalog  *catalog.Catalog
 	hub      *Hub
+	debug    *debugRelay
 	log      *slog.Logger
 	now      func() time.Time
 
@@ -110,6 +111,7 @@ func New(d Deps) (*Server, error) {
 		resolver:          enforce.New(d.Store, d.Config.PublicURL.String()),
 		catalog:           catalog.New(d.Config.APKDir, d.Store, d.Logger, d.Config.DPCPackage()),
 		hub:               NewHub(d.Logger),
+		debug:             newDebugRelay(),
 		log:               d.Logger,
 		now:               d.Now,
 		httpClient:        d.HTTPClient,
@@ -260,6 +262,8 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.GET("/devices/:id/desired-state", s.deviceDesiredState)
 	p.GET("/devices/:id/commands", s.listCommands)
 	p.POST("/devices/:id/commands", s.createCommand)
+	// Remote adb (FR-19). A GET that becomes a raw stream: see debugrelay.go.
+	p.GET("/devices/:id/debug", s.openDebugStream)
 	// The application catalog (FR-16). Uploading is an admin action: a package that lands here can
 	// be declared for a child and will install itself on their phone without anyone tapping
 	// anything, which is a larger authority than editing a bedtime.
@@ -302,6 +306,8 @@ func (s *Server) Router() (*gin.Engine, error) {
 	d.POST("/commands/:id/ack", s.ackCommand)
 	d.POST("/recovery-event", s.recoveryEventReport)
 	d.GET("/stream", s.deviceStream)
+	// The phone's leg of a remote adb session (FR-19.2).
+	d.GET("/debug/:stream", s.deviceDebugStream)
 	// What DPC this server hosts, so the phone can tell whether the one it is running is the one it
 	// should be (FR-15.1). Read-only and cheap; the download itself is unauthenticated, below.
 	d.GET("/apk-info", s.apkInfo)

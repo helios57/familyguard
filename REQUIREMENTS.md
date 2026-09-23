@@ -116,7 +116,9 @@ Applied at provisioning and re-applied on every boot:
 - FR-3.3 Measurement pauses while the screen is off.
 - FR-3.4 A per-child global daily limit (minutes) is enforced. Reaching it suspends non-exempt apps
   for the rest of the day; the day boundary is the device's local midnight.
-- FR-3.5 The console shows today's usage per child and per app.
+- FR-3.5 The console shows usage per child and per app, for a day the parent chooses. Today is where
+  it opens and there is no way to step past it — a day that cannot have happened yet renders as an
+  empty card, which is indistinguishable from a phone that stopped reporting.
 - FR-3.6 Screen time depends on an access grant no code on the device can give itself
   (`PACKAGE_USAGE_STATS` is an appop, not a runtime permission). Where it is missing, every query
   returns nothing and every app reads zero minutes — which is indistinguishable from a child who
@@ -128,11 +130,11 @@ Applied at provisioning and re-applied on every boot:
   is read as the app being broken, and on a phone that cannot reach the server there is no next sync
   to correct it.
 - FR-3.7 The device records **what ran when**, not only how long: each sitting is kept as an interval
-  — package, start, end — and the console can draw a child's day as a timeline as well as a set of
-  totals. The two answer different questions and neither substitutes for the other. "Ninety minutes
-  of YouTube" says nothing about whether that was one afternoon or a phone picked up thirty times,
-  and a parent who wants to know what their child was doing at nine o'clock cannot read it off a
-  total at all.
+  — package, start, end — and the console draws a child's day from it as well as from the totals.
+  The two answer different questions and neither substitutes for the other. "Ninety minutes of
+  YouTube" says nothing about whether that was one afternoon or a phone picked up thirty times, and
+  a parent who wants to know what their child was doing at nine o'clock cannot read it off a total
+  at all.
 
   Three properties make the record trustworthy, and each is a way it would otherwise be quietly
   wrong:
@@ -151,6 +153,30 @@ Applied at provisioning and re-applied on every boot:
     next one; a sitting that is dropped before the server has it is simply gone. The phone keeps a
     durable queue and forgets only what the server has said it holds, and a re-delivered sitting
     cannot shorten the one already stored.
+
+  **What the console draws from it is a chart of the day, hour by hour, with a table of per-app
+  totals under it** — one column per hour of the child's own day, each column showing how much of
+  that hour the screen was on. The sitting is the record; the chart is the summary a parent reads.
+  Three properties are part of the requirement rather than of the drawing:
+
+  - **Each hour is the sittings intersected with it**, not the sittings filed under the hour they
+    began in. A sitting is stored whole, so "how long was the screen on between eight and nine" is
+    an overlap question at every level, not only at the day boundary.
+  - **A full column is a full hour**, fixed, never scaled to the busiest hour of the day. A scaled
+    axis makes twenty minutes and four hours draw identically on their own days, so two days cannot
+    be compared — which is the only thing the chart is for.
+  - **Every hour of the day is answered, including the empty ones**, and the day has 23 or 25 hours
+    on the two mornings the clocks move. A chart that omits its quiet hours looks like one that
+    failed to load.
+
+  The table is **text, not a second chart**: it carries the number a parent acts on when deciding
+  whether to set a limit, and a bar estimated against an axis is not a number. Apps used for under a
+  minute are counted rather than listed — they all round to "0 min" — but the count is shown, because
+  dropping them silently would understate the day.
+
+  The chart and the table are **different measurements**, and the console says which one is missing
+  rather than blending them: the chart comes from sittings, which exist only from the build that
+  records them onward, and the table from the cumulative day totals every reporting build has sent.
 
   The console distinguishes **"no sittings in this day"** from **"this phone has never reported
   one"**. They look identical on screen and have opposite remedies — the first is a child who did
@@ -280,6 +306,17 @@ Applied at provisioning and re-applied on every boot:
   do the four cases that reach no running service — the platform refusing the foreground start, the
   platform refusing this app as the always-on connection, a revoked connection, and a forwarder that
   would not bind.
+
+  **And "starting" is its own answer.** The phone reports on the same sync that re-applies the
+  policy, and a report sent while the tunnel is being built used to carry the empty reason the last
+  run left behind — which the console can only show as "has not started on this phone". Measured
+  2026-09-23: the family phone showed "Ad filter on" in its own shade while the console said the
+  filter had never started. A tunnel being built now says it is starting.
+- FR-6.12 A sync that leaves the tunnel's plan unchanged — the same route, the same resolvers —
+  leaves the running tunnel alone. Every sync re-applies the whole policy, and rebuilding the tunnel
+  each time closes every connection it is carrying: every five minutes with the screen on, and on
+  every change a parent makes anywhere in the policy. A new filter list does not need a new tunnel;
+  its rules replace the old ones inside the running filter.
 
 ### FR-7 YouTube killswitch
 One toggle per child that blocks YouTube across every layer available to us:
@@ -481,6 +518,38 @@ and survives a reinstall, and which never removes an app that a factory reset wo
   has hidden stays in the inventory — hiding clears the installed-for-this-user flag, and a phone
   that dropped it from the list would report the blocked app as absent, answering "is it gone?"
   with the one word that is both wrong and reassuring.
+
+### FR-19 Remote debugging (adb from anywhere)
+When something breaks on a child's phone, the fastest way to find out why is the phone's own log —
+and the phone is at school, or at a grandparent's, on a network the parent is not on. So a parent can
+reach the phone's own adb through the control plane, from anywhere, with the API key they already
+use for the command line (FR-17). It exists to shorten fixing this product, and it is built to be
+removed again: nothing else depends on it.
+
+A remote shell on somebody's phone is the most powerful thing in this system, so every requirement
+below is about who can open it, what it can reach, and who can see that it is open.
+
+- FR-19.1 A parent opens a session with `fgctl adb <device>`, which listens on a local port for
+  `adb connect` or, once, `adb pair`. **Nothing is opened unless the child's Allow debugging is
+  on** — that switch is what lets adb run on the phone at all — and a session that cannot be opened
+  is refused before the phone is asked, in a sentence rather than a timeout.
+- FR-19.2 The phone dials back, authenticated with its own device token, and a session belongs to
+  exactly one phone: another phone presenting the same session id is refused, and a session id is
+  good for one dial.
+- FR-19.3 The phone finds its own Wireless debugging port — adbd picks a new one each time and
+  announces it only over mDNS — and connects to it on its own loopback. When Wireless debugging is
+  off, the phone asks for it as device owner and reads the setting back. A parent can also name the
+  port the phone shows. **Pairing is the one step that needs a person at the phone**: only the phone
+  can show a pairing code, and that is where Android keeps the decision about which computers it
+  trusts.
+- FR-19.4 The server relays and nothing more. It never speaks adb and cannot read what it carries:
+  adb's pairing and its connection are TLS between the parent's adb and the phone's adbd.
+- FR-19.5 **The phone shows that someone is connected**, for as long as any session is open, in a
+  notification the child can see.
+- FR-19.6 Every session is audited when it is asked for and when it ends, with how long it lasted
+  and how much it carried. A session ends after an hour idle and after four hours regardless.
+- FR-19.7 When the phone cannot open a session — Wireless debugging off, no port announced, adbd
+  refusing — its own reason reaches the parent at once.
 
 ---
 

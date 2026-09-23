@@ -252,8 +252,16 @@ ensure_device_owner() {
 		# command succeeds a few seconds later — measured, by hand, with the settings at the same values.
 		# The platform is still settling after first boot and says so in the least helpful way available.
 		one_line() { printf '%s' "$1" | command grep -v '^[[:space:]]*at ' | tr '\n' ' ' | cut -c1-200; }
+		#
+		# A DEADLINE, not a count. Five attempts five seconds apart was measured too short on
+		# 2026-09-23: a cold-booted, freshly wiped API 37 AVD at load average 14–20 refused all
+		# five — "already some accounts on the device", then IllegalArgumentException — with the
+		# user already RUNNING_UNLOCKED, and the identical command succeeded a few minutes later.
 		out=""
-		for attempt in 1 2 3 4 5; do
+		local deadline=$((SECONDS + 120))
+		attempt=0
+		while [ "$SECONDS" -lt "$deadline" ]; do
+			attempt=$((attempt + 1))
 			adb shell settings put global device_provisioned 0
 			adb shell settings put secure user_setup_complete 0
 			out="$(adb shell dpm set-device-owner "$ADMIN" 2>&1 | tr -d '\r')"
@@ -271,7 +279,7 @@ ensure_device_owner() {
 			# command says on a device where `dumpsys account` reports Accounts: 0, and a reader who
 			# believes it spends the next hour looking for an account that does not exist.
 			accounts="$(adb shell dumpsys account 2>/dev/null | tr -d '\r' | command grep -m1 -E '^ *Accounts:' | tr -d ' \t')"
-			result "NOT MEASURED" "could not make this app the device owner in 5 attempts; dumpsys reports ${accounts:-Accounts:unreadable} whatever dpm says below: $(one_line "$out")"
+			result "NOT MEASURED" "could not make this app the device owner in $attempt attempts over 120 s; dumpsys reports ${accounts:-Accounts:unreadable} whatever dpm says below: $(one_line "$out")"
 		fi
 		# Read it back from the platform rather than trusting the word "Success" — the one thing every
 		# test the caller then runs assumes is exactly this, and `dpm` printing Success is a claim,

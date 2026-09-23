@@ -188,7 +188,7 @@ func (d *androidDevice) dumpDeviceLogOnFailure() {
 		}
 		log, err := d.run(60*time.Second, "logcat", "-d", "-v", "time",
 			"FamilyGuard/Connection:V", "FamilyGuard/Compliance:V", "FamilyGuard/Usage:V",
-			"FamilyGuard/Admin:V", "FamilyGuardUpdate:V", "EncryptedPreferences:V",
+			"FamilyGuard/Admin:V", "FamilyGuardUpdate:V", "EncryptedPreferences:V", "FGDebug:V",
 			"AndroidRuntime:E", "*:S")
 		if err != nil {
 			d.t.Logf("the phone's log could not be read (%v), so this failure has no device-side "+

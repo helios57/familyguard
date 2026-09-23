@@ -4,6 +4,7 @@ import io.github.helios57.familyguard.net.LocationRequest
 import io.github.helios57.familyguard.policy.LockManager
 import io.github.helios57.familyguard.update.UpdateOutcome
 import java.time.Instant
+import kotlinx.serialization.json.JsonObject
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
@@ -40,6 +41,12 @@ class CommandHandlers(
      * wired, which answers `UPDATE_APP` as unimplemented rather than as silently done.
      */
     private val update: (() -> UpdateOutcome)? = null,
+    /**
+     * Opens one leg of a remote adb session (FR-19). Null on a device with nothing wired, which
+     * answers OPEN_DEBUG_STREAM as unimplemented — and the parent reads that sentence straight
+     * away rather than a timeout, because the server forwards a failed acknowledgement.
+     */
+    private val debug: ((JsonObject) -> CommandOutcome)? = null,
     private val now: () -> Long = { System.currentTimeMillis() },
 ) {
 
@@ -81,6 +88,14 @@ class CommandHandlers(
         // the acknowledgement says what is about to be installed, and the phone's next heartbeat,
         // carrying app_version_code, is what says it happened. See CommandOutcome.Done.after.
         UPDATE_APP to CommandHandler { updateApp() },
+
+        // A parent's adb, relayed through the server to this phone's own adbd. The work that can
+        // fail — finding the port, reaching adbd, the server's 101 — all happens before this
+        // returns, so the acknowledgement says whether a stream is open; the stream itself then
+        // lives on its own threads for as long as adb holds it.
+        OPEN_DEBUG_STREAM to CommandHandler { command ->
+            debug?.invoke(command.params) ?: CommandOutcome.Failed("this device has no remote debugging wired")
+        },
     )
 
     private fun updateApp(): CommandOutcome {
@@ -163,6 +178,7 @@ class CommandHandlers(
         const val UNBLOCK_YOUTUBE_ALL = "UNBLOCK_YOUTUBE_ALL"
         const val SYNC_POLICY = "SYNC_POLICY"
         const val UPDATE_APP = "UPDATE_APP"
+        const val OPEN_DEBUG_STREAM = "OPEN_DEBUG_STREAM"
 
         /**
          * UTC, seconds precision, spelled out — the same reasoning as `Synchronizer.RFC3339`.

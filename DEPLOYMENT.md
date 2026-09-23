@@ -1027,6 +1027,37 @@ capability exists either way; withholding the tool means a model must go through
 `fgctl rm-device … --yes`, where a human types the flag. `tests/e2e/fgctl_test.go` asserts their
 absence, because "we chose not to expose it" is worth nothing if a later change quietly adds them.
 
+### Remote adb: `fgctl adb`
+
+`fgctl adb <device-id>` relays a local port to the phone's own adb, through the control plane, from
+any network (FR-19). SECURITY.md has the trust boundary; what an operator needs is below.
+
+**Once, with the phone in hand:**
+
+1. In the console, **Rules → Allow debugging** on for that child, and wait for the phone to sync.
+2. On the phone, **Developer options → Wireless debugging → Pair device with pairing code**. Keep
+   that screen open.
+3. `fgctl adb <device-id> --pair`, then `adb pair 127.0.0.1:<port it printed> <code on the phone>`.
+
+**Every time after that, from anywhere:**
+
+```sh
+fgctl adb <device-id>            # prints: run: adb connect 127.0.0.1:<port>
+adb connect 127.0.0.1:<port>
+adb -s 127.0.0.1:<port> logcat
+```
+
+The phone finds its own Wireless debugging port and switches Wireless debugging on as device owner
+when it is off; `--port <n>` names the port the phone shows instead. The phone shows a notification
+for as long as a session is open, and each session is audited when it opens and when it closes.
+
+**The reverse proxy must forward an `Upgrade` that is not `websocket`.** Both legs are HTTP/1.1
+requests answered `101 Switching Protocols` with `Upgrade: familyguard-debug`. ingress-nginx
+forwards any Upgrade token with no configuration; a proxy that only special-cases `websocket`
+answers the request as an ordinary GET, and `fgctl adb` then reports the proxy's response rather
+than a stream. The ingress `proxy-read-timeout` (3600 s here, for the event streams) is also what
+ends a session that has been idle for an hour.
+
 ### Windows
 
 `build-fgctl.sh` produces `fgctl-windows-amd64.exe` and `fgctl-windows-arm64.exe`. The config path

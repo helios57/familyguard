@@ -146,9 +146,15 @@
       has no words for it is indistinguishable from one that is about to start, which is the state
       the family phone sat in for a day while the console said the filter was on.
     -->
+    <string name="filter_off_starting">the filter is starting on this phone</string>
     <string name="filter_off_not_started">the phone was asked to start the filter and it has not started</string>
     <string name="filter_off_refused">Android refused to start the filter service (%1$s)</string>
     <string name="filter_off_revoked">the connection was switched off on the phone</string>
     <string name="filter_off_service_stopped">the filter stopped on the phone</string>
     <string name="filter_off_no_forwarder">the filter could not open the socket it forwards queries through</string>
+    <!-- Remote debugging (FR-19). Shown on the child's phone while a parent is connected over adb:
+         a remote shell on somebody's phone must be visible to them. -->
+    <string name="debug_channel">Remote debugging</string>
+    <string name="debug_connected_title">A parent is connected for debugging</string>
+    <string name="debug_connected_text">Your parent is looking at this phone over adb to fix a problem.</string>
 </resources>

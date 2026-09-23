@@ -9,6 +9,7 @@ import java.net.URL
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 
 /** The server answered, and its answer was a refusal. Carries what the server said it was. */
 class ApiException(
@@ -246,7 +247,18 @@ data class UsageResponse(
 data class DeviceCommand(
     @SerialName("id") val id: String = "",
     @SerialName("type") val type: String = "",
+    /**
+     * What the parent asked for, beyond the type. Only OPEN_DEBUG_STREAM reads it (FR-19); every
+     * other command is fully described by its type, which is why this went unread until then.
+     */
+    @SerialName("params") val params: JsonObject = JsonObject(emptyMap()),
 )
+
+/** See [ApiClient.debugLeg]. [request] carries the device token and is never logged. */
+class DebugLegTarget(val host: String, val port: Int, val tls: Boolean, val request: ByteArray)
+
+/** 128 bits in hex, which is what the server's relay mints. */
+private val STREAM_ID = Regex("^[0-9a-f]{32}$")
 
 @Serializable
 data class CommandsResponse(
@@ -486,6 +498,33 @@ class ApiClient(
     private fun effectivePort(u: URL): Int = if (u.port == -1) u.defaultPort else u.port
 
     private fun origin(u: URL): String = "${u.protocol}://${u.host}:${effectivePort(u)}"
+
+    /**
+     * Where this device's leg of a remote adb stream goes, and the request that opens it (FR-19.2).
+     *
+     * Built here, next to every other request this device makes, so that it goes to the server
+     * this device is enrolled with and carries the same credential — the stream is opened on a raw
+     * socket (see [HttpUpgrade]) and the socket is the caller's, but WHERE it goes and AS WHOM is
+     * decided by the same object that decides it for a heartbeat.
+     *
+     * The stream id is checked before it goes anywhere near a request line: it comes from the
+     * server, and a server that sent "\r\n" in it would be writing headers into this device's
+     * request.
+     */
+    fun debugLeg(stream: String): DebugLegTarget {
+        require(stream.matches(STREAM_ID)) { "not a debug stream id: ${stream.take(40)}" }
+        val url = URL(baseUrl)
+        val tls = when (url.protocol.lowercase()) {
+            "https" -> true
+            "http" -> false
+            else -> throw IllegalStateException("the server URL is neither http nor https: ${url.protocol}")
+        }
+        val port = if (url.port == -1) url.defaultPort else url.port
+        val bearer = token() ?: throw IllegalStateException("a debug stream needs a device token and this device has none")
+        val path = url.path.trimEnd('/') + "/api/v1/device/debug/$stream"
+        val hostHeader = if (url.port == -1) url.host else "${url.host}:${url.port}"
+        return DebugLegTarget(url.host, port, tls, HttpUpgrade.request(hostHeader, path, bearer))
+    }
 
     private fun get(path: String): String {
         val connection = connect(path, "GET", authenticated = true)

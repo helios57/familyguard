@@ -72,6 +72,7 @@ type layout struct {
 	Sideways    []renderedScroller `json:"sideways"`
 	Tiny        []renderedBox      `json:"tiny"`
 	SmallFont   []renderedFont     `json:"smallFont"`
+	DeadStyles  []string           `json:"deadStyles"`
 
 	Interactive int `json:"interactive"`
 	Elements    int `json:"elements"`
@@ -99,8 +100,18 @@ const measureJS = `(() => {
     return r.width > 0 && r.height > 0;
   };
 
-  const overflowing = [], sideways = [], tiny = [], smallFont = [];
+  const overflowing = [], sideways = [], tiny = [], smallFont = [], deadStyles = [];
   let elements = 0;
+
+  // A style attribute the CSP dropped: present in the DOM, empty declaration behind it.
+  //
+  // style-src 'self' is the fallback for style-src-attr, so setAttribute('style', …) applies
+  // NOTHING and says nothing — no exception, no page error, just an element drawn with whatever the
+  // stylesheet gave it. Hidden elements are scanned too, because the one screen behind a <dialog>
+  // is exactly where this would next hide.
+  for (const e of document.querySelectorAll('[style]')) {
+    if ((e.getAttribute('style') || '').trim() && !e.style.cssText) deadStyles.push(describe(e));
+  }
 
   for (const e of document.querySelectorAll('body *')) {
     if (!shown(e)) continue;
@@ -147,7 +158,7 @@ const measureJS = `(() => {
     viewportWidth: VIEWPORT,
     scrollWidth: document.scrollingElement.scrollWidth,
     clientWidth: document.scrollingElement.clientWidth,
-    overflowing, sideways, tiny, smallFont, interactive, elements,
+    overflowing, sideways, tiny, smallFont, deadStyles, interactive, elements,
   };
 })()`
 
@@ -213,6 +224,19 @@ func (l layout) check(t *testing.T, screen string) {
 		}
 		t.Errorf("%s: %d tap target(s) below %.0f px, which is the size a thumb hits reliably "+
 			"while standing up:%s", screen, len(l.Tiny), minTapPx, b.String())
+	}
+	// The console computes a handful of dimensions per screen — a quota meter's width, an hour
+	// column's height, a swatch's colour — and every one of them is a number that MEANS something.
+	// Delivered as a style attribute they are dropped by the console's own CSP, silently, and the
+	// element renders with the stylesheet's value instead: the quota meter drew 100% full at every
+	// level of usage for the whole life of this console, because `.meter > span` is `display:block`
+	// with no width of its own. It is not visible to any assertion about text, and it is not visible
+	// to a person either — a full meter is a plausible meter.
+	if len(l.DeadStyles) > 0 {
+		t.Errorf("%s: %d element(s) carry a style attribute the CSP dropped, so they are drawn with "+
+			"the stylesheet's value and not the computed one. Set computed dimensions through CSSOM "+
+			"(`el()`'s object form), never as an attribute:\n  %s",
+			screen, len(l.DeadStyles), strings.Join(l.DeadStyles, "\n  "))
 	}
 	if len(l.SmallFont) > 0 {
 		var b strings.Builder

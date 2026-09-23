@@ -62,4 +62,19 @@ object TunnelPlan {
         }
         return TunnelDecision.Run(policy.mode, upstream)
     }
+
+    /**
+     * Whether a tunnel running [running] can be left exactly as it is when the plan is now [next]
+     * (FR-6.12).
+     *
+     * Every sync re-applies the whole policy, and for months that meant every sync tore the tunnel
+     * down and built it again — every five minutes with the screen on, and on every change a
+     * parent made. A rebuild closes every connection the tunnel is carrying, so an app streaming or
+     * loading a page lost it mid-way, and the phone's report, sent in the same breath, caught the
+     * tunnel between the two runs and said the filter had never started. Nothing in a re-applied
+     * policy that leaves this decision unchanged needs a new tunnel: the rules are swapped into the
+     * running engine in place (FilterState.refresh), and the decision already holds everything the
+     * tunnel is built from — the route and where queries go.
+     */
+    fun keeps(running: TunnelDecision.Run?, next: TunnelDecision): Boolean = running != null && next == running
 }

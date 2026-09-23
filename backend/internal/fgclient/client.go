@@ -135,22 +135,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, aut
 		return fmt.Errorf("reading the response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		apiErr := &APIError{Status: resp.StatusCode}
-		var envelope struct {
-			Error     string `json:"error"`
-			Message   string `json:"message"`
-			RequestID string `json:"request_id"`
-		}
-		if json.Unmarshal(payload, &envelope) == nil && envelope.Error != "" {
-			apiErr.Code, apiErr.Message, apiErr.RequestID = envelope.Error, envelope.Message, envelope.RequestID
-		} else {
-			// Not the server's envelope at all -- an ingress 502, or an HTML error page. Say so
-			// rather than inventing a code, and keep a little of the body: "unexpected response"
-			// with nothing in it is the least useful error a CLI can print.
-			apiErr.Code = "unexpected_response"
-			apiErr.Message = summarise(payload)
-		}
-		return apiErr
+		return apiError(resp.StatusCode, payload)
 	}
 	if out == nil {
 		return nil
@@ -159,6 +144,27 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, aut
 		return fmt.Errorf("decoding the response from %s: %w", path, err)
 	}
 	return nil
+}
+
+// apiError decodes a refusal. Shared by every request shape this client makes, so a debug stream
+// the server refused reads exactly like any other refused request.
+func apiError(status int, payload []byte) *APIError {
+	apiErr := &APIError{Status: status}
+	var envelope struct {
+		Error     string `json:"error"`
+		Message   string `json:"message"`
+		RequestID string `json:"request_id"`
+	}
+	if json.Unmarshal(payload, &envelope) == nil && envelope.Error != "" {
+		apiErr.Code, apiErr.Message, apiErr.RequestID = envelope.Error, envelope.Message, envelope.RequestID
+	} else {
+		// Not the server's envelope at all -- an ingress 502, or an HTML error page. Say so
+		// rather than inventing a code, and keep a little of the body: "unexpected response"
+		// with nothing in it is the least useful error a CLI can print.
+		apiErr.Code = "unexpected_response"
+		apiErr.Message = summarise(payload)
+	}
+	return apiErr
 }
 
 // summarise turns an unexpected body into one short line. Bodies of this kind are HTML often enough

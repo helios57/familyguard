@@ -6884,28 +6884,66 @@ the child next picks up the phone is one a parent cannot see tonight.
 - **`localDay` uses `AddDate(0, 0, 1)`, not `Add(24h)`.** On the morning the clocks go forward the
   day really is 23 hours long, and a fixed 24 would clip the evening onto the next day.
 
-`GET /devices/:id/usage/timeline` answers `{day, timezone, from, to, sessions, ever_reported}`.
-`ever_reported` is asked on **every** request rather than on a second one: "nothing was opened
-today" and "this phone has never reported a sitting" look identical on screen and have opposite
-remedies, and only the server can tell them apart.
+`GET /devices/:id/usage/timeline` answers
+`{day, timezone, from, to, hours, apps, sessions, ever_reported}`. `ever_reported` is asked on
+**every** request rather than on a second one: "nothing was opened today" and "this phone has never
+reported a sitting" look identical on screen and have opposite remedies, and only the server can
+tell them apart.
 
-### 30.4 — the console: the strip is shape, the list is the measure
+`hours` is the sittings **intersected** with each hour of the child's day, computed by
+`hourlyScreenTime` walking `start.Add(time.Hour)` from `from` to `to`. Intersection rather than a
+`GROUP BY`, because a sitting is stored whole: "how long was the screen on between 20:00 and 21:00"
+is not a question about which hour it began in. Walking instants rather than clock numbers is what
+makes the two DST mornings right — a loop over 0…23 invents an 02:00 in March and draws October's
+repeated 02:00 once.
 
-At 320 px a 24-hour track gives about 13 pixels an hour, so a four-minute sitting is under a pixel
-wide. Drawn honestly it is invisible; drawn to a minimum width it is a lie about duration. So the
-strip carries `min-width: 2px` **and says so in words**, and every number a parent might act on is
-text in the list below it. Sub-minute sittings are drawn and counted, never listed as "0 min".
+`apps` is the same day totals `/usage` reports, served here so the console spends **one** request
+per phone for the whole tab. `sessions` stays in the response even though the console no longer
+draws it: the sittings are the record FR-3.7 is about, `hours` is a summary of them, and a summary
+is not something to hand an API caller instead of the thing it was computed from.
 
-Positions are fractions of the server's own `from`/`to`, not of a fixed 24 hours — which is what
-makes the 23- and 25-hour days right — and every clock face is formatted with
-`Intl.DateTimeFormat({timeZone: <the child's>})`, so a parent in another country reads their child's
-evening as an evening. A browser that cannot resolve the zone says which zone it used instead.
+### 30.4 — the console: the day hour by hour, and the table under it
 
-Colours are hashed from the package name, so the same app is the same colour every time the card is
-drawn; a strip where yesterday's blue is today's orange teaches nothing. The swatch is
-`aria-hidden` and never the only carrier of a distinction — the row names the app in text.
+The first version of this card was a sitting strip — a 24-hour track with one block per sitting and
+a list of the longest under it. The owner used it and said three things: *"in the webapp i want to
+see a diagramm with ever hour of the day and how long the screen was on. also a table below how long
+every app was used (per day)"*, *"the current activity is useless"*, *"i don't care about commands"*.
+Asked whether to add the chart beside what was there or replace the tab, they chose **replace it
+entirely**. So the Activity tab is now a day picker, the hour chart, the per-app table and the
+Locations card — the 7-day bar chart, the sitting strip and the "Recent changes" audit list are
+gone, and the tab costs **one** request per phone instead of five.
 
-### 30.5 — calibration: 7 probes, 7 red
+**The two halves are different measurements of the same day, on purpose.** The chart is built from
+sittings, which only exist from 0.6.13 onward; the table is built from the cumulative day totals the
+phone has reported since 0.6.0, which are also what the quota is enforced against. An older day
+therefore has a full table and an empty chart, and the card says which of the two it is looking at
+rather than drawing a flat line and letting it read as a quiet day.
+
+**Full column height is a full hour, not the busiest hour of the day.** A scaled axis draws twenty
+minutes and four hours identically on their own days, and the question a parent is asking is "how
+much of that hour", not "how does this hour compare with the rest of this one day". It is the one
+property of the chart that is invisible to any assertion which only checks *which* columns are
+filled, which is why the e2e asserts the height as a share and not as an ordering.
+
+**Empty hours are drawn as a hairline and the axis keeps its blanks.** A chart that omits its quiet
+hours looks like one that failed to load; an axis built only from the hours it labels would space
+them evenly and put every label under the wrong column. Labels go on every third hour — eight fit a
+320 px phone — and each one is a real local hour even on a day that has 23 or 25.
+
+**The table is text, not a second chart.** It is the half a parent acts on: the number that decides
+whether a limit gets set, and a bar a thumb has to estimate against an axis is not a number. The
+chart answers *when*, the table answers *how much*. Sub-minute rows are counted rather than listed —
+they all round to "0 min", and a screenful of zeros is how a real list gets learned as noise — but
+the count is printed, because dropping them silently would understate the day.
+
+Every hour label and every day boundary comes from `Intl.DateTimeFormat({timeZone: <the child's>})`,
+so a parent in another country reads their child's evening as an evening; a browser that cannot
+resolve the zone says which zone it used instead. Colours are hashed from the package name, so the
+same app is the same colour every time the card is drawn. The swatch is `aria-hidden` and never the
+only carrier of a distinction — the row names the app in text, and the chart is one `role="img"`
+whose label is the sentence a parent would be told.
+
+### 30.5 — calibration: 12 probes, 12 red
 
 | # | file | the one value | measured |
 |---|---|---|---|
@@ -6916,11 +6954,28 @@ drawn; a strip where yesterday's blue is today's orange teaches nothing. The swa
 | 5 | `app.js` | the card formats hours in the **browser's** timezone | **RED** ×3 in a real browser — the strip, the list and the axis all shifted six hours |
 | 6 | `telemetry.go` | the upsert takes the latest report instead of the longest | **RED** — *a shorter retry SHORTENED a stored sitting* |
 | 7 | `devices.go` | the day window is cut at UTC midnight, not the child's | **RED** — the axis only; the sittings still fell inside the UTC day, which is why the axis assertion was worth writing |
+| 8 | `devices.go` | `hourlyScreenTime` clips the overlap at the SITTING's end instead of the hour's | **RED** ×2 — *a sitting inside one hour lands entirely in it* (13:00 held 1800 s) and *a sitting across a boundary is split* (19:00 held 5400 s; the day totalled 112 800 s of a possible 86 400) |
+| 9 | `devices.go` | the hour loop runs a fixed 24 hours instead of walking to the day's own end | **RED** ×2 — both DST subtests, 24 buckets where 23 and 25 were wanted |
+| 10 | `app.js` | the hour chart's formatter uses the **browser's** timezone (probe 5, re-taken on the new card) | **RED** ×10 — *the chart starts at "08 · 0 s"; the child's day starts at "00"*, and the 09:00, 12:00 and 14:00 columns each read empty and 0.0 % tall |
+| 11 | `app.js` | a column is scaled to the day's busiest hour instead of to a full hour | **RED** ×3 — 09:00 drew 100.0 % where 55 min is 91.7 %, 12:00 27.3 % for 25.0 %, 14:00 91.5 % for 83.9 % |
+| 12 | `app.js` | `el()` applies `style` as an ATTRIBUTE again, the form the CSP drops | **RED** on every screen that draws a computed size — home 2, activity 3, drawer 2, the provisioning sheet 2, the replace-phone confirmation 2, and 26 on the timeline card, each named by the dead-style control |
 
 **Probe 3 was taken twice, and the first one stayed green.** That is the finding, not a footnote: the
 test as first written had the sent batch as a prefix of the queue, so the count form and the identity
 form agreed and it proved nothing about the claim in its own name. It was rewritten around a prune
 before the probe was re-taken.
+
+**Probes 5 and 7 were taken against the sitting strip that §30.4 has since replaced.** They are
+recorded as they were measured rather than rewritten: what they establish — that the card's clock
+faces come from the child's policy and not from the browser, and that the day window is the child's
+rather than UTC's — is the same property the hour chart carries, and it was re-taken against the new
+card (probes 10 and 11 above) rather than inherited.
+
+**Probe 11 was taken twice, and the first result was never read.** The first run's log lived in a
+session scratchpad that was cleared before anyone looked at it, and the probe was still applied to
+`app.js` when the work resumed. It was restored by hand to the fixed-axis line, `node --check`ed,
+and the probe was re-taken from that state; the table records the second run, which is the only
+one with evidence behind it.
 
 **Probe 7's first shape was a compile error, not a gate firing.** Replacing `time.ParseInLocation`
 with `time.Parse` left `loc` declared and unused; the build failed and the suite reported NOT
@@ -6937,9 +6992,40 @@ child's policy.
 
 **An eighth red nobody planned: the emptiness suite's collection ratchet.** `TestAFreshSystemShowsAsEmpty` reads every list the store can return and asserts it arrives as the literal `[]` rather than `null` — because `for (const s of null)` throws in the browser and renders nothing at all, with no error. It matches `func (s *Store) X(…) ([]` across the store source, so a new collection cannot arrive without an entry, and it went red naming `UsageSessionsBetween` on the first full sweep after this phase was written. The timeline is the emptiest thing in the product on a fresh phone, so that was the right place to catch it. Registered at `stageCreated` against `/devices/:id/usage/timeline`; the ratchet is two-way, so the entry cannot outlive the function either.
 
-**And a ninth, from the mobile suite: the day stepper's arrows were 42 px wide.** `.btn` set `min-height: var(--tap)` and nothing about width, which is invisible for every button whose label is a word and two pixels short for one whose label is a glyph. `TestConsoleRendersOnAPhone` named both arrows on the activity tab, and `TestTheConsoleDrawsWhatRanWhen` named all four of its own — through the `b.measure(t, "activity/timeline").check(...)` line added for the strip's absolute positioning, which found a different defect than the one it was written for. Fixed on `.btn` rather than on `.tl-nav`, because the missing dimension is the root cause and the next icon-only button would repeat it: of every button the mobile suite renders across the five tabs, those two were the only ones under the floor, so the `min-width` widens nothing that was already right.
+**And a ninth, from the mobile suite: the day stepper's arrows were 42 px wide.** `.btn` set `min-height: var(--tap)` and nothing about width, which is invisible for every button whose label is a word and two pixels short for one whose label is a glyph. `TestConsoleRendersOnAPhone` named both arrows on the activity tab, and `TestTheConsoleDrawsWhatRanWhen` named all four of its own — through the `b.measure(t, "activity/timeline").check(...)` line added for the strip's absolute positioning, which found a different defect than the one it was written for.
 
-Cumulative: **73 probes, 72 red and one deliberate green.**
+**The first fix was the root-cause one, it was green here, and CI was right to refuse it.** `min-width: var(--tap)` went on `.btn` itself — the missing dimension rather than the two buttons that happened to expose it — with a comment claiming it "widens nothing that was already right", measured across the five tabs this renderer draws. CI then failed two screens it had never failed: `apps: the page scrolls sideways (362 px of content in a 360 px viewport)`, and the same for the app-catalog sheet, with `dialog#sheet.sheet`, `div.sheet-head` and `div#sheet-body.sheet-body` all reported at `x 0…362`. The sheet header's icon-only `✕` grew by the same two pixels, and *that* row had no slack: the claim was true of my renderer's font metrics and false of CI's, which is a claim no single machine can settle — **a width that depends on how a glyph measures is not a number one renderer can be asked about.** Reverted to `.tl-nav .btn { flex: 0 0 auto; min-width: var(--tap) }`, which is narrower than the root cause on purpose, and the CSS carries the reason so the next reader does not re-derive it. The general fix is not abandoned; it has to arrive **with** the sheet header's grid rather than ahead of it, because the header is the thing that has to give the two pixels back.
+
+That cost the release: the `Release` workflow for `v0.6.13` failed at the e2e job, `publish` was skipped, and GHCR answered **404** for the `0.6.13` manifest while `0.6.12` answered 200 — so the tag was deleted rather than left pointing at an image that does not exist. DEPLOYMENT.md's rule is that a published tag never moves onto a fix; the counterpart, exercised here, is that a tag whose artefact was never published is not published, and deleting it is the one case where re-cutting the same number is honest.
+
+**And a tenth, which is the biggest thing this phase found and has nothing to do with this phase:
+every computed dimension in the console was being dropped by the console's own CSP.** The new chart
+asserts a column's HEIGHT rather than merely which columns are filled, and the first run came back
+`column "09 · 55 min" carries an unreadable height ""` — the style attribute was in the DOM and the
+declaration behind it was empty.
+
+`style-src 'self'` is the fallback for `style-src-attr`, so `setAttribute('style', …)` applies
+**nothing**: no exception, no page error, no entry anywhere the page can see. The element is drawn
+with whatever the stylesheet gave it. Measured as an A/B on one page in the same browser, the header
+being the only variable — with CSP, `getAttribute('style')` is `height:42.5%` and `style.cssText` is
+empty; without it, both agree; and the same value set through CSSOM applies under both, which is the
+positive control that makes the negative half mean something.
+
+Four call sites, and two of them were **the quota meter**. `.meter > span` is `display: block` with
+`height: 100%` and no width of its own, so a block-level span fills its containing block: **the
+quota meter has drawn completely full at every level of usage for the whole life of this console**,
+on the home strip and on the device card. It is invisible to every assertion about text, and it is
+invisible to a person too, because a full meter is a plausible meter. The other two were the hour
+column's height and the app swatch's colour, which has been transparent since it was written.
+
+Fixed at the root: `el()` now takes `style` as an OBJECT and applies each property through
+`n.style.setProperty`, which CSP does not restrict, and **throws** on a string so the attribute form
+cannot come back by habit. The standing control is in the mobile suite, which already walks every
+element of every screen: any element carrying a non-empty `style` attribute with an empty
+declaration behind it fails the screen by name. It scans hidden elements too — the screen behind a
+`<dialog>` is exactly where this would next hide.
+
+Cumulative: **78 probes, 77 red and one deliberate green.**
 
 ### 30.6 — what is NOT proven
 
@@ -6956,6 +7042,170 @@ Cumulative: **73 probes, 72 red and one deliberate green.**
 - **`SessionLog.clear()` is not called from production**, exactly like `UsageLedger.clear()` beside
   it and with the same KDoc — there is no un-enrollment path on the device that forgets measured
   usage, and this phase did not add one. Both are reachable only from tests today.
-- **Only today's timeline is reachable from the totals card.** The day stepper walks backwards one
-  day at a time; there is no way to jump to a date, and no correlation drawn between the seven-day
-  bar chart above and the strip below.
+- **One day at a time.** The day stepper walks backwards a day per tap; there is no way to jump to
+  a date.
+
+---
+
+## Phase 31 — adb from anywhere, and the filter that rebuilt itself every five minutes (FR-19, FR-6.11, FR-6.12)
+
+Two messages from the owner on 2026-09-23, with the family phone in daily use:
+
+> *"The ad filter is not running on this phone. The phone says: the filter has not started on this
+> phone."* — and then — *"on the phone is says the filter is on"*
+>
+> *"i cant open the jellifin app on the phone, i can open it and type in the server but then the
+> screen just stays black"* — and, once the filter was switched off — *"when i turn of the filter
+> jellyfin works, so its a bug"*
+
+and a third, which is what this phase is mostly about:
+
+> *"can you add an adb-tunnel into the familyguard app, so its possible to remotely debug the phone
+> … without beeing on the same netowrk … the goal is that this agent here (claude code) is able to
+> open the adb to debug the phone directly to speed up the bugfixing and development, we can remove
+> it later if its not needed any more"*
+
+### 31.1 — the filter was on, and the report said it had never started
+
+The server's row for the family phone, read from the database: `app_version 0.6.12`, seen 19 s
+earlier, **181 115 rules** fetched the evening before, `ad_filter_running = false`, and the reason
+`the filter has not started on this phone` — which is `FilterReport.NOTHING_RECORDED`, the words for
+a reason that is null **or blank**. The phone's own notification said the filter was on.
+
+Every sync sends the service `ACTION_POLICY_CHANGED`, changed or not, and the service's first act
+was `startTunnel()` → `stopTunnel("restarting")`: the tunnel was torn down and built again. The
+heartbeat goes out in the same `applyFrom` call, straight after the apply, so it lands inside the
+rebuild: `tunnelUp` already false, and `standReason` still the `""` that the previous run's success
+left behind — blank, therefore "has not started". That is a report defect, and the rebuild under it
+is a product defect: **every rebuild closes every connection the tunnel carries**, and it happened
+every five minutes with the screen on and on every change a parent made anywhere in the policy.
+
+Two fixes, both on the phone:
+
+- **FR-6.12: a sync that leaves the plan unchanged leaves the tunnel alone.** The engine is a
+  singleton whose rules are replaced in place (`FilterState.refresh`), so a new list never needed a
+  new tunnel; everything the tunnel is BUILT from is in `TunnelDecision.Run` — the route and the
+  resolvers. `TunnelPlan.keeps(running, next)` is that comparison, and the service consults it
+  before resetting the watchdog or touching the tunnel.
+- **FR-6.11: a tunnel being built says so.** `startTunnel` writes "the filter is starting on this
+  phone" before anything that takes time; every branch after it overwrites it.
+
+**What this does NOT claim: that Jellyfin is fixed.** The black screen appears immediately after the
+server address is entered, not after five minutes, so the rebuild is not a sufficient explanation;
+switching the filter off fixes it, so the filter is involved. The cause will be read from the
+phone's own log over 31.2 rather than guessed at — see 31.5.
+
+### 31.2 — remote adb: the server is a relay and nothing more
+
+A session is two HTTP requests that each become a raw stream, and a command between them:
+
+1. `fgctl adb <device>` listens locally. Each connection adb makes to it becomes
+   `GET /api/v1/devices/:id/debug` with `Upgrade: familyguard-debug`. The server refuses there —
+   in a sentence, before the phone is asked — unless the child's **Allow debugging** is on, then
+   queues `OPEN_DEBUG_STREAM {stream, target, port}` and waits up to 30 s.
+2. The phone fetches the command, finds its adbd (below), connects to it on 127.0.0.1, and dials
+   `GET /api/v1/device/debug/:stream` with its own device token.
+3. The server answers both 101 and splices them. adb's pairing and its connection are TLS between
+   the parent's adb and the phone's adbd, so the relay carries bytes it cannot read, and **a
+   compromised control plane cannot open a session either**: adbd refuses any key the phone has not
+   paired.
+
+Upgrade rather than WebSocket, because nothing here has frames to carry — adb is already a stream —
+and a WebSocket would mean a framing layer on both ends and a library on a device-owner app.
+ingress-nginx forwards any Upgrade token. The client pins ALPN `http/1.1`: net/http would otherwise
+offer HTTP/2, which has no Upgrade.
+
+`OPEN_DEBUG_STREAM` is deliberately **not** in `ValidCommandTypes` — a row queued through the
+generic POST would make the phone dial a stream nobody is waiting for. It is in a second set,
+`RelayCommandTypes`, and the device-handler parity test now reads both, so the phone cannot lack a
+handler for anything the server can ever queue.
+
+**Finding the port.** adbd picks a new port each time Wireless debugging starts and announces it
+only over mDNS (`_adb-tls-connect._tcp`, and `_adb-tls-pairing._tcp` while the pairing dialog is
+open); the system property that holds it is not readable by an app. The phone discovers its own
+announcement through `NsdManager` — keeping only an address that is one of its own, so a laptop on
+the same Wi-Fi can never receive a child's session. When nothing is announced it asks for
+`adb_wifi_enabled` as device owner, reads it back, and says in words why not if it did not take.
+`--port` overrides discovery.
+
+**The phone shows it.** A notification on its own channel, at default importance, for as long as
+any stream is open.
+
+### 31.3 — calibration
+
+Every probe changed one value with the structure intact, and every file was restored and compared
+byte-for-byte with `cmp -s`.
+
+| # | file | the one value | measured |
+|---|---|---|---|
+| 1 | `debugrelay.go` | the phone→parent copy writes to `io.Discard` | **RED** — *the adbd banner never reached the parent* |
+| 2 | `debugrelay.go` | `claim` ignores which device is dialling | **RED** — *ANOTHER phone claimed this phone's debug stream: answered 101* |
+| 3 | `debugrelay.go` | the Allow-debugging gate is skipped | **RED** ×2 — *fgctl did not say WHY* and *a debug stream was queued for a phone whose debugging is off* |
+| 4 | `deviceapi.go` | a failed acknowledgement is not forwarded to the waiting parent | **RED** ×2 — *the phone's sentence did not reach the parent*, and *the refusal took 30.02 s* |
+| 5 | `debugrelay.go` | the hijacked connection's deadline is NOT cleared | **GREEN** — see below |
+| 5b | `debugrelay.go` | a 30 s deadline is planted on the hijacked connection | **RED** — *after 35 s idle the stream no longer carries bytes* |
+| 6 | `HttpUpgrade.kt` | the head reader stops one byte early | **RED** — *the session's first bytes were consumed with the HTTP head* |
+| 7 | `TunnelPlan.kt` | `keeps` always says rebuild | **RED** — *a tunnel matching the policy was rebuilt anyway* |
+| 8 | `RemoteDebug.kt` | the phone connects to the port it was given **plus one** — on a real API 37 emulator | **RED** — *the phone refused the stream: … nothing on this phone accepts connections on port 5555 (HTTP 502)*, the phone's sentence carried phone → server → `fgctl`; the clean build then **PASSED** on the same test: `adb shell getprop ro.serialno` through the relay returned the emulator's own serial, and the child-visible notice was up during the session and gone after it |
+
+**Probe 5 stayed green, and that is the finding.** The comment it was aimed at claimed the server's
+`ReadTimeout` survives a hijack and would end every session thirty seconds in. It does not:
+net/http's `connReader.abortPendingRead` resets the read deadline to zero on the way out of
+`Hijack`. The line is kept as belt and braces — a `WriteTimeout` added later WOULD survive — and the
+comment now says what was measured. 5b is what shows the test can see a surviving deadline at all.
+
+**Probes 3 and 4 first went red for the wrong reason.** Without their fixes the relay waits out the
+server's 30 s dial window, and the tests gave up after 15 s — red on "had not exited", not on the
+sentence that names the defect. The tests now outwait the window, so the red lands on the assertion
+about the missing behaviour; the green path is unaffected because a refusal ends the relay at once.
+
+**The emulator found a defect none of the relay tests could, because they all dialled at leisure.**
+`adb connect` gives a new connection about ten seconds to answer. The first `fgctl` asked for the
+phone only when adb connected, and reaching a phone is a command, a wake-up, a sync and a dial — so
+on an emulator that had just rebooted, adb gave up with *failed to connect* while the phone had not
+yet opened its event stream. `fgctl adb` now reaches the phone **as it starts** and keeps one
+stream ready, so adb is answered the moment it connects, and a refusal is printed straight away
+instead of whenever someone first runs adb. `TestRemoteADBRelaysBytesBothWays` now asserts both
+halves: the phone is reached before any adb connection, and adb's first byte arrives within 2 s.
+
+**And the device test itself raced the phone, and passed once by luck.** It waited for any
+`last_seen`, which the pre-reboot enrolment had already written, then connected adb at once. It
+now waits for a heartbeat newer than the reboot and for `fgctl` to report the phone's answer — the
+order a person follows — and probe 8 above was taken only after that correction, so its red names
+the phone's refusal rather than a timeout.
+
+**Three bench defects on the way, none in the product, all fixed where they live.** The API 37
+AVD's `surfaceflinger` still aborts in the goldfish mapper and takes `system_server` with it
+(Phase 13); SystemUI disabled, as recorded there. An install straight after `sys.boot_completed`
+died inside the platform (`NullPointerException … PackageManagerInternal.freeStorage`), so
+`remote-adb.sh` waits for the unlocked user before installing. And `ensure_device_owner`'s five
+attempts five seconds apart all fell inside the window where a freshly wiped AVD at load average
+14–20 claims *"already some accounts on the device"* over `Accounts: 0`; the identical command
+succeeded minutes later, so the retry is now a 120 s deadline rather than a count. Finally, after
+`adb connect` the host lists two devices, and the test's own log capture died on *"more than one
+device/emulator"* — the emulator's serial is pinned before the relay adds the second.
+
+**A citation that pointed at the wrong requirement, and passed.** The first draft cited FR-18 for
+all of this. FR-18 is the family blocklist; `RequirementCitationsTest` checks that a cited number
+EXISTS, and FR-18.1–18.3 do, so every citation resolved — to a requirement about something else.
+Caught by reading REQUIREMENTS.md before writing into it, not by any check. Renumbered to FR-19.
+
+Cumulative: **87 probes, 85 red, one deliberate green, and one green (31.3 probe 5) that corrected a
+comment rather than a test.**
+
+### 31.4 — what is NOT proven
+
+- **Wireless debugging itself.** The emulator's adbd has no mDNS announcement and no TLS pairing, so
+  the device test names the port and uses adbd's plain TCP mode. Port discovery through
+  `NsdManager`, the device-owner switch for `adb_wifi_enabled`, and the pairing leg are exercised
+  only on the family phone, on its first session.
+- **The TLS leg through the real ingress.** Every test dials the server over plain HTTP on the
+  bench; the family phone's leg is HTTPS through ingress-nginx, which is documented to forward any
+  Upgrade token and has not been watched doing it for this one.
+- **Jellyfin.** FR-6.12 removes a real defect the owner's report exposed, but nothing here shows it
+  was THE defect behind the black screen; the phone's own log over this tunnel is how that gets
+  answered.
+- **FR-6.12's service wiring.** `TunnelPlan.keeps` is unit-tested and calibrated; the service
+  calling it on every sync is not driven by any test, and the phone's log line *policy re-applied;
+  the running tunnel already matches it* is the evidence to look for.
+

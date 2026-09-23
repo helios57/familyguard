@@ -1,6 +1,7 @@
 package io.github.helios57.familyguard.filter
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -112,5 +113,48 @@ class TunnelPlanTest {
         assertTrue("expected a refusal, got $decision", decision is TunnelDecision.Stand)
         val reason = (decision as TunnelDecision.Stand).reason
         assertTrue("\"$reason\" does not mention \"$fragment\"", reason.contains(fragment))
+    }
+
+    // ---- keeps: a re-applied policy must not rebuild a tunnel that already matches it ----
+
+    @Test
+    fun `a sync that changes nothing keeps the running tunnel`() {
+        val running = TunnelDecision.Run(RouteMode.FULL, resolvers)
+        // A new list compiled since, which is swapped into the engine in place: a different rule
+        // count, the same plan.
+        val next = TunnelPlan.decide(on, upstream = resolvers, ruleCount = 181_200)
+
+        assertTrue("a tunnel matching the policy was rebuilt anyway", TunnelPlan.keeps(running, next))
+    }
+
+    @Test
+    fun `a changed route rebuilds the tunnel`() {
+        val running = TunnelDecision.Run(RouteMode.FULL, resolvers)
+        val next = TunnelPlan.decide(on.copy(mode = RouteMode.DNS_ONLY), upstream = resolvers, ruleCount = 10)
+
+        assertFalse(TunnelPlan.keeps(running, next))
+    }
+
+    @Test
+    fun `a moved resolver rebuilds the tunnel`() {
+        val running = TunnelDecision.Run(RouteMode.FULL, resolvers)
+        val next = TunnelPlan.decide(on, upstream = listOf("198.51.100.53"), ruleCount = 10)
+
+        assertFalse(TunnelPlan.keeps(running, next))
+    }
+
+    @Test
+    fun `a filter switched off is never kept`() {
+        val running = TunnelDecision.Run(RouteMode.FULL, resolvers)
+        val next = TunnelPlan.decide(FilterPolicy(enabled = false), upstream = resolvers, ruleCount = 10)
+
+        assertFalse(TunnelPlan.keeps(running, next))
+    }
+
+    @Test
+    fun `nothing running is never kept`() {
+        val next = TunnelPlan.decide(on, upstream = resolvers, ruleCount = 10)
+
+        assertFalse(TunnelPlan.keeps(null, next))
     }
 }

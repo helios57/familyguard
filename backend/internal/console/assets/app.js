@@ -159,7 +159,18 @@ const el = (tag, attrs = {}, ...kids) => {
     if (k === 'class') n.className = v;
     else if (k === 'text') n.textContent = v;
     else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
-    else n.setAttribute(k, v === true ? '' : String(v));
+    // A style ATTRIBUTE is blocked by this console's own CSP and fails SILENTLY: `style-src 'self'`
+    // is the fallback for `style-src-attr`, so `setAttribute('style', …)` leaves the attribute in
+    // the DOM with an EMPTY declaration behind it. Nothing throws, nothing is logged where the page
+    // can see it, and the element simply renders with whatever the stylesheet gave it. That is how
+    // the quota meter came to draw full at every level of usage for the whole life of this console.
+    // CSSOM is not restricted by CSP, so every computed dimension goes through setProperty.
+    else if (k === 'style') {
+      if (typeof v === 'string') {
+        throw new TypeError('el(): style must be an object — a style attribute is dropped by the CSP');
+      }
+      for (const [prop, value] of Object.entries(v)) n.style.setProperty(prop, value);
+    } else n.setAttribute(k, v === true ? '' : String(v));
   }
   for (const kid of kids.flat()) {
     if (kid === null || kid === undefined || kid === false) continue;
@@ -646,7 +657,7 @@ function statusStrip(data) {
         ? el('span', { class: 'meter', title: fmtMinutes(used) + ' of ' + fmtMinutes(quota) },
           el('span', {
             class: used >= quota ? 'over' : '',
-            style: 'width:' + Math.min(100, Math.round((used / quota) * 100)) + '%',
+            style: { width: Math.min(100, Math.round((used / quota) * 100)) + '%' },
           }))
         : el('span', { class: 'badge', text: fmtMinutes(used) }));
   });
@@ -855,7 +866,7 @@ function deviceCard(dev, desired) {
         el('div', { class: 'row' },
           el('span', { class: 'muted', text: 'Screen time today' }),
           el('span', { text: fmtMinutes(used) + ' of ' + fmtMinutes(quota) })),
-        el('div', { class: 'meter' }, el('span', { class: used >= quota ? 'over' : '', style: 'width:' + pct + '%' }))));
+        el('div', { class: 'meter' }, el('span', { class: used >= quota ? 'over' : '', style: { width: pct + '%' } }))));
     } else {
       body.push(el('p', { class: 'muted', text: 'Screen time today: ' + fmtMinutes(used) + ' (no daily limit)' }));
     }
@@ -1875,12 +1886,12 @@ async function loadActivity() {
   const devices = await api('/devices?child_id=' + encodeURIComponent(state.childId));
   const list = (devices.devices || []).filter((d) => d.enrolled);
   const day = state.timelineDay ? '?day=' + encodeURIComponent(state.timelineDay) : '';
-  const [usage, timelines, locations, audit, policy] = await Promise.all([
-    Promise.all(list.map((d) => api('/devices/' + d.id + '/usage').catch(() => null))),
+  // One request per phone for the whole tab. The timeline endpoint answers for ONE day in the
+  // child's timezone and carries both halves of this page — the hours and the app totals — so the
+  // separate /usage and /audit calls this used to make are gone rather than merely unread.
+  const [timelines, locations] = await Promise.all([
     Promise.all(list.map((d) => api('/devices/' + d.id + '/usage/timeline' + day).catch(() => null))),
     Promise.all(list.map((d) => api('/devices/' + d.id + '/locations?limit=5').catch(() => null))),
-    api('/audit?limit=40').catch(() => ({ entries: [] })),
-    api('/children/' + state.childId + '/policy'),
   ]);
   // The server decides what "today" is, in the child's timezone. Asked once, on the first load that
   // did not name a day, and never overwritten — a parent who has stepped back three days must not
@@ -1889,51 +1900,171 @@ async function loadActivity() {
     const answered = timelines.find((t) => t && t.day);
     if (answered) state.timelineToday = answered.day;
   }
-  return { devices: list, usage, timelines, locations, audit: audit.entries || [], policy };
+  return { devices: list, timelines, locations };
 }
 
 /**
- * The day's usage, one row per app, longest first.
+ * One day of one phone: when the screen was on, hour by hour, and what was open for how long.
  *
- * Two things were wrong with the list this replaces, and together they made the card answer a
- * different question from the one a parent asks it. It printed `s.package_name`, so the row read
- * "com.sec.android.app.launcher" rather than "One UI Home"; and it took `.slice(0, 5)`.
+ * The two halves are DIFFERENT MEASUREMENTS of the same day and that is deliberate, because they
+ * fail in different ways and a parent should be able to tell which one is missing.
  *
- * Five is not a small sample of this list, it is the wrong five. Measured on the family phone on
- * 2026-09-20: 43 packages, 99 minutes, and the top five were YouTube, the launcher, the gallery,
- * the screenshot tool and Settings — four of them things nobody chose to open. Brawl Stars,
- * WhatsApp, LEGO and Hay Day sat at ranks 7 to 10 and could not appear at all. "Which app was used
- * how long" was recorded correctly all along and simply never shown.
+ * The chart is built from sittings — intervals with a real start and end — which only exist from
+ * 0.6.13 onward. The table is built from the cumulative day totals the phone has reported since
+ * 0.6.0, which are also what the daily quota is enforced against. So an older day has a table and
+ * an empty chart, and that is an honest picture rather than a broken one: the card says which of
+ * the two it is looking at rather than drawing a flat line and letting it read as a quiet day.
+ *
+ * Every hour label and every day boundary comes from the CHILD's timezone, which the server
+ * resolved — a parent reading this from another country sees their child's evening as an evening.
+ */
+function dayActivityCard(dev, timeline) {
+  if (!timeline) {
+    return el('div', { class: 'card' },
+      el('div', { class: 'card-head' }, el('h2', { text: dev.name })),
+      el('p', { class: 'warn', text: 'This day could not be loaded for ' + dev.name + '.' }));
+  }
+
+  const hours = timeline.hours || [];
+  const apps = timeline.apps || [];
+  const usedMs = apps.reduce((sum, a) => sum + (a.foreground_ms || 0), 0);
+  const chartSeconds = hours.reduce((sum, h) => sum + h.seconds, 0);
+
+  // The child's zone, not the parent's, and a browser that cannot resolve the name says so instead
+  // of silently drawing the parent's own hours onto the child's day.
+  let fmtHour = null;
+  let fmtDay = null;
+  try {
+    const h = new Intl.DateTimeFormat([], { timeZone: timeline.timezone, hour: '2-digit', hour12: false });
+    const d = new Intl.DateTimeFormat([], {
+      timeZone: timeline.timezone, weekday: 'short', day: 'numeric', month: 'short',
+    });
+    fmtHour = (ms) => h.format(new Date(ms));
+    fmtDay = (ms) => d.format(new Date(ms));
+  } catch (e) {
+    fmtHour = null;
+  }
+  const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const hourLabel = fmtHour || ((ms) => String(new Date(ms).getHours()).padStart(2, '0'));
+  const dayLabel = fmtDay ? fmtDay(Date.parse(timeline.from)) : timeline.day;
+
+  // ---- the day stepper ----
+  const step = (glyph, by, disabled) => el('button', {
+    class: 'btn btn-quiet', type: 'button', text: glyph, disabled: disabled || false,
+    'aria-label': by < 0 ? 'Previous day' : 'Next day',
+    onclick: () => { state.timelineDay = shiftDay(timeline.day, by); refresh(); },
+  });
+  const atToday = !!state.timelineToday && timeline.day >= state.timelineToday;
+
+  // ---- the chart ----
+  //
+  // One column per hour the day actually had — 23 or 25 of them on the two mornings the clocks
+  // move, because the server walks instants rather than clock numbers. Full height is a full hour,
+  // fixed rather than scaled to the busiest hour: a scaled axis makes twenty minutes and four hours
+  // draw identically on their own days, and the question a parent is asking is "how much of that
+  // hour", not "how does this hour compare with the rest of this one day".
+  const columns = hours.map((h) => {
+    const share = Math.max(0, Math.min(1, h.seconds / 3600));
+    return el('div', {
+      class: 'hr-col', title: hourLabel(Date.parse(h.start)) + ' · ' + fmtDuration(h.seconds),
+    }, el('div', {
+      class: 'hr-fill' + (h.seconds ? '' : ' empty'),
+      style: { height: (share * 100).toFixed(1) + '%' },
+    }));
+  });
+  // A label every three hours: eight of them fit a 320-pixel phone, and each lands on a real local
+  // hour even on a day that has 23 or 25.
+  const ticks = hours.map((h, i) => el('span', {
+    class: 'hr-tick' + (i % 3 === 0 ? '' : ' blank'),
+    text: i % 3 === 0 ? hourLabel(Date.parse(h.start)) : '',
+  }));
+
+  let chart;
+  if (!hours.length) {
+    chart = el('p', { class: 'muted', text: 'No hours to draw for this day.' });
+  } else if (!chartSeconds) {
+    // "Nothing was opened" and "this phone has never reported one" look identical on screen and
+    // have opposite remedies. Only the server can tell them apart, which is why it answers
+    // `ever_reported` on every request rather than on a second one.
+    chart = timeline.ever_reported
+      ? el('div', {},
+        el('div', { class: 'hr-chart' }, columns),
+        el('div', { class: 'hr-axis' }, ticks),
+        el('p', { class: 'muted', text: 'The screen was not on at any point on this day.' }))
+      : el('p', { class: 'warn', text: dev.name + ' has never reported when its screen was on, so '
+          + 'this chart is empty rather than flat. The table below is measured. The chart fills in '
+          + 'once the phone is running a build that records it — it sends the first hours at its '
+          + 'next sync after updating.' });
+  } else {
+    chart = el('div', {},
+      el('div', {
+        class: 'hr-chart', role: 'img',
+        'aria-label': 'Screen on for ' + fmtDuration(chartSeconds) + ' on ' + timeline.day
+          + ', by hour in ' + timeline.timezone,
+      }, columns),
+      el('div', { class: 'hr-axis' }, ticks));
+  }
+
+  return el('div', { class: 'card' },
+    el('div', { class: 'card-head' },
+      el('h2', { text: dev.name }),
+      el('span', { class: 'badge', text: fmtMinutes(Math.round(usedMs / 60000)) })),
+    el('div', { class: 'toolbar tl-nav' },
+      step('◀', -1, false),
+      el('span', { class: 'muted', text: dayLabel + ' · ' + timeline.timezone }),
+      step('▶', 1, atToday)),
+    fmtHour ? null : el('p', { class: 'warn', text: 'This browser does not know the timezone '
+      + timeline.timezone + ', so the hours below are shown in ' + localZone + ' instead.' }),
+    chart,
+    // Drawn from the same rows either way, so without this a phone that can measure nothing renders
+    // as a day of zeros — a picture of a child who did not touch their phone. Only on a measured
+    // false; `undefined` is a phone that has not said.
+    ((dev.state || {}).usage_access === false)
+      ? el('p', { class: 'warn', text: 'These numbers are not measured. Usage access is off on '
+          + dev.name + ', so every app reports zero. Turn it on in the phone’s Settings '
+          + '→ Apps → Special app access → Usage access.' })
+      : null,
+    appUsageTable(apps));
+}
+
+/**
+ * Every app that was open on the day, longest first, as text.
+ *
+ * Text rather than a second chart on purpose: this is the half a parent acts on — it is the number
+ * that decides whether a limit gets set — and a bar a thumb has to estimate against an axis is not
+ * a number. The chart above answers "when", this answers "how much".
  *
  * Sub-minute rows are counted rather than listed. They round to "0 min", and a screenful of apps
  * all reporting zero is how a real list gets learned as noise — but dropping them silently would
  * understate the day, so the count says how many there are.
  */
-function appUsageList(packages) {
-  if (!packages.length) {
-    return el('p', { class: 'muted', text: 'No app-level detail reported for today.' });
+function appUsageTable(apps) {
+  if (!apps.length) {
+    return el('p', { class: 'muted', text: 'No app was open on this day.' });
   }
-  const minutes = (s) => Math.round(s.foreground_ms / 60000);
-  const shown = packages.filter((s) => minutes(s) >= 1);
-  const brief = packages.length - shown.length;
+  const minutes = (a) => Math.round(a.foreground_ms / 60000);
+  const shown = apps.filter((a) => minutes(a) >= 1);
+  const brief = apps.length - shown.length;
   if (!shown.length) {
-    return el('p', { class: 'muted', text: packages.length + ' app(s) were opened today, none of them for a full minute.' });
+    return el('p', { class: 'muted', text: apps.length + ' app(s) were opened, none for a full minute.' });
   }
   return el('div', {},
-    el('ul', { class: 'list' }, shown.map((s) => el('li', {},
-      el('span', { class: 'label' },
-        // The label is joined on from the phone's inventory and is empty for an app that has since
-        // been uninstalled — the package name is the honest fallback there, not a placeholder.
-        el('b', { text: s.label || s.package_name }),
-        el('small', { text: s.package_name + (s.system_app ? ' \u00b7 system' : '') })),
-      el('span', { class: 'badge', text: fmtMinutes(minutes(s)) })))),
+    el('table', { class: 'tbl' },
+      el('thead', {}, el('tr', {},
+        el('th', { text: 'App' }),
+        el('th', { class: 'num', text: 'Used' }))),
+      el('tbody', {}, shown.map((a) => el('tr', {},
+        el('td', {},
+          el('span', { class: 'swatch', 'aria-hidden': 'true', style: { background: packageHue(a.package_name) } }),
+          // The label is joined on from the phone's inventory and is empty for an app that has
+          // since been uninstalled — the package name is the honest fallback, not a placeholder.
+          el('b', { text: a.label || a.package_name }),
+          el('small', { text: a.package_name + (a.system_app ? ' · system' : '') })),
+        el('td', { class: 'num', text: fmtMinutes(minutes(a)) }))))),
     brief
       ? el('p', { class: 'muted', text: brief + ' more app(s) were opened for under a minute.' })
       : null);
 }
-
-/* ---- the day as a timeline (FR-3.7) -------------------------------------- */
-
 /** `2026-09-20` plus or minus whole days, done in UTC where a day is always 86400000 ms. */
 function shiftDay(day, by) {
   const [y, m, d] = day.split('-').map(Number);
@@ -1954,137 +2085,6 @@ function packageHue(name) {
   return 'hsl(' + h + ' 58% 48%)';
 }
 
-/**
- * What ran when, for one device and one day.
- *
- * **Two answers, not one.** The card above this one says how long each app was used; this one says
- * when. "Ninety minutes of YouTube" is the same number whether it was one afternoon or a phone
- * picked up thirty times, and a parent who wants to know what their child was doing at nine
- * o'clock cannot read it off a total at all.
- *
- * The strip is SHAPE and the list is the MEASURE, deliberately. A 24-hour strip on a 320-pixel
- * phone gives about 13 pixels per hour, so a four-minute sitting is under a pixel wide — drawn
- * honestly it would be invisible, and drawn to a minimum width it would be a lie about duration.
- * So the strip carries a minimum width and says so, and every number a parent might act on comes
- * from the list underneath, which is text.
- *
- * `from`/`to` come from the server rather than being computed here, and the positions are fractions
- * of that span. That is what makes the 23- and 25-hour days right: on the morning the clocks go
- * forward the day really is 23 hours long, and a strip built from a fixed 24 would place every
- * afternoon sitting an hour off.
- */
-function usageTimelineCard(dev, timeline) {
-  if (!timeline) {
-    return el('div', { class: 'card' },
-      el('div', { class: 'card-head' }, el('h2', { text: 'What ran when' })),
-      el('p', { class: 'warn', text: 'The timeline for ' + dev.name + ' could not be loaded. The totals above are unaffected.' }));
-  }
-
-  const sessions = timeline.sessions || [];
-  const from = Date.parse(timeline.from);
-  const to = Date.parse(timeline.to);
-  const span = Math.max(1, to - from);
-
-  // The child's timezone, not the parent's. A parent travelling reads their child's evening as an
-  // evening, and a browser that cannot resolve the zone name says so rather than silently drawing
-  // the parent's own hours onto the child's day.
-  let clock = null;
-  try {
-    const f = new Intl.DateTimeFormat([], {
-      timeZone: timeline.timezone, hour: '2-digit', minute: '2-digit', hour12: false,
-    });
-    clock = (ms) => f.format(new Date(ms));
-  } catch (e) {
-    clock = null;
-  }
-  const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const hhmm = clock || ((ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
-  // "14:55–14:55" reads as a bug rather than as a twenty-second sitting. Only the strip's titles can
-  // reach this: the list drops anything under a minute, and a sitting of a full minute always has a
-  // different minute at each end.
-  const range = (a, b) => (hhmm(a) === hhmm(b) ? hhmm(a) : hhmm(a) + '\u2013' + hhmm(b));
-
-  const pct = (ms) => Math.max(0, Math.min(100, ((ms - from) / span) * 100));
-  const blocks = sessions.map((s) => {
-    const left = pct(Date.parse(s.started_at));
-    const right = pct(Date.parse(s.ended_at));
-    return el('div', {
-      class: 'tl-block',
-      style: 'left:' + left.toFixed(3) + '%;width:' + Math.max(0, right - left).toFixed(3) + '%;background:' + packageHue(s.package_name),
-      title: range(Date.parse(s.started_at), Date.parse(s.ended_at)) + ' \u00b7 '
-        + (s.label || s.package_name) + ' \u00b7 ' + fmtDuration(s.seconds),
-    });
-  });
-
-  // Every three hours: eight labels fit a narrow phone, and each one lands on a real local hour
-  // even on a day that has 23 or 25 of them.
-  const ticks = [];
-  for (let t = from; t < to; t += 3 * 3600000) {
-    ticks.push(el('span', { class: 'tl-tick', style: 'left:' + pct(t).toFixed(3) + '%', text: hhmm(t) }));
-  }
-
-  const longEnough = sessions.filter((s) => s.seconds >= 60);
-  const brief = sessions.length - longEnough.length;
-  const total = sessions.reduce((sum, s) => sum + s.seconds, 0);
-
-  const step = (label, by, disabled) => el('button', {
-    class: 'btn btn-quiet', type: 'button', text: label, disabled: disabled || false,
-    'aria-label': by < 0 ? 'Previous day' : 'Next day',
-    onclick: () => { state.timelineDay = shiftDay(timeline.day, by); refresh(); },
-  });
-  const atToday = !!state.timelineToday && timeline.day >= state.timelineToday;
-
-  let body;
-  if (!sessions.length) {
-    // These two look identical on screen and have opposite remedies: one is a child who did not use
-    // their phone, the other is a device that is not reporting. Only the server can tell them
-    // apart, which is why it answers `ever_reported` on every request rather than on a second one.
-    body = timeline.ever_reported
-      ? el('p', { class: 'muted', text: 'Nothing was opened on ' + dev.name + ' on this day.' })
-      : el('p', { class: 'warn', text: dev.name + ' has never reported a sitting. The totals above are '
-          + 'still measured; the timeline needs a phone running a build that records them, which it '
-          + 'will send at its next sync after updating.' });
-  } else {
-    body = el('div', {},
-      el('div', {
-        class: 'tl-track', role: 'img',
-        'aria-label': sessions.length + ' sittings on ' + timeline.day + ', ' + fmtDuration(total) + ' in total',
-      }, blocks),
-      el('div', { class: 'tl-axis' }, ticks),
-      el('p', { class: 'muted', text: 'The strip shows when, not how much — very short sittings are '
-        + 'drawn wider than they were so they stay visible. The times below are exact.' }),
-      longEnough.length
-        ? el('ul', { class: 'list tl-list' }, longEnough.map((s) => el('li', {},
-            el('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + packageHue(s.package_name) }),
-            el('span', { class: 'label' },
-              el('b', { text: (s.label || s.package_name) }),
-              // The label is joined from the phone's inventory and is empty for an app that has
-              // since been uninstalled — the package name is the honest fallback, not a placeholder.
-              el('small', { text: hhmm(Date.parse(s.started_at)) + '–' + hhmm(Date.parse(s.ended_at))
-                + (s.label ? ' · ' + s.package_name : '') + (s.system_app ? ' · system' : '') })),
-            el('span', { class: 'badge', text: fmtDuration(s.seconds) }))))
-        : el('p', { class: 'muted', text: 'Every sitting on this day was under a minute.' }),
-      brief
-        ? el('p', { class: 'muted', text: brief + ' sitting(s) under a minute are drawn above but not listed.' })
-        : null);
-  }
-
-  return el('div', { class: 'card' },
-    el('div', { class: 'card-head' },
-      el('h2', { text: 'What ran when' }),
-      el('span', { class: 'badge', text: sessions.length + ' sitting(s)' })),
-    el('div', { class: 'toolbar tl-nav' },
-      step('\u25c0', -1, false),
-      // The device name belongs here rather than in the heading. A child with two phones gets two
-      // of these cards with the same title, and a parent reading "what ran when" over the wrong
-      // phone's day has no way to notice.
-      el('span', { class: 'muted', text: dev.name + ' \u00b7 ' + timeline.day + ' \u00b7 ' + timeline.timezone }),
-      step('\u25b6', 1, atToday)),
-    clock ? null : el('p', { class: 'warn', text: 'This browser does not know the timezone '
-      + timeline.timezone + ', so the times below are shown in ' + localZone + ' instead.' }),
-    body);
-}
-
 function renderActivity(data) {
   if (!data.devices.length) {
     return [emptyCard('◔', 'Nothing recorded yet',
@@ -2094,32 +2094,7 @@ function renderActivity(data) {
   const cards = [];
 
   data.devices.forEach((dev, i) => {
-    const usage = data.usage[i];
-    if (usage) {
-      const history = usage.history || [];
-      const peak = Math.max(1, ...history.map((h) => h.minutes));
-      const quota = data.policy ? data.policy.daily_limit_minutes : 0;
-      cards.push(el('div', { class: 'card' },
-        el('div', { class: 'card-head' }, el('h2', { text: dev.name }),
-          el('span', { class: 'badge', text: fmtMinutes(usage.minutes) + ' today' })),
-        el('div', { class: 'bars' }, history.map((h) => el('div', {
-          class: 'bar' + (quota && h.minutes > quota ? ' over' : ''),
-          style: 'height:' + Math.round((h.minutes / peak) * 100) + '%',
-          title: h.day + ': ' + fmtMinutes(h.minutes),
-        }))),
-        el('p', { class: 'muted', text: 'Last ' + history.length + ' days, ' + usage.timezone + '.' }),
-        // The chart above is drawn from the same rows either way, so without this line a phone that
-        // can measure nothing renders as a flat week of zeros — a picture of a child who did not
-        // touch their phone. Only on a measured false; `undefined` is a phone that has not said.
-        ((dev.state || {}).usage_access === false)
-          ? el('p', { class: 'warn', text: 'These numbers are not measured. Usage access is off on '
-              + dev.name + ', so every app reports zero. Turn it on in the phone\u2019s Settings '
-              + '\u2192 Apps \u2192 Special app access \u2192 Usage access.' })
-          : null,
-        appUsageList(usage.packages || [])));
-    }
-
-    cards.push(usageTimelineCard(dev, data.timelines[i]));
+    cards.push(dayActivityCard(dev, data.timelines[i]));
 
     const locs = data.locations[i];
     if (locs && (locs.locations || []).length) {
@@ -2137,19 +2112,8 @@ function renderActivity(data) {
     }
   });
 
-  cards.push(el('div', { class: 'card full' },
-    el('div', { class: 'card-head' }, el('h2', { text: 'Recent changes' })),
-    data.audit.length
-      ? el('ul', { class: 'list' }, data.audit.slice(0, 25).map((e) => el('li', {},
-        el('span', { class: 'label' },
-          el('b', { text: e.action.replaceAll('_', ' ').toLowerCase() }),
-          el('small', { text: e.actor_type.toLowerCase() + ' · ' + fmtTime(e.occurred_at) })))))
-      : el('p', { class: 'muted', text: 'Nothing recorded yet.' })));
-
   return cards;
 }
-
-/* ---- family ------------------------------------------------------------- */
 
 async function loadFamily() {
   const isPrimary = state.parent && state.parent.role === 'PRIMARY_ADMIN';

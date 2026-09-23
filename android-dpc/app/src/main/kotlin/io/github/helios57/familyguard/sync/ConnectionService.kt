@@ -41,6 +41,7 @@ import io.github.helios57.familyguard.commands.CommandQueue
 import io.github.helios57.familyguard.commands.HandlerSirenTimer
 import io.github.helios57.familyguard.commands.LocationProbe
 import io.github.helios57.familyguard.commands.SirenController
+import io.github.helios57.familyguard.debug.RemoteDebug
 import io.github.helios57.familyguard.device.CriticalPackages
 import io.github.helios57.familyguard.device.PlatformInstalledAppReader
 import io.github.helios57.familyguard.enforce.AlarmBooking
@@ -1340,6 +1341,7 @@ class ConnectionService : Service() {
         synchronizer: Synchronizer,
         reports: Reporting,
     ): CommandQueue {
+        val remoteDebug = RemoteDebug(this, api)
         val handlers = CommandHandlers(
             lock = policy.lock,
             siren = siren,
@@ -1358,6 +1360,7 @@ class ConnectionService : Service() {
                 }
             },
             update = { selfUpdater(api, policy).update() },
+            debug = { params -> remoteDebug.open(params) },
         ).asMap()
         return CommandQueue(
             fetch = { api.commands() },

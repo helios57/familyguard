@@ -218,6 +218,38 @@ carried rather than dropped, and a watchdog stands the tunnel down after two win
 nothing. CONCEPT.md §2.1 has the reasoning; the failure being designed against is a phone with no
 internet and nothing on the screen saying why.
 
+### Parent → phone's adb, through the control plane (remote debugging)
+
+FR-19 lets a parent's `adb` reach the phone's own adbd from anywhere, and it is the most powerful
+thing in this system: an adb shell can read the phone's log, install software, and do most of what
+the person holding the phone can. It exists to make this product quicker to fix, it is meant to be
+removed when that is no longer needed, and until then it is bounded like this.
+
+- **Off unless the child's Allow debugging is on.** That switch is what lifts `no_debugging_features`;
+  without it adbd is not running and there is nothing to reach. The server refuses before it asks the
+  phone anything, and the phone checks the restriction actually in force a second time rather than
+  trusting a cached policy.
+- **The server is a relay, not a participant.** It splices two byte streams and never speaks adb.
+  adb's pairing and connection are TLS between the parent's adb client and the phone's adbd, keyed
+  by the adb keys Android already manages — so neither the control plane nor anyone who compromises
+  it can read a session, and **a compromised control plane cannot open one either**: without a key
+  the phone has paired, adbd refuses the connection whatever the relay carries.
+- **Pairing needs the phone in hand.** Only the phone can show a pairing code. That is Android's
+  own trust decision about which computers may debug it, and this feature does not move it.
+- **The phone's leg is the phone's token.** A session is bound to one device when it is opened; another
+  phone presenting the same session id is refused, and an id is good for one dial. The id comes from
+  the server and is validated as 32 hex characters before it goes into a request line.
+- **The parent's leg is an ordinary parent credential** — an API key or a session — so it is exactly
+  as strong as the rest of the parent surface, and revoking the key ends the ability to open new
+  sessions.
+- **Visible and audited.** The phone shows a notification for as long as any session is open.
+  `DEBUG_STREAM_REQUESTED` and `DEBUG_STREAM_CLOSED` are written for every session, the second with
+  its duration and byte counts. A session ends after an hour idle (the ingress) and after four hours
+  regardless (the server).
+- **Wireless debugging is switched on by the device owner when asked for, and not switched off
+  afterwards.** Leaving it on is what lets the next session start without anyone at the phone; the
+  adb keys are what keep that from being an open door.
+
 ### Browser → control plane
 
 - Content-Security-Policy, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,

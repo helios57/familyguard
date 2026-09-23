@@ -195,6 +195,9 @@ class AdFilterVpnService : VpnService() {
                 return START_NOT_STICKY
             }
             ACTION_POLICY_CHANGED -> {
+                // Every sync sends this, changed or not. A tunnel already running the plan the
+                // policy now asks for is left alone — see TunnelPlan.keeps for what a rebuild costs.
+                if (keepsRunningTunnel()) return START_STICKY
                 // A parent changed something. Whatever the watchdog concluded about the previous
                 // configuration says nothing about this one.
                 stoodDown = false
@@ -241,9 +244,31 @@ class AdFilterVpnService : VpnService() {
 
     // ---- the tunnel --------------------------------------------------------------------------
 
+    /** See TunnelPlan.keeps. Synchronized with [startTunnel], which is what replaces [live]. */
+    @Synchronized
+    private fun keepsRunningTunnel(): Boolean {
+        val running = live ?: return false
+        if (!tunnelUp) return false
+        val state = FilterState.of(this)
+        val next = TunnelPlan.decide(
+            policy = state.policy,
+            upstream = upstreamNow(),
+            ruleCount = state.engine.ruleCount,
+            stoodDown = false,
+        )
+        if (!TunnelPlan.keeps(running.run, next)) return false
+        Log.d(TAG, "policy re-applied; the running tunnel already matches it")
+        return true
+    }
+
     @Synchronized
     private fun startTunnel() {
         stopTunnel("restarting")
+        // FR-6.11. Said before anything that can take time, and overwritten by every branch below. A
+        // heartbeat that lands while the tunnel is being built reads "starting", which is true —
+        // not the "" a previous run left behind, which the console can only show as "has not
+        // started on this phone".
+        standReason = getString(R.string.filter_off_starting)
         val state = FilterState.of(this)
         val decision = TunnelPlan.decide(
             policy = state.policy,
@@ -367,7 +392,7 @@ class AdFilterVpnService : VpnService() {
      */
     private inner class Live(
         private val descriptor: ParcelFileDescriptor,
-        private val run: TunnelDecision.Run,
+        val run: TunnelDecision.Run,
         private val engine: FilterEngine,
     ) {
         val packetsIn = AtomicLong()

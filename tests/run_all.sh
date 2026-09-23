@@ -30,11 +30,12 @@ ANDROID="$ROOT/android-dpc"
 GRADLEW="$ANDROID/gradlew"
 INSTRUMENTED="$ROOT/tests/android/instrumented.sh"
 SELF_UPDATE="$ROOT/tests/android/self-update.sh"
+REMOTE_ADB="$ROOT/tests/android/remote-adb.sh"
 REALTUN="$ANDROID/tools/realtun/run.sh"
 IMAGE_SMOKE="$ROOT/tests/image/smoke.sh"
 MANIFESTS="$ROOT/tests/manifests/render.sh"
 
-ALL_LAYERS=(secret-scan backend manifests image e2e android-unit android-realtun android-instrumented android-self-update)
+ALL_LAYERS=(secret-scan backend manifests image e2e android-unit android-realtun android-instrumented android-remote-adb android-self-update)
 
 usage() {
 	printf 'layers: %s\n' "${ALL_LAYERS[*]}"
@@ -457,6 +458,36 @@ run_android_instrumented() {
 	esac
 }
 
+# -------------------------------------------------------- android-remote-adb ----
+#
+# FR-19's phone half: `adb shell` through the control plane answering as the phone. Before
+# self-update, which switches adb off for good; this one enrols with Allow debugging ON, so the
+# device keeps its adb and the layers after it can still reach it.
+run_android_remote_adb() {
+	section "android-remote-adb: a parent's adb reaches the phone's adbd through the server (needs an emulator AND docker; REBOOTS it)"
+	local why
+	if why="$(android_missing)"; then
+		record android-remote-adb "NOT MEASURED" "$why"
+		return
+	fi
+	if [ ! -x "$REMOTE_ADB" ]; then
+		record android-remote-adb "NOT MEASURED" "$REMOTE_ADB is missing or not executable"
+		return
+	fi
+	local log
+	log="$(mktemp)"
+	"$REMOTE_ADB" 2>&1 | tee "$log"
+	local rc=${PIPESTATUS[0]}
+	local note
+	note="$(command grep -a '^RESULT	' "$log" | tail -n1 | cut -f3-)"
+	rm -f "$log"
+	case $rc in
+	0) record android-remote-adb "PASS" "$note" ;;
+	2) record android-remote-adb "NOT MEASURED" "${note:-the runner reported it could not measure}" ;;
+	*) record android-remote-adb "FAIL" "$note" ;;
+	esac
+}
+
 # ------------------------------------------------------- android-self-update ----
 #
 # FR-15, and the only layer that can see it: the server replacing the DPC on a phone. It needs both
@@ -505,6 +536,7 @@ wants e2e && run_e2e
 wants android-unit && run_android_unit
 wants android-realtun && run_android_realtun
 wants android-instrumented && run_android_instrumented
+wants android-remote-adb && run_android_remote_adb
 wants android-self-update && run_android_self_update
 
 # ---------------------------------------------------------------- summary ----

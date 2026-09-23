@@ -41,6 +41,14 @@ const (
 	// verified, installing" and the *next heartbeat* — carrying app_version_code — is what says
 	// whether it worked.
 	CmdTypeUpdateApp = "UPDATE_APP"
+
+	// CmdTypeOpenDebugStream asks the phone to dial back one leg of a remote adb session (FR-19).
+	//
+	// **Deliberately NOT in ValidCommandTypes.** It is meaningless without the relay waiting on the
+	// other end of it, so the only way to queue one is the endpoint that also holds that wait open
+	// (GET /devices/:id/debug). A row queued through the generic command POST would make the phone
+	// dial a stream nobody is listening for.
+	CmdTypeOpenDebugStream = "OPEN_DEBUG_STREAM"
 )
 
 // ValidCommandTypes is the closed set the API accepts. An unknown type is a 400, not a queued row
@@ -55,6 +63,16 @@ var ValidCommandTypes = map[string]bool{
 	CmdTypeUnblockYouTube: true,
 	CmdTypeSyncPolicy:     true,
 	CmdTypeUpdateApp:      true,
+}
+
+// RelayCommandTypes are the types the server queues only from its own endpoints, never from the
+// generic command POST, because each one is half of an exchange the endpoint is holding open.
+//
+// A separate set rather than an absence, so that the device's handler list can be checked against
+// everything the server can ever queue: ValidCommandTypes plus these. A type queued from here and
+// missing on the phone would otherwise be a feature that answers "not implemented" in production.
+var RelayCommandTypes = map[string]bool{
+	CmdTypeOpenDebugStream: true,
 }
 
 // App rule actions.

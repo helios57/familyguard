@@ -561,6 +561,12 @@ func (s *Server) ackCommand(c *gin.Context) {
 	}
 	s.audit(c, store.ActorDevice, dev.ID.String(), "COMMAND_"+cmd.State, "device", dev.ID.String(),
 		map[string]any{"type": cmd.Type, "command": cmd.ID.String(), "error": req.Error})
+	// FR-19.7. A phone that could not reach its own adbd says why in the acknowledgement. The parent's leg is
+	// still waiting on the relay, and this is what lets it answer with that sentence instead of a
+	// timeout thirty seconds later.
+	if stream := debugStreamOf(cmd); stream != "" && !req.OK {
+		s.debug.fail(stream, dev.ID, req.Error)
+	}
 	s.hub.PublishParents(Event{Type: "command", DeviceID: dev.ID.String(), ChildID: dev.ChildID.String()})
 	c.JSON(http.StatusOK, cmd)
 }

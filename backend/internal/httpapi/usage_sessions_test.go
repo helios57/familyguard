@@ -3,6 +3,8 @@ package httpapi
 import (
 	"testing"
 	"time"
+
+	"github.com/helios57/familyguard/backend/internal/store"
 )
 
 // What a phone may file as a sitting (FR-3.7).
@@ -130,6 +132,169 @@ func TestLocalDaySpansTheRealDay(t *testing.T) {
 	t.Run("a timezone that does not exist is refused, not guessed", func(t *testing.T) {
 		if _, _, err := localDay("Mars/Olympus", "2026-09-20"); err == nil {
 			t.Fatal("an unknown timezone produced a window")
+		}
+	})
+}
+
+// ---- the hour-by-hour chart -------------------------------------------------
+
+// A sitting is stored whole, so every question the chart asks is an intersection.
+//
+// The property that matters most is not any single bucket: it is that the buckets SUM to the time
+// actually spent inside the day. A split that loses a second per boundary loses twenty-three
+// seconds a day and nothing looks wrong; a split that double-counts one makes the chart disagree
+// with the table directly beneath it, which is the thing a parent would notice and could not
+// explain.
+func TestTheHourChartSplitsSittingsAcrossHours(t *testing.T) {
+	zurich, err := time.LoadLocation("Europe/Zurich")
+	if err != nil {
+		t.Fatalf("Europe/Zurich: %v", err)
+	}
+	at := func(text string) time.Time {
+		ts, err := time.ParseInLocation("2006-01-02 15:04:05", text, zurich)
+		if err != nil {
+			t.Fatalf("parse %q: %v", text, err)
+		}
+		return ts
+	}
+	sitting := func(from, to string) store.UsageSession {
+		return store.UsageSession{PackageName: "com.example.game", StartedAt: at(from), EndedAt: at(to)}
+	}
+	// secondsAt reads the bucket whose local hour is `hour`, so a test never has to know which
+	// index that is on a day where an hour was added or taken away.
+	secondsAt := func(buckets []hourBucket, hour int) int {
+		t.Helper()
+		for _, b := range buckets {
+			if b.Start.In(zurich).Hour() == hour {
+				return b.Seconds
+			}
+		}
+		t.Fatalf("no bucket for local hour %02d among %d", hour, len(buckets))
+		return 0
+	}
+	total := func(buckets []hourBucket) int {
+		sum := 0
+		for _, b := range buckets {
+			sum += b.Seconds
+		}
+		return sum
+	}
+
+	t.Run("an ordinary day has 24 buckets, one per hour, even with nothing in it", func(t *testing.T) {
+		from, to, err := localDay("Europe/Zurich", "2026-09-20")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := hourlyScreenTime(nil, from, to)
+		if len(got) != 24 {
+			t.Errorf("an ordinary day produced %d buckets, want 24", len(got))
+		}
+		if total(got) != 0 {
+			t.Errorf("a day with no sittings totals %d seconds, want 0", total(got))
+		}
+		// An empty day must still draw as a day. Returning no buckets would make the console render
+		// nothing at all, which is the picture of a broken tab rather than of a quiet Sunday.
+		if got == nil {
+			t.Error("a day with no sittings returned a nil slice; the chart needs its empty hours")
+		}
+	})
+
+	t.Run("a sitting inside one hour lands entirely in it", func(t *testing.T) {
+		from, to, _ := localDay("Europe/Zurich", "2026-09-20")
+		got := hourlyScreenTime([]store.UsageSession{
+			sitting("2026-09-20 14:10:00", "2026-09-20 14:40:00"),
+		}, from, to)
+		if s := secondsAt(got, 14); s != 30*60 {
+			t.Errorf("14:00 holds %d seconds, want %d", s, 30*60)
+		}
+		if s := secondsAt(got, 13); s != 0 {
+			t.Errorf("13:00 holds %d seconds for a sitting that began at 14:10", s)
+		}
+		if total(got) != 30*60 {
+			t.Errorf("the day totals %d seconds, want %d", total(got), 30*60)
+		}
+	})
+
+	t.Run("a sitting across a boundary is split, and the halves still add up", func(t *testing.T) {
+		from, to, _ := localDay("Europe/Zurich", "2026-09-20")
+		got := hourlyScreenTime([]store.UsageSession{
+			sitting("2026-09-20 19:40:00", "2026-09-20 21:10:00"),
+		}, from, to)
+		for hour, want := range map[int]int{19: 20 * 60, 20: 60 * 60, 21: 10 * 60} {
+			if s := secondsAt(got, hour); s != want {
+				t.Errorf("%02d:00 holds %d seconds, want %d", hour, s, want)
+			}
+		}
+		if total(got) != 90*60 {
+			t.Errorf("a 90-minute film totals %d seconds across the chart, want %d",
+				total(got), 90*60)
+		}
+	})
+
+	t.Run("a sitting that began yesterday is counted only from midnight", func(t *testing.T) {
+		from, to, _ := localDay("Europe/Zurich", "2026-09-20")
+		got := hourlyScreenTime([]store.UsageSession{
+			sitting("2026-09-19 23:30:00", "2026-09-20 00:20:00"),
+		}, from, to)
+		if s := secondsAt(got, 0); s != 20*60 {
+			t.Errorf("00:00 holds %d seconds, want the %d that fell after midnight", s, 20*60)
+		}
+		if total(got) != 20*60 {
+			t.Errorf("the day totals %d seconds; the half before midnight belongs to the 19th",
+				total(got))
+		}
+	})
+
+	t.Run("a sitting still running at midnight is counted only until it", func(t *testing.T) {
+		from, to, _ := localDay("Europe/Zurich", "2026-09-20")
+		got := hourlyScreenTime([]store.UsageSession{
+			sitting("2026-09-20 23:45:00", "2026-09-21 00:30:00"),
+		}, from, to)
+		if s := secondsAt(got, 23); s != 15*60 {
+			t.Errorf("23:00 holds %d seconds, want %d", s, 15*60)
+		}
+		if total(got) != 15*60 {
+			t.Errorf("the day totals %d seconds; the rest belongs to the 21st", total(got))
+		}
+	})
+
+	// The two days a year a fixed 0–23 axis is wrong. Walking by adding an hour to an INSTANT is
+	// what makes these right: a loop over clock-hour numbers would invent 02:00 in March and draw
+	// October's repeated 02:00 once.
+	t.Run("the morning the clocks go forward has 23 buckets", func(t *testing.T) {
+		from, to, err := localDay("Europe/Zurich", "2026-03-29")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := hourlyScreenTime(nil, from, to)
+		if len(got) != 23 {
+			t.Errorf("2026-03-29 produced %d buckets, want 23 — that day is 23 hours long",
+				len(got))
+		}
+	})
+
+	t.Run("the morning the clocks go back has 25 buckets", func(t *testing.T) {
+		from, to, err := localDay("Europe/Zurich", "2026-10-25")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := hourlyScreenTime(nil, from, to)
+		if len(got) != 25 {
+			t.Errorf("2026-10-25 produced %d buckets, want 25 — that day is 25 hours long",
+				len(got))
+		}
+	})
+
+	t.Run("two apps in one hour are added, not overwritten", func(t *testing.T) {
+		from, to, _ := localDay("Europe/Zurich", "2026-09-20")
+		got := hourlyScreenTime([]store.UsageSession{
+			sitting("2026-09-20 16:00:00", "2026-09-20 16:20:00"),
+			{PackageName: "com.example.book",
+				StartedAt: at("2026-09-20 16:30:00"), EndedAt: at("2026-09-20 16:45:00")},
+		}, from, to)
+		if s := secondsAt(got, 16); s != 35*60 {
+			t.Errorf("16:00 holds %d seconds for two sittings of 20 and 15 minutes, want %d",
+				s, 35*60)
 		}
 	})
 }

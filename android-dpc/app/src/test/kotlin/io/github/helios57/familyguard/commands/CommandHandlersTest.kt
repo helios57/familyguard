@@ -144,14 +144,21 @@ class CommandHandlersTest {
             constants.isNotEmpty(),
         )
 
-        val mapBody = Regex("""ValidCommandTypes\s*=\s*map\[string]bool\{(.*?)}""", RegexOption.DOT_MATCHES_ALL)
-            .find(text)?.groupValues?.get(1)
-            ?: throw AssertionError("ValidCommandTypes was not found in ${models.path}")
-        val accepted = Regex("""CmdType(\w+)\s*:\s*true""")
-            .findAll(mapBody)
-            .mapNotNull { constants[it.groupValues[1]] }
-            .toSet()
-        assertTrue("ValidCommandTypes parsed as empty", accepted.isNotEmpty())
+        // Everything the server can ever queue: the generic set, and the relay-only set that only
+        // the server's own endpoints queue (FR-19's OPEN_DEBUG_STREAM). Both are required to parse
+        // as non-empty, so a renamed map fails here rather than silently shrinking the comparison.
+        fun admitted(mapName: String): Set<String> {
+            val body = Regex("""$mapName\s*=\s*map\[string]bool\{(.*?)}""", RegexOption.DOT_MATCHES_ALL)
+                .find(text)?.groupValues?.get(1)
+                ?: throw AssertionError("$mapName was not found in ${models.path}")
+            val admitted = Regex("""CmdType(\w+)\s*:\s*true""")
+                .findAll(body)
+                .mapNotNull { constants[it.groupValues[1]] }
+                .toSet()
+            assertTrue("$mapName parsed as empty", admitted.isNotEmpty())
+            return admitted
+        }
+        val accepted = admitted("ValidCommandTypes") + admitted("RelayCommandTypes")
 
         val implemented = Harness().handlers.keys
         assertEquals(

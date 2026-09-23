@@ -425,13 +425,7 @@ p { margin: 0 0 0.6em; }
 /* ---- controls ----------------------------------------------------------- */
 
 .btn {
-  /* Both dimensions, not just the height. `padding: 10px 14px` around a one-glyph label lands at
-     42px wide — close enough to read as fine and two pixels under the floor a thumb needs, which is
-     what the day stepper's arrows measured. Of every button the mobile suite renders across the
-     five tabs, those two were the only ones under it, so this floor widens nothing that was already
-     right — it catches the icon-only ones, this and the next. */
   min-height: var(--tap);
-  min-width: var(--tap);
   padding: 10px 14px;
   border-radius: 10px;
   border: 1px solid var(--line);
@@ -617,73 +611,88 @@ input[type="checkbox"] { width: auto; min-height: auto; }
 .toolbar .seg .btn { font-size: 0.85rem; }
 .list-count { color: var(--text-dim); font-size: 0.85rem; margin: 0 0 8px; }
 
-/* ---- usage bars --------------------------------------------------------- */
+/* ---- the quota meter ----------------------------------------------------- */
 
-.bars { display: flex; align-items: flex-end; gap: 4px; height: 90px; margin-top: 8px; }
-.bars .bar { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; opacity: 0.85; }
-.bars .bar.over { background: var(--danger); }
 .meter { height: 10px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
 .meter > span { display: block; height: 100%; background: var(--ok); }
 .meter > span.over { background: var(--danger); }
 
-/* ---- the day as a timeline (FR-3.7) ------------------------------------- */
+/* ---- the day, hour by hour (FR-3.7) ------------------------------------- */
 
-/* The strip is SHAPE; the list underneath is the measure. At 320 px a 24-hour track gives about
-   13 px an hour, so a four-minute sitting is under a pixel — `min-width` keeps it visible, which
-   means the strip deliberately over-draws the shortest blocks. The card says so in words, and every
-   number a parent might act on is text below it. */
-.tl-track {
-  position: relative;
-  height: 34px;
+/* One column per hour the day actually had — 23 or 25 of them on the two mornings the clocks move,
+   because the server walks instants rather than clock numbers and the console draws whatever it is
+   handed. Full height is a full hour, FIXED rather than scaled to the busiest hour of the day: a
+   scaled axis draws twenty minutes and four hours identically on their own days, and the question
+   being asked is "how much of that hour", not "how does this hour compare to the rest of this one".
+
+   `align-items: flex-end` so a column grows from the baseline up, and `min-width: 0` on the column
+   so twenty-five of them still fit a 320px phone rather than pushing the card sideways. */
+.hr-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 96px;
   margin-top: 8px;
+  padding: 0 1px;
   border-radius: 6px;
   background: var(--surface-2);
-  overflow: hidden;
 }
-.tl-block {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  min-width: 2px;
-  border-radius: 2px;
+.hr-col { flex: 1 1 0; min-width: 0; height: 100%; display: flex; align-items: flex-end; }
+.hr-fill {
+  width: 100%;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
   opacity: 0.9;
 }
+/* An hour with nothing in it draws as a hairline rather than as nothing, so the shape of the day
+   still reads as twenty-four slots — a chart that simply omits its quiet hours looks like a chart
+   that failed to load. */
+.hr-fill.empty { background: var(--line); opacity: 0.6; }
 
-/* The hour labels. Absolutely positioned at the same fractions the blocks use, so a 23- or 25-hour
-   day labels itself correctly instead of being stretched onto a fixed 24. `translateX(-50%)` puts
-   each label under its own instant rather than to the right of it; the first and last would then
-   overhang, which the padding on the row absorbs. */
-.tl-axis {
-  position: relative;
-  height: 1.1rem;
-  margin: 4px 0 8px;
+/* A label every third column, and the blanks are still THERE — an axis built only from the labelled
+   hours would space them evenly and quietly lie about which column each one sits under. */
+.hr-axis {
+  display: flex;
+  gap: 2px;
+  padding: 0 1px;
+  margin: 4px 0 10px;
   font-size: 0.72rem;
   color: var(--text-dim);
-  overflow: hidden;
 }
-.tl-tick {
-  position: absolute;
-  top: 0;
-  transform: translateX(-50%);
-  white-space: nowrap;
-}
-.tl-tick:first-child { transform: none; }
+.hr-tick { flex: 1 1 0; min-width: 0; text-align: left; white-space: nowrap; }
+.hr-tick.blank { visibility: hidden; }
 
-/* The list's tie back to the strip. Purely decorative — the row already names the app in text — so
-   it is aria-hidden and never the only carrier of a distinction. */
+/* ---- the app table ------------------------------------------------------- */
+
+/* A real table, not a list of rows pretending to be one: two columns whose second is a number, and
+   a number column that does not line up is one a parent has to read twice. `table-layout: fixed`
+   plus `word-break` on the name keeps a long package id inside the card instead of widening it. */
+.tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.tbl th, .tbl td { padding: 10px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.tbl thead th {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  text-align: left;
+}
+.tbl tbody tr:last-child td { border-bottom: none; }
+.tbl td b { display: inline; font-weight: 600; overflow-wrap: anywhere; }
+.tbl td small { display: block; color: var(--text-dim); font-size: 0.78rem; overflow-wrap: anywhere; }
+.tbl .num { width: 5.5rem; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* The table's tie back to the chart's colours. Purely decorative — the row already names the app in
+   text — so it is aria-hidden and never the only carrier of a distinction. `inline-block` because
+   it now sits inside a table cell rather than in a flex row. */
 .swatch {
-  flex: 0 0 auto;
+  display: inline-block;
   width: 10px;
   height: 10px;
   margin-right: 8px;
   border-radius: 3px;
 }
-/* Three children instead of the list's usual two, and `space-between` would then strand the label
-   in the middle of the row with air on both sides. The label takes the slack; the badge stays at
-   the right edge where every other list in this console puts it. */
-.tl-list li { justify-content: flex-start; }
-.tl-list .label { flex: 1 1 auto; }
-
 /* `.toolbar` is a stacking grid, which is right for the app filter's three full-width controls and
    wrong for three things that belong on one line. Two arrows and a date read as a stepper only when
    the arrows are at the ends of the row they step. */
@@ -692,8 +701,17 @@ input[type="checkbox"] { width: auto; min-height: auto; }
   align-items: center;
   justify-content: space-between;
 }
-/* The stepper keeps its width; only the date between the arrows gives way on a narrow phone. */
-.tl-nav .btn { flex: 0 0 auto; }
+/* The stepper keeps its width; only the date between the arrows gives way on a narrow phone.
+
+   `min-width` here rather than on `.btn`, and that is a correction rather than a preference:
+   `padding: 10px 14px` around a one-glyph label lands at 42px, two pixels under the floor a thumb
+   needs, so the arrows failed the tap-target check. Putting the floor on `.btn` fixes them and
+   every other icon-only button at once — and it was measured locally as costing nothing, on this
+   machine's renderer, over the views the suite draws. CI disagreed: at 360px the sheet header's
+   own `\u2715` grew with it and pushed the whole dialog to 362px, so the page scrolled sideways.
+   A width that depends on font metrics is not a number one machine can settle. The general fix is
+   still the right shape, but it has to arrive with the sheet header's grid, not ahead of it. */
+.tl-nav .btn { flex: 0 0 auto; min-width: var(--tap); }
 .tl-nav .muted { text-align: center; font-size: 0.85rem; }
 
 /* ---- sheet -------------------------------------------------------------- */

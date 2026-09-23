@@ -28,7 +28,10 @@ package e2e
 //     is the same "guard that stopped growing with the code" this project keeps finding elsewhere.
 
 import (
+	"bufio"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -36,6 +39,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // readAudit pulls the log back over the API the console uses. The limit is raised past the default
@@ -194,6 +198,45 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 	h.call(http.MethodPost, "/device/recovery-event", enrolled.DeviceToken,
 		map[string]any{"succeeded": true}).expect(http.StatusOK)
 	byDevice("RECOVERY_CODE_USED", device.ID)
+
+	// ---- a remote adb session, opened and closed (FR-19) ----
+	//
+	// Driven over the wire rather than asserted from the relay's code: the parent's leg as the raw
+	// upgrade `fgctl adb` sends, the phone's leg as the DPC dials it. Both rows are written by the
+	// parent's handler — one before the phone is asked, one when the splice ends — so closing the
+	// streams is part of driving the second row, not cleanup.
+	h.patchPolicy(parent.Token, child.ID, map[string]any{"allow_debugging": true})
+	parentLeg := make(chan net.Conn, 1)
+	go func() {
+		address := strings.TrimPrefix(h.base, "http://")
+		conn, err := net.Dial("tcp", address)
+		if err != nil {
+			t.Errorf("dialling the parent's debug leg: %v", err)
+			parentLeg <- nil
+			return
+		}
+		_, _ = io.WriteString(conn, "GET /api/v1/devices/"+device.ID+"/debug HTTP/1.1\r\nHost: "+address+
+			"\r\nAuthorization: Bearer "+parent.Token+"\r\nConnection: Upgrade\r\nUpgrade: familyguard-debug\r\n\r\n")
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
+			t.Errorf("the parent's debug leg was not upgraded: %v %v", err, resp)
+			conn.Close()
+			parentLeg <- nil
+			return
+		}
+		parentLeg <- conn
+	}()
+	debugCmd := awaitDebugCommand(t, h, enrolled.DeviceToken, 20*time.Second)
+	phoneLeg, _, status, body := dialPhoneLeg(t, h, enrolled.DeviceToken, debugCmd.Params["stream"].(string), true)
+	if phoneLeg == nil {
+		t.Fatalf("the phone's debug leg was answered %d: %s", status, body)
+	}
+	if conn := <-parentLeg; conn != nil {
+		conn.Close()
+	}
+	phoneLeg.Close()
+	byParent("DEBUG_STREAM_REQUESTED", "device", device.ID)
+	byParent("DEBUG_STREAM_CLOSED", "device", device.ID)
 
 	// ---- the application catalog and API keys (FR-16, FR-17) ----
 	//
