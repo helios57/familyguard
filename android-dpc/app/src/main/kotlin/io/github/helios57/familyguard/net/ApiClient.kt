@@ -176,6 +176,8 @@ data class InventoryApp(
     @SerialName("system_app") val systemApp: Boolean = false,
     @SerialName("hidden") val hidden: Boolean = false,
     @SerialName("suspended") val suspended: Boolean = false,
+    /** FR-3.12: whether the app has a launcher entry. */
+    @SerialName("launchable") val launchable: Boolean? = null,
 )
 
 @Serializable

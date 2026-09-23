@@ -14,6 +14,8 @@ data class InstalledApp(
     val hidden: Boolean = false,
     /** Suspended by this DPC — visible, greyed out, and it will not start. */
     val suspended: Boolean = false,
+    /** Whether the app has a launcher entry a child could open (FR-3.12). */
+    val launchable: Boolean = true,
 )
 
 /**
@@ -108,6 +110,10 @@ class PlatformInstalledAppReader(
                     (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0,
                 hidden = it.packageName in hidden,
                 suspended = it.packageName in suspended,
+                // A suspended app still resolves its launch intent; a hidden one does not, and a
+                // hidden app is governed by its block rule rather than by the sweep anyway.
+                launchable = runCatching { pm.getLaunchIntentForPackage(it.packageName) != null }
+                    .getOrDefault(true),
             )
         }.sortedBy { it.packageName }
 

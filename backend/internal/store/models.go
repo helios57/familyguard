@@ -299,8 +299,10 @@ type InstalledApp struct {
 	Baseline    bool      `json:"baseline"`
 	// Hidden and Suspended are what the DEVICE reports it is doing, not what the policy asked for
 	// (FR-18.6). They are the only evidence the console has that a block took effect.
-	Hidden      bool       `json:"hidden"`
-	Suspended   bool       `json:"suspended"`
+	Hidden    bool `json:"hidden"`
+	Suspended bool `json:"suspended"`
+	// Launchable is whether the app has a launcher entry (FR-3.12); nil when the phone has not said.
+	Launchable  *bool      `json:"launchable,omitempty"`
 	FirstSeenAt time.Time  `json:"first_seen_at"`
 	LastSeenAt  time.Time  `json:"last_seen_at"`
 	RemovedAt   *time.Time `json:"removed_at,omitempty"`

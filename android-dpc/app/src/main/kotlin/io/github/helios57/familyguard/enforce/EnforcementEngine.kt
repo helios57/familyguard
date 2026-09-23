@@ -365,7 +365,9 @@ object EnforcementEngine {
             // Bedtime or an exhausted quota suspends everything non-exempt (FR-3.4, FR-4.2). An
             // explicit ALLOW rule is the exemption a parent can grant — a LIMIT rule deliberately
             // is not one, which is the whole difference between the two.
-            if (reason != REASON_NONE && app.pkg !in allowed) suspended.add(app.pkg)
+            // FR-3.12: only what the child can open. A service with no icon was swept in too, and
+            // the platform refused most of them on every sync.
+            if (reason != REASON_NONE && app.pkg !in allowed && app.launchable != false) suspended.add(app.pkg)
             // FR-5.8: an app with an allowance of its own, spent. Independent of the shared quota,
             // so this suspends one app on a phone with screen time left — and deliberately not a
             // suspendReason: the phone is not in a quota state, one app is.
@@ -522,6 +524,8 @@ data class App(
     @SerialName("package") val pkg: String = "",
     @SerialName("system") val system: Boolean = false,
     @SerialName("new_since_baseline") val newSinceBaseline: Boolean = false,
+    /** FR-3.12: false only when the phone said the app has no launcher entry; null keeps the sweep. */
+    @SerialName("launchable") val launchable: Boolean? = null,
 )
 
 @Serializable

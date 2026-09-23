@@ -80,6 +80,9 @@ class InventoryReporter(
                     app.systemApp.toString(),
                     app.hidden.toString(),
                     app.suspended.toString(),
+                    // FR-3.12. In the digest so the first report after an update carries it: the
+                    // server learns which apps can be opened only from a report that is sent.
+                    app.launchable.toString(),
                 )
                 for (field in fields) {
                     val bytes = field.toByteArray(Charsets.UTF_8)

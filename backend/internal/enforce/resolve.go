@@ -245,11 +245,11 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 		//
 		// Unioned per request; the stored critical_packages column still holds only what the device
 		// itself reported, so this can never grow the device's own record.
-		// The home screen the phone reports NOW joins them (FR-3.8). Enrolment recorded the launcher
-		// the phone had then; a child who switched launchers since would otherwise have the new one
-		// listed as paused at bedtime — the phone refuses to suspend its own current launcher, so
-		// the harm is a console that says the home screen is paused when it is not.
-		CriticalPackages: store.SortedUnique(dev.CriticalPackages, policy.AlwaysUsablePackages, home),
+		// Everything that is not counted joins them (FR-3.8): time on it is not use, so there is
+		// nothing to pause. That covers the home screen the phone reports NOW — enrolment recorded
+		// the launcher it had then, and a switched launcher would otherwise be listed as paused at
+		// bedtime — and System UI, which the console listed as paused by the daily limit.
+		CriticalPackages: store.SortedUnique(dev.CriticalPackages, policy.AlwaysUsablePackages, uncounted),
 		Now:              now.In(loc).Format(time.RFC3339),
 	}
 
@@ -314,6 +314,7 @@ func installedApps(apps []store.InstalledApp) []policy.App {
 			Package:          a.PackageName,
 			System:           a.SystemApp,
 			NewSinceBaseline: !a.Baseline,
+			Launchable:       a.Launchable,
 		})
 	}
 	return out

@@ -57,10 +57,11 @@ func (d dayViewDTO) app(t *testing.T, pkg string) appRowDTO {
 }
 
 type desiredDTO struct {
-	SuspendReason string `json:"suspend_reason"`
-	QuotaMinutes  int    `json:"quota_minutes"`
-	UsedMinutes   int    `json:"used_minutes"`
-	BonusMinutes  int    `json:"bonus_minutes"`
+	SuspendReason string   `json:"suspend_reason"`
+	QuotaMinutes  int      `json:"quota_minutes"`
+	UsedMinutes   int      `json:"used_minutes"`
+	BonusMinutes  int      `json:"bonus_minutes"`
+	Suspended     []string `json:"suspended_packages"`
 }
 
 func TestOnlyUseCountsAndExtraTimeLiftsTheLimit(t *testing.T) {
@@ -75,6 +76,9 @@ func TestOnlyUseCountsAndExtraTimeLiftsTheLimit(t *testing.T) {
 		"apps": []map[string]any{
 			{"package_name": pkgGame, "label": "Brawl Stars"},
 			{"package_name": pkgLauncher, "label": "One UI Home", "system_app": true},
+			// A service with no launcher entry (FR-3.12): nothing a child can open.
+			{"package_name": "com.samsung.android.emergency", "system_app": true, "launchable": false},
+			{"package_name": pkgSystemUI, "system_app": true, "launchable": false},
 		},
 	}).expect(http.StatusOK)
 
@@ -129,8 +133,17 @@ func TestOnlyUseCountsAndExtraTimeLiftsTheLimit(t *testing.T) {
 	}
 
 	report(60)
-	if d := desired(); d.SuspendReason != "QUOTA" || d.QuotaMinutes != 60 {
+	d := desired()
+	if d.SuspendReason != "QUOTA" || d.QuotaMinutes != 60 {
 		t.Fatalf("60 of 60 counted minutes should pause the phone; got reason=%q quota=%d", d.SuspendReason, d.QuotaMinutes)
+	}
+	for _, pkg := range []string{"com.samsung.android.emergency", pkgSystemUI, pkgLauncher} {
+		if slices.Contains(d.Suspended, pkg) {
+			t.Errorf("the daily limit pauses %s, which no child can open or which is not use: %v", pkg, d.Suspended)
+		}
+	}
+	if !slices.Contains(d.Suspended, pkgGame) {
+		t.Errorf("the daily limit does not pause the game: %v", d.Suspended)
 	}
 	v := day(today)
 	if v.ScreenTime.CountedMinutes != 60 || v.ScreenTime.UncountedMinutes != 65 {
@@ -300,4 +313,3 @@ func TestTheConsoleDrawsEachAppAgainstItsLimit(t *testing.T) {
 	b.waitFor("(document.querySelector('#view .st-summary') || {}).textContent.includes('15 min extra')",
 		10*time.Second, "the summary to show the extra time")
 }
-

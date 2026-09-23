@@ -217,7 +217,17 @@ type App struct {
 	// that derives this from "installed after enrolled_at" marks every app on the phone as new.
 	// Whoever supplies this value must carry the flag; it cannot be recomputed from a timestamp.
 	NewSinceBaseline bool `json:"new_since_baseline"`
+
+	// Launchable is whether the app has a launcher entry the child could open (FR-3.12). Bedtime and
+	// the daily limit pause only what can be opened: a phone carries a hundred system services with
+	// no icon — an emergency handler, a parser, a sync agent — and sweeping them in achieved nothing
+	// but a hundred refusals from the platform on every sync, or, for a keyboard, a child unable to
+	// type. nil is a phone that does not report it, which keeps the sweep as it was.
+	Launchable *bool `json:"launchable,omitempty"`
 }
+
+// canBeOpened is false only for an app the phone has said has no launcher entry.
+func (a App) canBeOpened() bool { return a.Launchable == nil || *a.Launchable }
 
 // Settings mirrors the child's policy row, flattened with the rule tables it is always read with.
 type Settings struct {
@@ -645,7 +655,8 @@ func Compute(in Input) (DesiredState, error) {
 		// Bedtime or an exhausted quota suspends everything non-exempt (FR-3.4, FR-4.2). An
 		// explicit ALLOW rule is the exemption a parent can grant — and a LIMIT rule deliberately
 		// is not one, which is the difference between the two actions.
-		if out.SuspendReason != ReasonNone && !allowed.has(app.Package) {
+		// Only what the child can open (FR-3.12): see App.Launchable.
+		if out.SuspendReason != ReasonNone && !allowed.has(app.Package) && app.canBeOpened() {
 			suspended.add(app.Package)
 		}
 		// FR-5.8: an app with an allowance of its own, spent. Independent of the shared quota, so

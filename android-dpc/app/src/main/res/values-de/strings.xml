@@ -25,4 +25,7 @@
     <string name="block_app_limit">Pausiert: eigenes Limit aufgebraucht</string>
     <string name="block_blocked">Von deinen Eltern gesperrt</string>
     <string name="block_pending">Wartet auf die Freigabe deiner Eltern</string>
+    <string name="debug_channel">Fernwartung</string>
+    <string name="debug_connected_title">Ein Elternteil ist zur Fehlersuche verbunden</string>
+    <string name="debug_connected_text">Deine Eltern schauen sich dieses Handy an, um ein Problem zu beheben.</string>
 </resources>

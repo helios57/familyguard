@@ -206,6 +206,13 @@ Applied at provisioning and re-applied on every boot:
   child's calendar day in the policy's timezone and ends at its midnight even on a phone that is
   offline and cannot be told. Grants on one day add up, to at most a day's 1 440 minutes; with no
   daily limit there is nothing to add to, and the request says so. Every grant is audited.
+- FR-3.12 **Bedtime and the daily limit pause what a child can open**, and nothing else: the phone
+  reports which apps have a launcher entry, and an app that has none — the hundred system services
+  every phone carries, an emergency handler, a sync agent, a keyboard — is left running. A parent's
+  explicit block, an app's own limit and an app waiting for approval are unaffected: those are
+  decisions about one app. A phone that does not report the flag keeps the previous behaviour.
+  Measured 2026-09-23: at the daily limit the family phone tried to pause 101 apps, among them
+  `com.samsung.android.emergency`; the platform refused most of them, on every sync.
 
 ### FR-4 Bedtime
 - FR-4.1 Per-child bedtime window with start and end time; the window may cross midnight.

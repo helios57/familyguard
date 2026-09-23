@@ -1,0 +1,11 @@
+-- Whether an app has a launcher entry the child could open (FR-3.12).
+--
+-- Measured 2026-09-23 on the family phone: at the daily limit the engine swept every installed app
+-- into the suspend list — 101 of them, among them com.samsung.android.emergency, a parser, a sync
+-- agent — and the platform refused most, so every sync logged a hundred failures for services no
+-- child can open. Bedtime and the limit now pause only what has a launcher entry.
+--
+-- NULL is a phone that does not report it, and keeps the sweep exactly as it was: a column that
+-- defaulted to false would have exempted every app on every older phone from bedtime the moment
+-- this migration ran.
+ALTER TABLE installed_apps ADD COLUMN launchable BOOLEAN;

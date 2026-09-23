@@ -966,7 +966,7 @@ class ConnectionService : Service() {
                         InventoryRequest(
                             apps.map {
                                 InventoryApp(
-                                    it.packageName, it.label, it.systemApp, it.hidden, it.suspended,
+                                    it.packageName, it.label, it.systemApp, it.hidden, it.suspended, it.launchable,
                                 )
                             }
                         )

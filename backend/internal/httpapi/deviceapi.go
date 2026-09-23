@@ -368,6 +368,9 @@ type inventoryApp struct {
 	// phone that does not send the field.
 	Hidden    bool `json:"hidden"`
 	Suspended bool `json:"suspended"`
+	// Launchable is whether the app has a launcher entry (FR-3.12). Absent from an older DPC, and
+	// carried through as absent: an app nobody has asked about keeps being paused at bedtime.
+	Launchable *bool `json:"launchable"`
 }
 
 func (s *Server) deviceInventory(c *gin.Context) {
@@ -383,7 +386,7 @@ func (s *Server) deviceInventory(c *gin.Context) {
 		}
 		apps = append(apps, store.InstalledApp{
 			PackageName: a.PackageName, Label: a.Label, SystemApp: a.SystemApp,
-			Hidden: a.Hidden, Suspended: a.Suspended,
+			Hidden: a.Hidden, Suspended: a.Suspended, Launchable: a.Launchable,
 		})
 	}
 	if err := s.store.ReplaceInstalledApps(c.Request.Context(), dev.ID, apps); err != nil {

@@ -7340,3 +7340,29 @@ enrolment — fixed in the resolver, above.
   the read-back) and to be seen on the family phone after 0.6.15, which is in a QUOTA state today.
 - **Samsung's launcher as the reported home screen.** `CATEGORY_HOME` resolves the default; a phone
   with no default chosen resolves the chooser, which is `android` and filtered out.
+
+### 32.7 — three things the family phone showed on 0.6.15 (FR-3.8, FR-3.10, FR-3.12)
+
+Read over the tunnel minutes after 0.6.15 landed. The home screen's 57 minutes were uncounted and
+the German notification was up — and three things were wrong:
+
+1. **The remote-debugging notice was still English** ("A parent is connected for debugging") on a
+   German phone a child holds. German added with the other child-facing strings.
+2. **The console listed System UI as paused by the daily limit.** Everything uncounted is now also
+   critical on the server, not only the reported home screen: time on it is not use, so there is
+   nothing to pause.
+3. **At the daily limit the phone tried to pause 101 apps**, among them
+   `com.samsung.android.emergency`, a parser and a sync agent; the platform refused most, and every
+   sync's apply line was a page of failures. **FR-3.12:** the phone reports whether each app has a
+   launcher entry (`launchable`, in the inventory and in its digest, so the first report after the
+   update carries it), and bedtime and the daily limit pause only what can be opened. `NULL` —
+   an older phone — keeps the old sweep; a column defaulting to false would have exempted every app
+   from bedtime on every older phone. Blocks, own limits and approvals are unaffected.
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| 6 | `policy/engine.go` | `canBeOpened` always true | **RED** — shared vector *quota: only what the child can open is paused* |
+| 7 | `EnforcementEngine.kt` | the same, in Kotlin | **RED** — the same vector, `suspended_packages` |
+| 8 | `store/telemetry.go` | the inventory write drops `launchable` | **RED** — *the daily limit pauses com.samsung.android.emergency, which no child can open* |
+
+Cumulative: **97 probes, 95 red, one deliberate green, and one green that corrected a comment.**
