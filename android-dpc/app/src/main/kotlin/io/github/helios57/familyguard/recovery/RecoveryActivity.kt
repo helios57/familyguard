@@ -472,6 +472,7 @@ class RecoveryActivity : AppCompatActivity() {
     private fun ruleText(app: TodayReport.AppLine): String = when {
         !app.counted -> getString(R.string.rule_not_counted)
         app.rule == TodayReport.Rule.ALWAYS_FREE -> getString(R.string.rule_always_free)
+        app.rule == TodayReport.Rule.FREE_PREINSTALLED -> getString(R.string.rule_free_preinstalled)
         app.rule == TodayReport.Rule.BLOCKED_BY_PARENT -> getString(R.string.rule_blocked)
         app.rule == TodayReport.Rule.OWN_LIMIT -> getString(R.string.rule_own_limit, app.ownLimitMinutes)
         else -> getString(R.string.rule_counts)

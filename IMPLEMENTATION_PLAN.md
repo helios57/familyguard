@@ -7366,3 +7366,69 @@ the German notification was up — and three things were wrong:
 | 8 | `store/telemetry.go` | the inventory write drops `launchable` | **RED** — *the daily limit pauses com.samsung.android.emergency, which no child can open* |
 
 Cumulative: **97 probes, 95 red, one deliberate green, and one green that corrected a comment.**
+
+## Phase 33 — Camera and Gallery are part of the phone, and an uninstalled app can leave the list (FR-5.10, FR-5.11)
+
+The owner, 2026-09-23: *"i cant find/add native apps like camera or gallery to the allow list"* and
+*"usually i want the system apps to be allowed by default but the possibility to block them"*. Two
+defects and one missing control:
+
+1. **Camera and Gallery were not in the Apps list at all.** Every preinstalled app waited behind
+   "Show system apps", with about 475 services no child can open. The switch now hides only what the
+   phone reports as having no launcher entry (FR-3.12) and is called "Show background services"; a
+   system app that is hidden or already has a rule is always listed.
+2. **At the daily limit, the camera paused with everything else.** FR-5.10: a preinstalled app a
+   child can open is free by default. The exceptions are the preinstalled apps that are themselves
+   screen time: browsers, stores, search, AI assistants and video. That was the owner's choice among
+   three, "Free, except browsers/stores". The list is `policy.DefaultCountedSystemPackages` and it
+   travels in the policy (`settings.counted_system_packages`), so the phone's offline recomputation
+   (FR-9) agrees without an update. Any rule of the parent's wins. The state reports the result as
+   `free_by_default`, and the console and the phone's "Heute" screen say "Always free (preinstalled)"
+   / "Immer frei (vorinstalliert)". Only an explicit `launchable = true` qualifies. An older phone
+   that does not say keeps the sweep, because otherwise every unclassified service would become an
+   exemption. Free means never paused, not uncounted: the camera's minutes still count, exactly as
+   with a parent's "Always free".
+3. **FR-5.11: "Remove from list".** `DELETE /devices/:id/apps/:package` deletes an inventory row only
+   when the phone has stopped reporting the app (409 `still_installed` otherwise, because the next
+   inventory would bring it back). The rule is kept, so a blocked game that is reinstalled is still
+   blocked. The action is audited as `APP_REMOVED_FROM_LIST`.
+
+### 33.1 — tests
+
+- Six shared vectors (51 in total), replayed by both engines:
+  - quota and bedtime with camera, gallery and Chrome
+  - block, limit and allow each outranking the default
+  - unknown `launchable` keeps the sweep
+  - a critical app is never on the free list
+  - tracking-only reports nothing
+- E2E against the real server:
+  - `TestPreinstalledAppsAreFreeByDefault` checks the desired state, the policy the phone is sent, the Activity rows, and the parent's rule winning.
+  - `TestAnUninstalledAppCanBeRemovedFromTheList` checks the 409, the 204, the 404 and that the rule survives.
+  - The audit ratchet drives the new action.
+- Real browser: `TestTheConsoleShowsPreinstalledAppsAndRemovesUninstalledOnes`. The Camera is listed with the default filters and says it is free, the service is not listed, and "Remove from list" removes the row from the page and from the server.
+
+### 33.2 — calibration
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| 1 | `policy/engine.go` | the sweep ignores free-by-default | **RED**: *camera … should stay usable (FR-5.10)* |
+| 2 | `policy/engine.go` | the counted list is empty | **RED**: *com.android.chrome counts toward the daily limit and should be paused* |
+| 3 | `policy/engine.go` | unknown `launchable` qualifies | **RED**: two shared vectors; e2e **green**, correctly, since it always sends `launchable` |
+| 4 | `policy/engine.go` | critical apps stay on the free list | **RED**: vector *a critical app is never on it* |
+| 5 | `enforce/resolve.go` | the list is not sent | **RED**: *the phone is not told that Chrome counts* |
+| 6 | `httpapi/screentime.go` | the Activity row never says free | **RED**: *the camera's row should say free* |
+| 7 | `store/telemetry.go` | an installed app can be removed | **RED**: *expected 409, got 204* |
+| 8 | `store/telemetry.go` | the delete matches nothing | **RED**: *still listed after it was removed* |
+| 9 | `httpapi/devices.go` | the audit row loses the package | **RED**: *no APP_REMOVED_FROM_LIST row whose detail["package"] is com.example.game* |
+| 10 | `app.js` | the old system-app filter | **RED**: *the Camera is not in the Apps list with the default filters* |
+| 11 | `app.js` | no free note | **RED**: *does not say it is always free* |
+| 12 | `app.js` | no remove button | **RED**: *has no 'Remove from list' button* |
+| 13 | `app.js` | the button calls nothing | **RED**: *waited 15s for the removed app to leave the list* |
+| 14 | `app.js` | no device is recorded as having dropped it | **RED**: *has no 'Remove from list' button* |
+| 15 | `EnforcementEngine.kt` | the sweep ignores free-by-default | **RED**: vector *a preinstalled app … stays free*, `suspended_packages` |
+| 16 | `TodayReport.kt` | free-by-default is never the rule | **RED**: *expected FREE_PREINSTALLED but was COUNTS* |
+
+The first attempt at probe 2 deleted the condition, so the build failed on an unused variable. A
+compile error is not a gate firing, so it was retaken as a value change (the empty list above).
+
+Cumulative: **113 probes, 111 red, one deliberate green, and one green that corrected a comment.**

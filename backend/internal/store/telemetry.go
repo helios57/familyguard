@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -182,6 +183,34 @@ func (s *Store) ReplaceInstalledApps(ctx context.Context, deviceID uuid.UUID, ap
 			`UPDATE installed_apps SET removed_at = NOW()
 			  WHERE device_id = $1 AND removed_at IS NULL AND NOT (package_name = ANY($2::text[]))`,
 			deviceID, seen)
+		return err
+	})
+}
+
+// ForgetRemovedApp deletes one row of a device's inventory that the phone no longer reports
+// (FR-5.11), so a parent can tidy away apps that were uninstalled long ago. Only such a row: an app
+// the phone still reports is ErrConflict, because the next inventory would put it straight back and
+// the list is what the phone says it has. A package the device never reported is ErrNotFound.
+//
+// The child's rule for the package is deliberately untouched — it lives in app_rules, not here — so
+// a blocked game that is reinstalled is still blocked.
+func (s *Store) ForgetRemovedApp(ctx context.Context, deviceID uuid.UUID, pkg string) error {
+	return s.tx(ctx, func(tx pgx.Tx) error {
+		var removed *time.Time
+		err := tx.QueryRow(ctx,
+			`SELECT removed_at FROM installed_apps WHERE device_id = $1 AND package_name = $2 FOR UPDATE`,
+			deviceID, pkg).Scan(&removed)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if removed == nil {
+			return ErrConflict
+		}
+		_, err = tx.Exec(ctx,
+			`DELETE FROM installed_apps WHERE device_id = $1 AND package_name = $2`, deviceID, pkg)
 		return err
 	})
 }

@@ -16,6 +16,7 @@
     <string name="app_minutes">%1$d Min.</string>
     <string name="app_minutes_of">%1$d von %2$d Min.</string>
     <string name="rule_always_free">Immer frei</string>
+    <string name="rule_free_preinstalled">Immer frei (vorinstalliert)</string>
     <string name="rule_own_limit">Eigenes Limit: %1$d Min. pro Tag</string>
     <string name="rule_counts">Zählt zum Tageslimit</string>
     <string name="rule_not_counted">Zählt nicht</string>

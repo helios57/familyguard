@@ -2480,6 +2480,454 @@
           "com.samsung.android.emergency"
         ]
       }
+    },
+    {
+      "name": "quota: a preinstalled app the child can open stays free, a preinstalled browser does not",
+      "requirements": [
+        "FR-5.10",
+        "FR-3.12"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "counted_system_packages": [
+            "com.android.chrome",
+            "com.android.vending",
+            "com.google.android.youtube"
+          ]
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.sec.android.app.camera",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.sec.android.gallery3d",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.chrome",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.samsung.android.service",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": false
+          }
+        ],
+        "used_minutes_today": 60,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "QUOTA",
+        "suspended_packages": [
+          "com.android.chrome",
+          "com.example.game"
+        ],
+        "free_by_default": [
+          "com.sec.android.app.camera",
+          "com.sec.android.gallery3d"
+        ]
+      }
+    },
+    {
+      "name": "bedtime: preinstalled apps with no rule stay free at night too",
+      "requirements": [
+        "FR-5.10"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": true,
+          "bedtime_start": "14:00",
+          "bedtime_end": "16:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "counted_system_packages": [
+            "com.android.chrome",
+            "com.android.vending",
+            "com.google.android.youtube"
+          ]
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.sec.android.app.camera",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.sec.android.gallery3d",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.chrome",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.samsung.android.service",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": false
+          }
+        ],
+        "used_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "BEDTIME",
+        "suspended_packages": [
+          "com.android.chrome",
+          "com.example.game"
+        ],
+        "free_by_default": [
+          "com.sec.android.app.camera",
+          "com.sec.android.gallery3d"
+        ]
+      }
+    },
+    {
+      "name": "a parent's rule outranks free-by-default: block, limit and allow each take the app off the free list",
+      "requirements": [
+        "FR-5.10",
+        "FR-5.2",
+        "FR-5.8"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [
+            "com.sec.android.gallery3d"
+          ],
+          "allowed_packages": [
+            "com.sec.android.app.clockpackage"
+          ],
+          "blocked_domains": [],
+          "counted_system_packages": [
+            "com.android.chrome",
+            "com.android.vending",
+            "com.google.android.youtube"
+          ],
+          "limited_packages": [
+            {
+              "package_name": "com.sec.android.app.camera",
+              "minutes": 0
+            }
+          ]
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.sec.android.app.camera",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.sec.android.gallery3d",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.chrome",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.samsung.android.service",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": false
+          },
+          {
+            "package": "com.sec.android.app.clockpackage",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 60,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "QUOTA",
+        "suspended_packages": [
+          "com.android.chrome",
+          "com.example.game",
+          "com.sec.android.app.camera",
+          "com.sec.android.gallery3d"
+        ],
+        "hidden_packages": [
+          "com.sec.android.gallery3d"
+        ],
+        "free_by_default": []
+      }
+    },
+    {
+      "name": "free-by-default needs the phone to SAY the app has an icon; unknown keeps the sweep",
+      "requirements": [
+        "FR-5.10",
+        "FR-3.12"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "counted_system_packages": [
+            "com.android.chrome",
+            "com.android.vending",
+            "com.google.android.youtube"
+          ]
+        },
+        "installed": [
+          {
+            "package": "com.sec.android.app.camera",
+            "system": true,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 60,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "QUOTA",
+        "suspended_packages": [
+          "com.sec.android.app.camera"
+        ],
+        "free_by_default": []
+      }
+    },
+    {
+      "name": "with time left the free list is still reported, and a critical app is never on it",
+      "requirements": [
+        "FR-5.10",
+        "FR-5.5"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "counted_system_packages": [
+            "com.android.chrome",
+            "com.android.vending",
+            "com.google.android.youtube"
+          ]
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.sec.android.app.camera",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.sec.android.gallery3d",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.chrome",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.samsung.android.service",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": false
+          },
+          {
+            "package": "com.android.settings",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 10,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "free_by_default": [
+          "com.sec.android.app.camera",
+          "com.sec.android.gallery3d"
+        ]
+      }
+    },
+    {
+      "name": "tracking-only: nothing is enforced, so nothing is reported free",
+      "requirements": [
+        "FR-5.10",
+        "FR-8"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": true,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "counted_system_packages": [
+            "com.android.chrome",
+            "com.android.vending",
+            "com.google.android.youtube"
+          ]
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.sec.android.app.camera",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.sec.android.gallery3d",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.chrome",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.samsung.android.service",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": false
+          }
+        ],
+        "used_minutes_today": 60,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "free_by_default": []
+      }
     }
   ]
 }

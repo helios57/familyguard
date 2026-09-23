@@ -255,6 +255,22 @@ Applied at provisioning and re-applied on every boot:
   device in the policy input, so a change to it takes effect on the next sync rather than on the
   next app update. Two consequences are deliberate: bedtime does not reach these apps, and a BLOCK
   rule against one does nothing — the same way a BLOCK against the dialer already does nothing.
+- FR-5.10 **Preinstalled apps a child can open are always free by default.** Camera, Gallery, Clock,
+  Calculator, Contacts and the like are part of the phone: with no rule of the parent's, they stay
+  usable at bedtime and when the daily limit is spent. The exceptions are the preinstalled apps that
+  ARE screen time — browsers, app stores, search, AI assistants and video (Chrome, Samsung Internet,
+  Play Store, Galaxy Store, Google, Gemini, Bixby, YouTube) — which count toward the daily limit like
+  any installed app. That list is carried by the server and travels to the phone in its policy, so it
+  can change without a phone update. Any rule the parent sets wins: a preinstalled app can be
+  blocked, limited or put on the daily limit like any other. Only apps with a launcher entry are
+  concerned (FR-3.12); a phone that does not report it keeps the previous behaviour. The console and
+  the phone both say "always free (preinstalled)" rather than showing no category. Chosen by the
+  owner on 2026-09-23 after Camera and Gallery were paused by the daily limit and could not be found
+  in the Apps list.
+- FR-5.11 **An app no phone reports any more can be removed from the Apps list.** Only then: an
+  installed app cannot be removed from the list, because the list is what the phone reports. The
+  parent's rule for it is kept — a blocked game that comes back is still blocked — and the removal
+  is audited.
 - FR-5.6 **Developer options and adb are a per-child switch**, defaulting to off (the restriction
   applied). `no_debugging_features` is the one restriction whose cost falls on whoever administers
   the phone rather than on the child: applying it as Device Owner switches adb off, the setting

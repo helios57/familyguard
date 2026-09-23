@@ -1270,7 +1270,8 @@ async function loadApps() {
   // `devices` makes an app nobody has read "on the phone and not hidden yet" forever, and a state
   // that can never be reached is a state a parent learns to ignore.
   const byPackage = new Map();
-  perDevice.forEach((res) => {
+  perDevice.forEach((res, i) => {
+    const deviceId = list[i].id;
     for (const app of res.apps || []) {
       const gone = !!app.removed_at;
       const seen = byPackage.get(app.package_name);
@@ -1280,15 +1281,21 @@ async function loadApps() {
           devices: gone ? 0 : 1,
           hiddenOn: gone || !app.hidden ? 0 : 1,
           removedOn: gone ? 1 : 0,
+          // Which phones' lists still carry it after it was uninstalled: "Remove from list" asks each
+          // of them (FR-5.11).
+          removedFrom: gone ? [deviceId] : [],
           hidden: !gone && !!app.hidden,
           suspended: !gone && !!app.suspended,
         });
       } else if (gone) {
         seen.removedOn += 1;
+        seen.removedFrom.push(deviceId);
       } else {
         seen.devices += 1;
         if (app.hidden) { seen.hiddenOn += 1; seen.hidden = true; }
         if (app.suspended) seen.suspended = true;
+        // Openable on any phone is openable (FR-3.12); only "every phone said no" is a service.
+        if (app.launchable === true) seen.launchable = true;
         if (app.label && !seen.label) seen.label = app.label;
       }
     }
@@ -1304,10 +1311,17 @@ async function loadApps() {
   for (const st of desired) {
     for (const pkg of ((st && st.pending_approval) || [])) pending.add(pkg);
   }
+  // Preinstalled apps nobody decided about that stay usable at any hour (FR-5.10), from the same
+  // computation the phone obeys rather than guessed here from "system and has an icon".
+  const free = new Set();
+  for (const st of desired) {
+    for (const pkg of ((st && st.free_by_default) || [])) free.add(pkg);
+  }
   return {
     apps: [...byPackage.values()].sort(sortApps),
     ruleFor,
     pending,
+    free,
     // The queue as the server reported it, kept separate from `pending` because `pending` is
     // edited in place as a parent answers. Taking an answer back has to know whether the app was
     // waiting before the answer was given, and after the first edit `pending` can no longer say.
@@ -1799,6 +1813,8 @@ function renderApps(data) {
     // that is no longer there is worth knowing about before it is set, not after.
     const restrained = !app.devices
       ? el('small', { class: 'muted', text: 'Not on the phone any more.' })
+      : !rule && data.free.has(app.package_name)
+        ? el('small', { class: 'muted', text: 'Always free (preinstalled) — pick an answer to change it.' })
       : app.hidden
         ? el('small', { class: 'muted', text: 'Hidden on the phone right now.' })
         : app.suspended
@@ -1809,13 +1825,33 @@ function renderApps(data) {
         el('b', { text: app.label || app.package_name }),
         el('small', { text: app.package_name + (app.system_app ? ' · system' : '') }),
         family,
-        restrained),
+        restrained,
+        forget(app)),
       categoryControl(app));
   };
 
+  /* FR-5.11: an app no phone reports any more can be taken off the list. Only then — an installed
+     app would be back with the next inventory — and the rule stays, so a blocked game that is
+     reinstalled is still blocked. */
+  const forget = (app) => (app.devices || !(app.removedFrom || []).length) ? null : el('button', {
+    class: 'btn btn-quiet', type: 'button', text: 'Remove from list',
+    'aria-label': 'Remove ' + (app.label || app.package_name) + ' from the list',
+    onclick: async () => {
+      const ok = await tried('Removed from the list', () => Promise.all(app.removedFrom.map((id) =>
+        api('/devices/' + id + '/apps/' + encodeURIComponent(app.package_name), { method: 'DELETE' }))));
+      if (ok) refresh();
+    },
+  });
+
   const matches = (app) => {
-    if (!f.system && app.system_app) return false;
     const rule = data.ruleFor.get(app.package_name) || null;
+    // Preinstalled apps with an icon — Camera, Gallery, Clock, Chrome — are apps a child opens and a
+    // parent decides about, and they used to be hidden behind "Show system apps" with 475 services
+    // no child can open. Now only the services wait behind the switch. A system app that is hidden
+    // or already has a rule stays visible, so a parent can always find what they decided. A phone
+    // too old to report `launchable` keeps the old default.
+    const openable = app.launchable === true || app.hidden || rule !== null;
+    if (!f.system && app.system_app && !openable) return false;
     const action = rule && rule.action;
     if (f.rule === 'allowed' && action !== 'ALLOW') return false;
     if (f.rule === 'blocked' && action !== 'BLOCK') return false;
@@ -1861,8 +1897,8 @@ function renderApps(data) {
   })));
 
   const system = el('label', { class: 'switch' },
-    el('span', { class: 'switch-label' }, 'Show system apps',
-      el('small', { text: 'The dialler, the settings app and the rest of Android.' })),
+    el('span', { class: 'switch-label' }, 'Show background services',
+      el('small', { text: 'Parts of Android with no icon — nothing a child can open.' })),
     el('input', {
       type: 'checkbox', checked: f.system,
       onchange: (e) => { f.system = e.target.checked; paint(); },
@@ -2153,6 +2189,7 @@ function appUsageTable(apps, screen) {
 function appStatusText(a, screen) {
   const rule = a.counted === false ? 'Not counted (home screen / system)'
     : a.rule === 'ALLOW' ? 'Always free'
+    : !a.rule && a.free_by_default ? 'Always free (preinstalled)'
       : a.rule === 'BLOCK' ? 'Blocked by you'
         : (a.limit_minutes || 0) > 0 ? 'Own limit ' + fmtMinutes(a.limit_minutes) + ' a day, and counts toward the daily limit'
           : 'Counts toward the daily limit';

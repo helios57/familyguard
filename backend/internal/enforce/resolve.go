@@ -223,6 +223,9 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 			FamilyBlockedPackages: familyBlocked,
 			AllowedPackages:       allowed,
 			LimitedPackages:       limited,
+			// FR-5.10: sent with every policy, so the phone learns a change to the list on its next
+			// sync rather than with its next update.
+			CountedSystemPackages: store.SortedUnique(policy.DefaultCountedSystemPackages),
 			BlockedDomains:        domains,
 			ManagedApps:           r.managedApps(managed),
 		},

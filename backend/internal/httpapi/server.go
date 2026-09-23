@@ -258,6 +258,7 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.GET("/devices/:id/recovery-code", s.recoveryCode)
 	p.GET("/devices/:id/recovery-events", s.listRecoveryEvents)
 	p.GET("/devices/:id/apps", s.listDeviceApps)
+	p.DELETE("/devices/:id/apps/:package", s.forgetDeviceApp)
 	p.GET("/devices/:id/usage", s.deviceUsage)
 	p.GET("/devices/:id/usage/timeline", s.deviceUsageTimeline)
 	p.GET("/devices/:id/locations", s.deviceLocations)

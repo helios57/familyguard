@@ -344,6 +344,8 @@ object EnforcementEngine {
         val suspended = sortedSetOf<String>()
         val hidden = sortedSetOf<String>()
         val pending = sortedSetOf<String>()
+        val free = sortedSetOf<String>()
+        val countedSystem = sortedSetOfPackages(input.settings.countedSystemPackages)
 
         // A blocked app is suspended and hidden (FR-5.2) whether or not it is installed right now:
         // the DPC applies the list, so an app installed later is already covered.
@@ -367,7 +369,16 @@ object EnforcementEngine {
             // is not one, which is the whole difference between the two.
             // FR-3.12: only what the child can open. A service with no icon was swept in too, and
             // the platform refused most of them on every sync.
-            if (reason != REASON_NONE && app.pkg !in allowed && app.launchable != false) suspended.add(app.pkg)
+            //
+            // FR-5.10: a preinstalled app the child can open is part of the phone and free by
+            // default, unless the server lists it as screen time or the parent decided anything
+            // about it. Only an explicit launchable = true qualifies; null keeps the old sweep.
+            val freeByDefault = app.system && app.launchable == true && app.pkg !in countedSystem &&
+                app.pkg !in allowed && app.pkg !in blocked && app.pkg !in limited
+            if (freeByDefault) free.add(app.pkg)
+            if (reason != REASON_NONE && app.pkg !in allowed && app.launchable != false && !freeByDefault) {
+                suspended.add(app.pkg)
+            }
             // FR-5.8: an app with an allowance of its own, spent. Independent of the shared quota,
             // so this suspends one app on a phone with screen time left — and deliberately not a
             // suspendReason: the phone is not in a quota state, one app is.
@@ -379,12 +390,15 @@ object EnforcementEngine {
         suspended.removeAll(critical)
         hidden.removeAll(critical)
         pending.removeAll(critical)
+        // Always usable already says more than "free by default"; one category per app.
+        free.removeAll(critical)
 
         return base.copy(
             suspendReason = reason,
             suspendedPackages = suspended.toList(),
             hiddenPackages = hidden.toList(),
             pendingApproval = pending.toList(),
+            freeByDefault = free.toList(),
             nextChangeAt = nextChangeAt(input.settings, local, zone),
         )
     }
@@ -614,6 +628,13 @@ data class Settings(
      * approving an app and exempting it from every schedule were the same keystroke.
      */
     @SerialName("limited_packages") val limitedPackages: List<AppLimit> = emptyList(),
+
+    /**
+     * The preinstalled apps that ARE screen time (FR-5.10) — browsers, stores, search, assistants,
+     * video. Every other preinstalled app with a launcher entry is free by default. Carried here
+     * rather than compiled in, so the server can change the list without a phone update.
+     */
+    @SerialName("counted_system_packages") val countedSystemPackages: List<String> = emptyList(),
 )
 
 /**
@@ -723,4 +744,9 @@ data class DesiredState(
      * separate decisions, and a parent who declared one has not thereby allowed it at midnight.
      */
     @SerialName("managed_apps") val managedApps: List<ManagedApp> = emptyList(),
+    /**
+     * The preinstalled apps this state leaves usable because nothing was decided about them
+     * (FR-5.10), sorted and never null — so the phone can say "always free (preinstalled)".
+     */
+    @SerialName("free_by_default") val freeByDefault: List<String> = emptyList(),
 )

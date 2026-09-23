@@ -106,6 +106,7 @@ func TestVectorsCoverTheEnforcementRequirements(t *testing.T) {
 		"FR-5.4",  // new app waits for approval
 		"FR-5.5",  // critical whitelist
 		"FR-5.6",  // developer options and adb, as a switch
+		"FR-5.10", // preinstalled apps a child can open are free by default
 		"FR-6.2",  // per-child filtering endpoint
 		"FR-6.4",  // domain removal restores access
 		"FR-6.6",  // the on-device ad filter, and the list url that gates it

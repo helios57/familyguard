@@ -175,6 +175,7 @@
     <string name="app_minutes">%1$d min</string>
     <string name="app_minutes_of">%1$d of %2$d min</string>
     <string name="rule_always_free">Always free</string>
+    <string name="rule_free_preinstalled">Always free (preinstalled)</string>
     <string name="rule_own_limit">Own limit: %1$d min a day</string>
     <string name="rule_counts">Counts toward the daily limit</string>
     <string name="rule_not_counted">Not counted</string>

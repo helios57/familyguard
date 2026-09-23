@@ -303,6 +303,34 @@ func (s *Server) listDeviceApps(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"apps": apps})
 }
 
+// forgetDeviceApp removes an app the phone no longer reports from its list (FR-5.11). Refused with
+// 409 while the phone still has it: the next inventory would restore the row, and a button that
+// appears to work and then undoes itself is worse than one that says why it cannot.
+func (s *Server) forgetDeviceApp(c *gin.Context) {
+	id, ok := uuidParam(c, "id")
+	if !ok {
+		return
+	}
+	pkg := strings.TrimSpace(c.Param("package"))
+	if pkg == "" {
+		failWith(c, http.StatusBadRequest, "invalid_input", "package is required")
+		return
+	}
+	err := s.store.ForgetRemovedApp(c.Request.Context(), id, pkg)
+	if errors.Is(err, store.ErrConflict) {
+		failWith(c, http.StatusConflict, "still_installed",
+			"the phone still reports this app, so it stays on the list until it is uninstalled")
+		return
+	}
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	s.auditParent(c, "APP_REMOVED_FROM_LIST", "device", id.String(), map[string]any{"package": pkg})
+	s.hub.PublishParents(Event{Type: "device", DeviceID: id.String()})
+	c.Status(http.StatusNoContent)
+}
+
 // deviceUsage reports screen time for the child's local day, not the server's.
 func (s *Server) deviceUsage(c *gin.Context) {
 	id, ok := uuidParam(c, "id")

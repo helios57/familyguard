@@ -127,6 +127,9 @@ type appRow struct {
 	// Blocked is why the app cannot be used right now (today only; "" on another day, and "" for
 	// an app that is usable).
 	Blocked string `json:"blocked"`
+	// FreeByDefault is true for a preinstalled app with no rule that stays usable whatever the
+	// time (FR-5.10). Today only, from the same computation as Blocked.
+	FreeByDefault bool `json:"free_by_default"`
 }
 
 // screenTime is the day's counted use against the limit that applied (FR-3.9).
@@ -214,6 +217,7 @@ func (s *Server) describeDay(ctx context.Context, dev *store.Device, pol *store.
 		}
 		if desired != nil {
 			row.Blocked = blockedReason(desired, sample.PackageName, row.LimitMinutes, sample.ForegroundMs)
+			row.FreeByDefault = slices.Contains(desired.FreeByDefault, sample.PackageName)
 		}
 		rows = append(rows, row)
 	}

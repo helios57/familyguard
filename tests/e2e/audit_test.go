@@ -164,6 +164,15 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 		expect(http.StatusOK)
 	byParent("RECOVERY_CODE_VIEWED", "device", device.ID)
 
+	// ---- an uninstalled app taken off the list (FR-5.11) ----
+	h.call(http.MethodPost, "/device/inventory", enrolled.DeviceToken,
+		map[string]any{"apps": []map[string]any{{"package_name": pkgGame}}}).expect(http.StatusOK)
+	h.call(http.MethodPost, "/device/inventory", enrolled.DeviceToken,
+		map[string]any{"apps": []map[string]any{}}).expect(http.StatusOK)
+	h.call(http.MethodDelete, "/devices/"+device.ID+"/apps/"+pkgGame, parent.Token, nil).
+		expect(http.StatusNoContent)
+	byParent("APP_REMOVED_FROM_LIST", "device", device.ID)
+
 	// ---- commands: issued by a parent, acknowledged by the phone ----
 	//
 	// Two of them, because the device-side action name is *computed* — `"COMMAND_"+cmd.State` — so
@@ -339,6 +348,7 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 		{"COMMAND_ISSUED", "type", "LOCK_NOW"},
 		{"COMMAND_FAILED", "error", "the device owner app is not admin"},
 		{"DEVICE_ENROLLED", "model", "Pixel 7a"},
+		{"APP_REMOVED_FROM_LIST", "package", pkgGame},
 	} {
 		found := false
 		for _, e := range entries {

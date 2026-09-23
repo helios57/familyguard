@@ -38,7 +38,8 @@ data class TodayReport(
         val blocked: Block?,
     )
 
-    enum class Rule { ALWAYS_FREE, OWN_LIMIT, COUNTS, BLOCKED_BY_PARENT }
+    /** [FREE_PREINSTALLED] is a preinstalled app nobody decided about (FR-5.10). */
+    enum class Rule { ALWAYS_FREE, FREE_PREINSTALLED, OWN_LIMIT, COUNTS, BLOCKED_BY_PARENT }
 
     /** The server's reason names (httpapi.BlockedByRule and friends). */
     enum class Block { QUOTA, BEDTIME, APP_LIMIT, BLOCKED, PENDING }
@@ -59,6 +60,7 @@ data class TodayReport(
             val hidden = state.hiddenPackages.toSet()
             val pending = state.pendingApproval.toSet()
             val suspended = state.suspendedPackages.toSet()
+            val freeByDefault = state.freeByDefault.toSet()
 
             val packages = usedByPackage.filterValues { it > 0 }.keys + pending
             val lines = packages.map { pkg ->
@@ -71,6 +73,7 @@ data class TodayReport(
                     rule = when {
                         pkg in parentBlocked -> Rule.BLOCKED_BY_PARENT
                         pkg in allowed -> Rule.ALWAYS_FREE
+                        pkg in freeByDefault -> Rule.FREE_PREINSTALLED
                         own > 0 -> Rule.OWN_LIMIT
                         else -> Rule.COUNTS
                     },

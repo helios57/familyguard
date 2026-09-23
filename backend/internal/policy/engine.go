@@ -332,6 +332,13 @@ type Settings struct {
 	// thing, so approving an app and exempting it from every schedule were the same keystroke —
 	// see migration 0013 for the phone that was measured in that state.
 	LimitedPackages []AppLimit `json:"limited_packages"`
+
+	// CountedSystemPackages are the preinstalled apps that ARE screen time (FR-5.10) — browsers,
+	// stores, search, assistants, video — and so count toward the daily limit like any installed app.
+	// Every other preinstalled app with a launcher entry is free by default. Carried in the settings
+	// rather than compiled into either engine so the list can change without a phone update; the
+	// server fills it from DefaultCountedSystemPackages.
+	CountedSystemPackages []string `json:"counted_system_packages"`
 }
 
 // ManagedApp is one entry of that set: which application, which exact build, and everything the
@@ -368,6 +375,22 @@ type AppLimit struct {
 // is the shade, the lock screen and the recents screen. The home screen is added per phone, from
 // what it reports, and this system's own app by the server's configuration.
 var PlatformUncountedPackages = []string{"com.android.systemui"}
+
+// DefaultCountedSystemPackages is FR-5.10's list: preinstalled apps that are screen time. Chosen by
+// the owner on 2026-09-23 as "browsers, app stores, search and AI assistants", plus video, because the
+// family restricts YouTube. A parent's rule outranks it either way.
+var DefaultCountedSystemPackages = []string{
+	// browsers
+	"com.android.chrome", "com.sec.android.app.sbrowser", "com.google.android.apps.chrome",
+	// app stores
+	"com.android.vending", "com.sec.android.app.samsungapps",
+	// search and assistants
+	"com.google.android.googlequicksearchbox", "com.google.android.apps.bard",
+	"com.samsung.android.bixby.agent",
+	// video
+	"com.google.android.youtube", "com.google.android.apps.youtube.music",
+	"com.google.android.apps.youtube.kids", "com.samsung.android.tvplus", "com.netflix.mediaclient",
+}
 
 // Input is everything the engine needs. Nothing else is consulted.
 type Input struct {
@@ -447,6 +470,11 @@ type DesiredState struct {
 	// governing it are separate decisions, and a parent who declares one has not thereby allowed
 	// it at midnight.
 	ManagedApps []ManagedApp `json:"managed_apps"`
+
+	// FreeByDefault lists the preinstalled apps this state leaves usable because nothing was
+	// decided about them (FR-5.10), sorted and never nil. Reported so a console and the phone can
+	// say "always free (preinstalled)" instead of showing an app with no category.
+	FreeByDefault []string `json:"free_by_default"`
 
 	// NextChangeAt is the next instant at which this output would differ, RFC 3339 in the policy's
 	// zone, or "" if nothing is scheduled. The device sets one exact alarm for it instead of
@@ -573,6 +601,7 @@ func Compute(in Input) (DesiredState, error) {
 		out.SuspendedPackages = []string{}
 		out.HiddenPackages = []string{}
 		out.PendingApproval = []string{}
+		out.FreeByDefault = []string{}
 		out.NextChangeAt = ""
 		return out, nil
 	}
@@ -610,6 +639,8 @@ func Compute(in Input) (DesiredState, error) {
 	suspended := newSet(nil)
 	hidden := newSet(nil)
 	pending := newSet(nil)
+	free := newSet(nil)
+	countedSystem := newSet(in.Settings.CountedSystemPackages)
 
 	allowed := newSet(in.Settings.AllowedPackages)
 
@@ -656,7 +687,19 @@ func Compute(in Input) (DesiredState, error) {
 		// explicit ALLOW rule is the exemption a parent can grant — and a LIMIT rule deliberately
 		// is not one, which is the difference between the two actions.
 		// Only what the child can open (FR-3.12): see App.Launchable.
-		if out.SuspendReason != ReasonNone && !allowed.has(app.Package) && app.canBeOpened() {
+		//
+		// FR-5.10: a preinstalled app the child can open — Camera, Gallery, Clock — is part of the
+		// phone and free by default, unless it is on the server's list of preinstalled apps that
+		// ARE screen time, or the parent has decided anything about it. Only a phone that SAID
+		// the app has a launcher entry qualifies: nil keeps the old behaviour, so an older phone
+		// cannot turn every system service it failed to classify into an exemption.
+		freeByDefault := app.System && app.Launchable != nil && *app.Launchable &&
+			!countedSystem.has(app.Package) && !allowed.has(app.Package) &&
+			!blocked.has(app.Package) && !isLimited
+		if freeByDefault {
+			free.add(app.Package)
+		}
+		if out.SuspendReason != ReasonNone && !allowed.has(app.Package) && app.canBeOpened() && !freeByDefault {
 			suspended.add(app.Package)
 		}
 		// FR-5.8: an app with an allowance of its own, spent. Independent of the shared quota, so
@@ -672,11 +715,14 @@ func Compute(in Input) (DesiredState, error) {
 		suspended.remove(p)
 		hidden.remove(p)
 		pending.remove(p)
+		// Always usable already says more than "free by default"; one category per app.
+		free.remove(p)
 	}
 
 	out.SuspendedPackages = suspended.sorted()
 	out.HiddenPackages = hidden.sorted()
 	out.PendingApproval = pending.sorted()
+	out.FreeByDefault = free.sorted()
 	out.NextChangeAt = nextChangeAt(in.Settings, local, loc)
 	return out, nil
 }

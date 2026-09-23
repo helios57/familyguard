@@ -57,6 +57,26 @@ class TodayReportTest {
     }
 
     @Test
+    fun `a preinstalled camera stays free when the limit is spent, a preinstalled browser does not`() {
+        val camera = "com.sec.android.app.camera"
+        val chrome = "com.android.chrome"
+        val base = input(
+            used = 60,
+            installed = listOf(App("com.example.game"), App(camera, system = true, launchable = true),
+                App(chrome, system = true, launchable = true)),
+            byPackage = mapOf("com.example.game" to 40, camera to 5, chrome to 15),
+        )
+        val r = report(base.copy(settings = base.settings.copy(countedSystemPackages = listOf(chrome))))
+
+        val cam = r.apps.single { it.packageName == camera }
+        assertEquals(TodayReport.Rule.FREE_PREINSTALLED, cam.rule)
+        assertNull("the camera is part of the phone, not screen time (FR-5.10)", cam.blocked)
+        val browser = r.apps.single { it.packageName == chrome }
+        assertEquals(TodayReport.Rule.COUNTS, browser.rule)
+        assertEquals(TodayReport.Block.QUOTA, browser.blocked)
+    }
+
+    @Test
     fun `an app whose own allowance is spent says so, on a phone with time left`() {
         val r = report(input(
             own = listOf(AppLimit("com.example.video", 30)), used = 35,
