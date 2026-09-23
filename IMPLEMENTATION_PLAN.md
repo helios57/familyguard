@@ -7432,3 +7432,23 @@ The first attempt at probe 2 deleted the condition, so the build failed on an un
 compile error is not a gate firing, so it was retaken as a value change (the empty list above).
 
 Cumulative: **113 probes, 111 red, one deliberate green, and one green that corrected a comment.**
+
+### 33.3 — on the family phone
+
+Deployed 2026-09-23. The control plane runs image `sha256:623baf5d…fd6d7` (one pod, `/readyz` 200).
+`/dpc.apk` is byte-identical to the signed `familyguard-0.6.17-versionCode-26.apk` (`65a0ba25…018e`,
+signer `b62cda94…8e10`). `UPDATE_APP` was acked in 794 ms, and the phone reported 0.6.17 (26).
+
+The phone was in QUOTA at the time (62 of 60 minutes). The phone's own inventory, filed 13 s after the
+update, is the platform's answer rather than the server's computation:
+
+- Kamera and Galerie were **not suspended**, and neither was Gmail.
+- Chrome, Gemini, Google, Bixby and Galaxy Store **were suspended**. Those are exactly the preinstalled
+  apps with an icon that the counted list names.
+- The server computed the same `free_by_default` list, with Kamera and Galerie on it.
+
+**Open: the Play Store.** The server asks for it to be suspended, and the phone reports that it is not.
+The likely cause is that Android refuses to suspend the package verifier; `DeviceOwnerPolicy` logs such
+a refusal as "the platform did not act on it". That log could not be read: the phone was asleep, and
+the tunnel reaches only an awake phone (FR-19.8). This is not new with 0.6.17, because the store was in
+the sweep before as well.
