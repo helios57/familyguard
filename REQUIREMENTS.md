@@ -589,6 +589,11 @@ below is about who can open it, what it can reach, and who can see that it is op
   and how much it carried. A session ends after an hour idle and after four hours regardless.
 - FR-19.7 When the phone cannot open a session — Wireless debugging off, no port announced, adbd
   refusing — its own reason reaches the parent at once.
+- FR-19.8 **A session reaches a phone that is awake.** While its screen is off the phone goes quiet
+  on purpose (NFR-10), so a request waits for the phone's next contact and gives up after 30 s with
+  a sentence saying to wake the phone. Keeping the connection open through sleep would make the
+  phone reachable at any hour at a battery cost the owner ruled out on 2026-09-23: *"its fine to only
+  reach when the phone is awake, otherwhise the batter drains too fast"*.
 
 ---
 

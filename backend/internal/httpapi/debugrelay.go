@@ -320,8 +320,9 @@ func (s *Server) openDebugStream(c *gin.Context) {
 		return
 	case <-timer.C:
 		failWith(c, http.StatusGatewayTimeout, "phone_silent",
-			"the phone did not dial back within "+debugDialWindow.String()+". It is offline, or it runs a "+
-				"FamilyGuard that does not know OPEN_DEBUG_STREAM (older than 0.6.13).")
+			"the phone did not dial back within "+debugDialWindow.String()+". It is most likely asleep — a "+
+				"phone with its screen off stays quiet to save its battery (FR-19.8), so wake its screen and "+
+				"try again. Otherwise it is offline, or runs a FamilyGuard older than 0.6.13.")
 		return
 	case <-ctx.Done():
 		return

@@ -1047,6 +1047,10 @@ adb connect 127.0.0.1:<port>
 adb -s 127.0.0.1:<port> logcat
 ```
 
+**The phone has to be awake** (screen on; unlocking is not needed). A sleeping phone is deliberately
+quiet to save its battery, so `fgctl adb` answers `phone_silent` after 30 s — wake the phone and run it
+again (FR-19.8).
+
 The phone finds its own Wireless debugging port and switches Wireless debugging on as device owner
 when it is off; `--port <n>` names the port the phone shows instead. The phone shows a notification
 for as long as a session is open, and each session is audited when it opens and when it closes.
