@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- German for what a CHILD reads (FR-3.10). Only these strings: everything else falls back to the
+     English in values/, which is what an administrator reads. -->
+<resources>
+    <string name="why_quota">Tageslimit erreicht: %1$d von %2$d Minuten benutzt. Ab Mitternacht sind deine Apps wieder frei. Frag deine Eltern, wenn du mehr Zeit brauchst.</string>
+    <string name="why_bedtime">Nachtruhe bis %1$s. Bis dann sind deine Apps pausiert.</string>
+    <string name="why_app">Diese App ist von deinen Eltern gesperrt, hat ihr eigenes Limit aufgebraucht oder wartet auf ihre Freigabe. In FamilyGuard siehst du, was davon.</string>
+    <string name="limits_channel">Bildschirmzeit</string>
+    <string name="limits_title_quota">Tageslimit erreicht</string>
+    <string name="limits_title_bedtime">Nachtruhe</string>
+    <string name="today_heading">Heute</string>
+    <string name="today_used">Bildschirmzeit: %1$d von %2$d Min.</string>
+    <string name="today_used_bonus">Bildschirmzeit: %1$d von %2$d Min. (inkl. %3$d Min. extra)</string>
+    <string name="today_used_nolimit">Bildschirmzeit: %1$d Min. (kein Tageslimit)</string>
+    <string name="today_no_apps">Heute noch keine App benutzt.</string>
+    <string name="app_minutes">%1$d Min.</string>
+    <string name="app_minutes_of">%1$d von %2$d Min.</string>
+    <string name="rule_always_free">Immer frei</string>
+    <string name="rule_own_limit">Eigenes Limit: %1$d Min. pro Tag</string>
+    <string name="rule_counts">Zählt zum Tageslimit</string>
+    <string name="rule_not_counted">Zählt nicht</string>
+    <string name="rule_blocked">Von deinen Eltern gesperrt</string>
+    <string name="block_quota">Pausiert: Tageslimit erreicht</string>
+    <string name="block_bedtime">Pausiert: Nachtruhe</string>
+    <string name="block_app_limit">Pausiert: eigenes Limit aufgebraucht</string>
+    <string name="block_blocked">Von deinen Eltern gesperrt</string>
+    <string name="block_pending">Wartet auf die Freigabe deiner Eltern</string>
+</resources>

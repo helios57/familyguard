@@ -117,6 +117,12 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 	h.patchPolicy(parent.Token, child.ID, map[string]any{"daily_limit_minutes": 90})
 	byParent("POLICY_UPDATED", "child", child.ID)
 
+	// Extra time for today (FR-3.11), on top of the 90-minute limit just set: a grant with no limit
+	// to add to is refused and writes nothing.
+	h.call(http.MethodPost, "/children/"+child.ID+"/bonus", parent.Token, map[string]any{"minutes": 15}).
+		expect(http.StatusOK)
+	byParent("BONUS_GRANTED", "child", child.ID)
+
 	h.call(http.MethodPut, "/children/"+child.ID+"/app-rules", parent.Token,
 		map[string]any{"package_name": pkgGame, "action": "BLOCK"}).expect(http.StatusOK)
 	byParent("APP_RULE_SET", "child", child.ID)

@@ -290,6 +290,7 @@ class Synchronizer(
                 adFilterFetchedAt = t.adFilterFetchedAt,
                 adFilterRunning = t.adFilterRunning,
                 adFilterReason = t.adFilterReason,
+                homePackages = t.homePackages,
             )
         ).pendingCommands
     }
@@ -370,4 +371,6 @@ data class DeviceTelemetry(
     val adFilterRunning: Boolean? = null,
     /** Why no tunnel is running, or "" when there is nothing to explain (FR-6.11). */
     val adFilterReason: String? = null,
+    /** What this phone resolves as its home screen now; its time is not counted as use (FR-3.8). */
+    val homePackages: List<String>? = null,
 )

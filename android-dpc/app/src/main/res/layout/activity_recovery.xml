@@ -24,6 +24,50 @@
         android:orientation="vertical"
         android:padding="24dp">
 
+        <!--
+          Today, first (FR-3.10). The screen a child opens when their apps are paused, so what they
+          came for — why, and how much of the day is used — is at the top. Hidden until it has been
+          computed, and stays hidden on a phone that has never received a policy: an empty "Today"
+          block is the screen this feature exists to prevent.
+        -->
+        <LinearLayout
+            android:id="@+id/today_group"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="28dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/today_heading"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/today_heading"
+                android:textAppearance="?attr/textAppearanceHeadlineSmall" />
+
+            <TextView
+                android:id="@+id/today_summary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+            <TextView
+                android:id="@+id/today_why"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?attr/colorError"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/today_apps"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </LinearLayout>
+
         <TextView
             android:id="@+id/recovery_title"
             android:layout_width="match_parent"

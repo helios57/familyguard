@@ -41,7 +41,9 @@ type Source interface {
 	ListAppRules(ctx context.Context, childID uuid.UUID) ([]store.AppRule, error)
 	ListBlockedDomains(ctx context.Context, childID uuid.UUID) ([]string, error)
 	ListInstalledApps(ctx context.Context, deviceID uuid.UUID, includeSystem bool) ([]store.InstalledApp, error)
-	UsageMinutesForDay(ctx context.Context, deviceID uuid.UUID, day string) (int, error)
+	UsageMinutesCountedForDay(ctx context.Context, deviceID uuid.UUID, day string, uncounted []string) (int, error)
+	HomePackages(ctx context.Context, deviceID uuid.UUID) ([]string, error)
+	BonusMinutes(ctx context.Context, childID uuid.UUID, day string) (int, error)
 	UsageMinutesByPackageForDay(ctx context.Context, deviceID uuid.UUID, day string) (map[string]int, error)
 	ManagedAppsForChild(ctx context.Context, childID uuid.UUID) ([]store.App, error)
 	FamilyBlockedPackageNames(ctx context.Context) ([]string, error)
@@ -55,6 +57,17 @@ type Resolver struct {
 	// declared set resolves to different URLs on dev and on the family's own server, and the engine
 	// has to stay a pure function that the phone can run offline with the same result.
 	baseURL string
+	// ownPackages is this system's own app on the phone, left out of screen time like the home
+	// screen (FR-3.8). Configuration, not policy: a fork that renames the package renames this.
+	ownPackages []string
+}
+
+// WithOwnPackage names this system's own app so its foreground time is not counted as use.
+func (r *Resolver) WithOwnPackage(pkg string) *Resolver {
+	if pkg != "" {
+		r.ownPackages = append(r.ownPackages, pkg)
+	}
+	return r
 }
 
 // New builds a Resolver over any Source. *store.Store satisfies Source.
@@ -142,9 +155,25 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 	if err != nil {
 		return nil, nil, fmt.Errorf("usage by package: %w", err)
 	}
-	used, err := r.src.UsageMinutesForDay(ctx, deviceID, day)
+	// FR-3.8: the home screen this phone reports, System UI and this system's own app are
+	// foreground time that is not use. Left out HERE, so the engine and the phone's own offline
+	// count — which reads the same list out of the Input — agree on what a minute of use is.
+	home, err := r.src.HomePackages(ctx, deviceID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("home packages: %w", err)
+	}
+	uncounted := store.SortedUnique(home, policy.PlatformUncountedPackages, r.ownPackages)
+	used, err := r.src.UsageMinutesCountedForDay(ctx, deviceID, day, uncounted)
 	if err != nil {
 		return nil, nil, fmt.Errorf("usage: %w", err)
+	}
+	bonus, err := r.src.BonusMinutes(ctx, dev.ChildID, day)
+	if err != nil {
+		return nil, nil, fmt.Errorf("bonus: %w", err)
+	}
+	bonusDay := ""
+	if bonus > 0 {
+		bonusDay = day
 	}
 	rules, err := r.src.ListAppRules(ctx, dev.ChildID)
 	if err != nil {
@@ -180,6 +209,8 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 			AllowUninstall:        pol.AllowUninstall,
 			YouTubeBlocked:        pol.YouTubeBlocked,
 			DailyLimitMinutes:     pol.DailyLimitMinutes,
+			BonusMinutes:          bonus,
+			BonusDay:              bonusDay,
 			BedtimeEnabled:        pol.BedtimeEnabled,
 			BedtimeStart:          pol.BedtimeStart,
 			BedtimeEnd:            pol.BedtimeEnd,
@@ -198,6 +229,7 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 		Installed:            installedApps(apps),
 		UsedMinutesToday:     used,
 		UsedMinutesByPackage: usedByPackage,
+		UncountedPackages:    uncounted,
 		ParentLock:           dev.Locked,
 		// The device's own resolved packages (its actual dialer, launcher and IMEs) *plus* the
 		// family's always-usable list, unioned here rather than left to the engine.
@@ -213,7 +245,11 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 		//
 		// Unioned per request; the stored critical_packages column still holds only what the device
 		// itself reported, so this can never grow the device's own record.
-		CriticalPackages: append(append([]string{}, dev.CriticalPackages...), policy.AlwaysUsablePackages...),
+		// The home screen the phone reports NOW joins them (FR-3.8). Enrolment recorded the launcher
+		// the phone had then; a child who switched launchers since would otherwise have the new one
+		// listed as paused at bedtime — the phone refuses to suspend its own current launcher, so
+		// the harm is a console that says the home screen is paused when it is not.
+		CriticalPackages: store.SortedUnique(dev.CriticalPackages, policy.AlwaysUsablePackages, home),
 		Now:              now.In(loc).Format(time.RFC3339),
 	}
 

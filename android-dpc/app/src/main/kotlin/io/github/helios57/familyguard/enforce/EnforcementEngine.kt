@@ -264,7 +264,15 @@ object EnforcementEngine {
         if (input.settings.allowUninstall) restrictions.remove(RESTRICTION_UNINSTALL_APPS)
         restrictions.removeAll(FORBIDDEN_RESTRICTIONS)
 
-        val quota = input.settings.dailyLimitMinutes
+        // FR-3.11: a bonus counts on the one local day it was granted for, and only on top of a limit.
+        // The day is compared as the policy zone's calendar date, the same string the server wrote,
+        // so a phone offline across midnight drops yesterday's bonus by itself.
+        val bonus = if (
+            input.settings.dailyLimitMinutes > 0 &&
+            input.settings.bonusMinutes > 0 &&
+            input.settings.bonusDay == local.toLocalDate().toString()
+        ) input.settings.bonusMinutes else 0
+        val quota = input.settings.dailyLimitMinutes + bonus
         val base = DesiredState(
             // Only a parent's LOCK_NOW locks the keyguard. Bedtime and quota suspend apps instead:
             // a locked keyguard makes the phone less able to place an emergency call than a phone
@@ -285,6 +293,7 @@ object EnforcementEngine {
             quotaMinutes = quota,
             usedMinutes = input.usedMinutesToday,
             remainingMinutes = if (quota > 0) maxOf(0, quota - input.usedMinutesToday) else 0,
+            bonusMinutes = bonus,
             policyVersion = input.settings.version,
         )
 
@@ -543,6 +552,9 @@ data class Settings(
     @SerialName("allow_uninstall") val allowUninstall: Boolean = false,
     @SerialName("youtube_blocked") val youtubeBlocked: Boolean = false,
     @SerialName("daily_limit_minutes") val dailyLimitMinutes: Int = 0,
+    /** Extra minutes for the one local day [bonusDay] (YYYY-MM-DD), on top of the limit (FR-3.11). */
+    @SerialName("bonus_minutes") val bonusMinutes: Int = 0,
+    @SerialName("bonus_day") val bonusDay: String = "",
     @SerialName("bedtime_enabled") val bedtimeEnabled: Boolean = false,
     @SerialName("bedtime_start") val bedtimeStart: String = "",
     @SerialName("bedtime_end") val bedtimeEnd: String = "",
@@ -653,6 +665,12 @@ data class Input(
      * simply enforces no per-app cap — the right direction for something that can be missing.
      */
     @SerialName("used_minutes_by_package") val usedMinutesByPackage: Map<String, Int> = emptyMap(),
+    /**
+     * Foreground time that is not use (FR-3.8): the home screen, System UI, this app. The server
+     * has already left it out of [usedMinutesToday]; the phone reads this to leave the same
+     * packages out of its OWN count, which it takes over when it is offline.
+     */
+    @SerialName("uncounted_packages") val uncountedPackages: List<String> = emptyList(),
     @SerialName("now") val now: String = "",
 )
 
@@ -684,6 +702,8 @@ data class DesiredState(
     @SerialName("quota_minutes") val quotaMinutes: Int = 0,
     @SerialName("used_minutes") val usedMinutes: Int = 0,
     @SerialName("remaining_minutes") val remainingMinutes: Int = 0,
+    /** The part of [quotaMinutes] that is today's bonus (FR-3.11). */
+    @SerialName("bonus_minutes") val bonusMinutes: Int = 0,
     @SerialName("next_change_at") val nextChangeAt: String = "",
     @SerialName("policy_version") val policyVersion: Long = 0,
     /**

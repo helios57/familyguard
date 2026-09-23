@@ -25,6 +25,7 @@ class DeviceOwnerPolicy(
     val dns: DnsPolicyManager,
     val lock: LockManager,
     val alwaysOnVpn: AlwaysOnVpnManager,
+    val supportMessage: SupportMessageManager,
 ) {
     companion object {
         /**
@@ -66,6 +67,7 @@ class DeviceOwnerPolicy(
                     gateway = DpmAlwaysOnVpnGateway(dpm, admin),
                     ownPackage = context.packageName,
                 ),
+                supportMessage = SupportMessageManager(DpmSupportMessageGateway(dpm, admin)),
             )
         }
     }
@@ -255,4 +257,13 @@ class DpmDnsGateway(
         DevicePolicyManager.PRIVATE_DNS_SET_ERROR_HOST_NOT_SERVING -> PrivateDnsResult.HOST_NOT_SERVING
         else -> PrivateDnsResult.FAILED
     }
+}
+
+/** [SupportMessageGateway] over the real platform: the short support message (API 24). */
+class DpmSupportMessageGateway(
+    private val dpm: DevicePolicyManager,
+    private val admin: ComponentName,
+) : SupportMessageGateway {
+    override fun get(): String? = dpm.getShortSupportMessage(admin)?.toString()
+    override fun set(text: String) = dpm.setShortSupportMessage(admin, text)
 }

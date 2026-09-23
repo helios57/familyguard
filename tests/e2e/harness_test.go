@@ -956,15 +956,30 @@ func psql(t *testing.T, statement string) {
 // runPsql reports a deadline as context.DeadlineExceeded rather than as the process's own
 // "signal: killed", which a kill from anywhere else produces identically.
 func runPsql(budget time.Duration, statement string) ([]byte, error) {
+	return runPsqlOn(budget, "postgres", statement)
+}
+
+// runPsqlOn is runPsql against a named database — this harness's own, for a fixture the API cannot
+// write (a row about a past day, when every write path stamps today).
+func runPsqlOn(budget time.Duration, database, statement string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", "exec", "-e", "PGPASSWORD="+pgPassword, pgContainer,
-		"psql", "-U", pgUser, "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-q", "-c", statement)
+		"psql", "-U", pgUser, "-d", database, "-v", "ON_ERROR_STOP=1", "-q", "-c", statement)
 	out, err := cmd.CombinedOutput()
 	if err != nil && ctx.Err() != nil {
 		return out, fmt.Errorf("no answer within %s: %w (%v)", budget, context.DeadlineExceeded, err)
 	}
 	return out, err
+}
+
+// fixture writes one row into this harness's database. Only for state the API has no way to
+// create; everything else a test needs must go through the endpoints, or the test stops testing them.
+func (h *harness) fixture(statement string) {
+	h.t.Helper()
+	if out, err := runPsqlOn(3*psqlBudget, h.dbName, statement); err != nil {
+		h.t.Fatalf("fixture %q: %v\n%s", statement, err, out)
+	}
 }
 
 // loadAverage is reported alongside a timeout so the reader can tell contention from a hang without

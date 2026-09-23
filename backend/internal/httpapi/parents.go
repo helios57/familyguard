@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/helios57/familyguard/backend/internal/enforce"
 	"github.com/helios57/familyguard/backend/internal/store"
 )
 
@@ -269,6 +270,12 @@ func (s *Server) patchPolicy(c *gin.Context) {
 		return
 	}
 	s.auditParent(c, "POLICY_UPDATED", "child", childID.String(), map[string]any{"version": pol.Version})
+	// FR-3.9: a limit changed mid-day is the limit the day ends with.
+	if day, err := enforce.DayKey(pol, s.now()); err == nil {
+		if err := s.recordDayLimits(c.Request.Context(), childID, pol, day); err != nil {
+			s.log.Error("could not record the day's limits", "child", childID, "error", err)
+		}
+	}
 	s.notifyChild(c, childID, "policy")
 	c.JSON(http.StatusOK, pol)
 }

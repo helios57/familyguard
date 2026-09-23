@@ -157,4 +157,31 @@
     <string name="debug_channel">Remote debugging</string>
     <string name="debug_connected_title">A parent is connected for debugging</string>
     <string name="debug_connected_text">Your parent is looking at this phone over adb to fix a problem.</string>
+    <!-- Why apps are paused, and today's screen time (FR-3.10). Read by a child: the phone's own
+         language wins, and values-de carries the German. The first three are the line Android
+         shows on its "blocked by your administrator" screen, which it truncates past 200
+         characters. -->
+    <string name="why_quota">Daily limit reached: %1$d of %2$d minutes used. Your apps are free again at midnight. Ask your parents if you need more time.</string>
+    <string name="why_bedtime">Bedtime until %1$s. Your apps are paused until then.</string>
+    <string name="why_app">This app is blocked by your parents, has its own limit used up, or is waiting for their approval. Open FamilyGuard to see which.</string>
+    <string name="limits_channel">Screen time</string>
+    <string name="limits_title_quota">Daily limit reached</string>
+    <string name="limits_title_bedtime">Bedtime</string>
+    <string name="today_heading">Today</string>
+    <string name="today_used">Screen time: %1$d of %2$d min</string>
+    <string name="today_used_bonus">Screen time: %1$d of %2$d min (incl. %3$d min extra)</string>
+    <string name="today_used_nolimit">Screen time: %1$d min (no daily limit)</string>
+    <string name="today_no_apps">No app used today yet.</string>
+    <string name="app_minutes">%1$d min</string>
+    <string name="app_minutes_of">%1$d of %2$d min</string>
+    <string name="rule_always_free">Always free</string>
+    <string name="rule_own_limit">Own limit: %1$d min a day</string>
+    <string name="rule_counts">Counts toward the daily limit</string>
+    <string name="rule_not_counted">Not counted</string>
+    <string name="rule_blocked">Blocked by your parents</string>
+    <string name="block_quota">Paused: daily limit reached</string>
+    <string name="block_bedtime">Paused: bedtime</string>
+    <string name="block_app_limit">Paused: its own limit is used up</string>
+    <string name="block_blocked">Blocked by your parents</string>
+    <string name="block_pending">Waiting for your parents\' approval</string>
 </resources>

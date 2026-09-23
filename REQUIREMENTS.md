@@ -169,10 +169,10 @@ Applied at provisioning and re-applied on every boot:
     on the two mornings the clocks move. A chart that omits its quiet hours looks like one that
     failed to load.
 
-  The table is **text, not a second chart**: it carries the number a parent acts on when deciding
-  whether to set a limit, and a bar estimated against an axis is not a number. Apps used for under a
-  minute are counted rather than listed — they all round to "0 min" — but the count is shown, because
-  dropping them silently would understate the day.
+  Each app carries its **number as text and a bar** (FR-3.9): the number is what a parent acts on when
+  deciding whether to set a limit, and the bar — drawn against its limit — is what shows how far along
+  it is. Apps used for under a minute are counted rather than listed — they all round to "0 min" — but
+  the count is shown, because dropping them silently would understate the day.
 
   The chart and the table are **different measurements**, and the console says which one is missing
   rather than blending them: the chart comes from sittings, which exist only from the build that
@@ -181,6 +181,31 @@ Applied at provisioning and re-applied on every boot:
   The console distinguishes **"no sittings in this day"** from **"this phone has never reported
   one"**. They look identical on screen and have opposite remedies — the first is a child who did
   not use their phone, the second is a device that is not reporting.
+- FR-3.8 **Only use counts.** Foreground time on the phone's home screen, on System UI (the shade,
+  the lock screen, recents) and in FamilyGuard itself is shown but not counted toward any limit. The
+  phone reports which app is its home screen on every heartbeat, because a child can change it, and
+  the phone's own offline count leaves out the same packages the server does. Measured 2026-09-23:
+  the family phone lay on its charger with "Stay awake" on and spent its whole 60-minute limit —
+  57 of the 120 minutes counted were the home screen being shown, with nobody holding the phone.
+- FR-3.9 The console draws **each app's use against its limit**, on the day the parent is looking
+  at: a bar per app with the app's own limit marked on it, the day's counted total against the daily
+  limit (including any extra time, FR-3.11), and the uncounted time as its own line. The limit shown
+  for a past day is the limit **that applied that day**, recorded while it was current — never
+  today's limit drawn over last week. A day from before limits were recorded says so.
+- FR-3.10 **Why an app cannot be used is said where it is noticed.** On the phone: Android's own
+  "blocked by your administrator" screen carries one line naming the state (daily limit reached, and
+  how much of it; bedtime and until when; or blocked/limit/approval, see FamilyGuard); a
+  notification says so for as long as a daily limit or bedtime pauses apps; and FamilyGuard's own
+  screen lists today's apps, each with its minutes, its limit and its reason. In the console: every
+  app's line says what governs it (always free, counts, own limit, blocked, waiting for approval,
+  not counted) and, today, whether and why it is paused now. Both derive the reason from the same
+  engine output the phone enforces, with the same names. The child reads it in the phone's
+  language; German is provided.
+- FR-3.11 **Extra time for today.** A parent can add minutes to a child's daily limit for the
+  current day only, from the console (+15, +30, +60) or the API. The extra time belongs to the
+  child's calendar day in the policy's timezone and ends at its midnight even on a phone that is
+  offline and cannot be told. Grants on one day add up, to at most a day's 1 440 minutes; with no
+  daily limit there is nothing to add to, and the request says so. Every grant is audited.
 
 ### FR-4 Bedtime
 - FR-4.1 Per-child bedtime window with start and end time; the window may cross midnight.

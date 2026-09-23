@@ -129,8 +129,8 @@ const timelineCardJS = `((name) => {
     ticks: Array.from(card.querySelectorAll('.hr-tick')).map((s) => ({
       text: s.textContent, blank: s.classList.contains('blank'),
     })),
-    rows: Array.from(card.querySelectorAll('.tbl tbody tr')).map(
-      (tr) => Array.from(tr.querySelectorAll('td')).map((td) => td.textContent).join(' | ')),
+    rows: Array.from(card.querySelectorAll('.app-bars > li')).map(
+      (li) => Array.from(li.querySelectorAll('b, .num, small')).map((n) => n.textContent).join(' | ')),
     prevDisabled: nav.length > 0 ? nav[0].disabled : null,
     nextDisabled: nav.length > 1 ? nav[1].disabled : null,
   };

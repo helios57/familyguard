@@ -10,6 +10,7 @@ import io.github.helios57.familyguard.policy.DeviceOwnerPolicy
 import io.github.helios57.familyguard.policy.DnsPolicyManager
 import io.github.helios57.familyguard.policy.HardeningManager
 import io.github.helios57.familyguard.policy.LockManager
+import io.github.helios57.familyguard.policy.SupportMessageManager
 import java.net.URI
 import java.net.URISyntaxException
 
@@ -207,6 +208,25 @@ class LockApplier(private val lock: LockManager) : StateApplier {
     }
 }
 
+/**
+ * Puts the reason apps are paused on Android's "blocked by your administrator" screen (FR-3.10).
+ *
+ * [text] is the sentence for this state, written by the caller because it needs the phone's
+ * resources and language; this applier only makes it true and reads it back.
+ */
+class SupportMessageApplier(
+    private val manager: SupportMessageManager,
+    private val text: (DesiredState) -> String,
+) : StateApplier {
+
+    override fun apply(state: DesiredState): ApplyOutcome {
+        val outcome = manager.apply(text(state))
+        val problems = LinkedHashMap<String, String>()
+        outcome.failure?.let { problems["support_message"] = it }
+        return ApplyOutcome(summary = outcome.summary, problems = problems)
+    }
+}
+
 /** Applies `private_dns_host` (FR-6.1, FR-6.2). */
 class DnsApplier(private val dns: DnsPolicyManager) : StateApplier {
 
@@ -389,6 +409,7 @@ fun deviceApplier(
     serverUrl: String,
     managedApps: StateApplier? = null,
     filter: StateApplier? = null,
+    supportText: ((DesiredState) -> String)? = null,
 ): StateApplier {
     if (policy == null) return NoDeviceOwnerApplier
     return CompositeApplier(
@@ -402,6 +423,10 @@ fun deviceApplier(
             // reason outside the device (a list server that is not answering), and like DNS a
             // refusal there must not cost the rest of the pass.
             filter?.let { add("filter" to it) }
+            // Before the lock, like the rest of the silent work; and only when the caller can say
+            // it in the phone's language. The recovery release passes none: it is lifting pauses,
+            // and the next sync writes the message for whatever state follows.
+            supportText?.let { add("support" to SupportMessageApplier(policy.supportMessage, it)) }
             add("lock" to LockApplier(policy.lock))
         }
     )

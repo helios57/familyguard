@@ -138,6 +138,8 @@ data class HeartbeatRequest(
      * clears the line; null is a build that does not report it and leaves what the server has.
      */
     @SerialName("ad_filter_reason") val adFilterReason: String? = null,
+    /** FR-3.8. Null from a build that does not report it, which leaves the server's list alone. */
+    @SerialName("home_packages") val homePackages: List<String>? = null,
 )
 
 @Serializable

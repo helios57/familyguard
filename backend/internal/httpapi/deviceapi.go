@@ -159,6 +159,35 @@ type heartbeatRequest struct {
 	// an older DPC and carried through as absence; "" is a phone saying there is nothing to
 	// explain, which is what clears the line when a tunnel comes up.
 	AdFilterReason *string `json:"ad_filter_reason"`
+
+	// HomePackages is what the phone resolves as its home screen right now (FR-3.8). Reported on
+	// every heartbeat because a child can change launchers; absent from an older DPC, which leaves
+	// the stored list alone. Time on these is not counted as use.
+	HomePackages []string `json:"home_packages"`
+}
+
+// maxHomePackages bounds what one phone may add to the uncounted list. A phone resolves one home
+// screen; a handful covers a launcher switch in flight. Anything past it is not a home screen.
+const maxHomePackages = 4
+
+// sanitizeHomePackages keeps what can be a package name and at most maxHomePackages of them. nil
+// stays nil — "not reported" must not become "reported empty", which would clear the list.
+func sanitizeHomePackages(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	out := []string{}
+	for _, p := range in {
+		p = strings.TrimSpace(p)
+		if p == "" || len(p) > 255 || strings.ContainsAny(p, " \t/") || !strings.Contains(p, ".") {
+			continue
+		}
+		out = append(out, p)
+		if len(out) == maxHomePackages {
+			break
+		}
+	}
+	return out
 }
 
 // maxUpdateErrorRunes bounds what one phone may write into the field a parent reads.
@@ -251,6 +280,10 @@ func (s *Server) heartbeat(c *gin.Context) {
 		// verbatim, and a console line is a console line.
 		ReportedAdFilterReason: clampUpdateError(req.AdFilterReason),
 	}); err != nil {
+		s.fail(c, err)
+		return
+	}
+	if err := s.store.SetHomePackages(c.Request.Context(), dev.ID, sanitizeHomePackages(req.HomePackages)); err != nil {
 		s.fail(c, err)
 		return
 	}
@@ -445,6 +478,14 @@ func (s *Server) deviceUsageReport(c *gin.Context) {
 	if err != nil {
 		s.fail(c, err)
 		return
+	}
+	// FR-3.9: the limits in force are recorded while the day is current, so a later chart of this
+	// day is drawn against what applied then rather than against whatever the policy says by then.
+	if day == today {
+		if err := s.recordDayLimits(c.Request.Context(), dev.ChildID, pol, day); err != nil {
+			s.fail(c, err)
+			return
+		}
 	}
 	s.hub.PublishParents(Event{Type: "usage", DeviceID: dev.ID.String(), ChildID: dev.ChildID.String()})
 	// `sessions` is the number STORED, not the number sent, and the difference is the point: the

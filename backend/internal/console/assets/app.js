@@ -865,8 +865,10 @@ function deviceCard(dev, desired) {
       body.push(el('div', { class: 'stack' },
         el('div', { class: 'row' },
           el('span', { class: 'muted', text: 'Screen time today' }),
-          el('span', { text: fmtMinutes(used) + ' of ' + fmtMinutes(quota) })),
-        el('div', { class: 'meter' }, el('span', { class: used >= quota ? 'over' : '', style: { width: pct + '%' } }))));
+          el('span', { text: fmtMinutes(used) + ' of ' + fmtMinutes(quota)
+            + (desired.bonus_minutes ? ' (incl. ' + fmtMinutes(desired.bonus_minutes) + ' extra)' : '') })),
+        el('div', { class: 'meter' }, el('span', { class: used >= quota ? 'over' : '', style: { width: pct + '%' } })),
+        dev.child_id ? bonusButtons(dev) : null));
     } else {
       body.push(el('p', { class: 'muted', text: 'Screen time today: ' + fmtMinutes(used) + ' (no daily limit)' }));
     }
@@ -1927,6 +1929,7 @@ function dayActivityCard(dev, timeline) {
 
   const hours = timeline.hours || [];
   const apps = timeline.apps || [];
+  const screen = timeline.screen_time || null;
   const usedMs = apps.reduce((sum, a) => sum + (a.foreground_ms || 0), 0);
   const chartSeconds = hours.reduce((sum, h) => sum + h.seconds, 0);
 
@@ -2008,7 +2011,7 @@ function dayActivityCard(dev, timeline) {
   return el('div', { class: 'card' },
     el('div', { class: 'card-head' },
       el('h2', { text: dev.name }),
-      el('span', { class: 'badge', text: fmtMinutes(Math.round(usedMs / 60000)) })),
+      el('span', { class: 'badge', text: fmtMinutes(screen ? screen.counted_minutes : Math.round(usedMs / 60000)) })),
     el('div', { class: 'toolbar tl-nav' },
       step('◀', -1, false),
       el('span', { class: 'muted', text: dayLabel + ' · ' + timeline.timezone }),
@@ -2024,7 +2027,73 @@ function dayActivityCard(dev, timeline) {
           + dev.name + ', so every app reports zero. Turn it on in the phone’s Settings '
           + '→ Apps → Special app access → Usage access.' })
       : null,
-    appUsageTable(apps));
+    screen ? screenTimeSummary(dev, screen) : null,
+    appUsageTable(apps, screen));
+}
+
+/** The words for why an app cannot be used right now (FR-3.10). One table, used everywhere. */
+const BLOCKED_TEXT = {
+  QUOTA: 'Paused — daily limit reached',
+  BEDTIME: 'Paused — bedtime',
+  APP_LIMIT: 'Paused — its own limit is used up',
+  BLOCKED: 'Blocked',
+  PENDING: 'Waiting for your approval',
+};
+
+/**
+ * The day against its limit (FR-3.9), and "+ time today" (FR-3.11).
+ *
+ * Counted minutes only: the home screen, System UI and FamilyGuard itself are shown as a separate,
+ * uncounted line. On 2026-09-23 a phone left on its charger with the screen on spent its whole
+ * daily limit on the home screen, and a meter that counted that would have shown a limit a child
+ * never used as used up.
+ */
+function screenTimeSummary(dev, screen) {
+  const used = screen.counted_minutes || 0;
+  const limit = (screen.daily_limit_minutes || 0) + (screen.bonus_minutes || 0);
+  const parts = [];
+  if (!screen.limit_recorded) {
+    parts.push(el('p', { class: 'muted', text: 'Screen time counted: ' + fmtMinutes(used)
+      + '. The limit that applied on this day was not recorded — days before this was added have none.' }));
+  } else if (limit > 0) {
+    const pct = Math.min(100, Math.round((used / limit) * 100));
+    parts.push(el('div', { class: 'stack' },
+      el('div', { class: 'row' },
+        el('span', { class: 'muted', text: screen.is_today ? 'Screen time today' : 'Screen time' }),
+        el('span', { text: fmtMinutes(used) + ' of ' + fmtMinutes(limit)
+          + (screen.bonus_minutes ? ' (' + fmtMinutes(screen.daily_limit_minutes) + ' + '
+            + fmtMinutes(screen.bonus_minutes) + ' extra)' : '') })),
+      el('div', { class: 'meter', role: 'img', 'aria-label': fmtMinutes(used) + ' of ' + fmtMinutes(limit) },
+        el('span', { class: used >= limit ? 'over' : '', style: { width: pct + '%' } }))));
+  } else {
+    parts.push(el('p', { class: 'muted', text: 'Screen time counted: ' + fmtMinutes(used) + ' (no daily limit).' }));
+  }
+  if (screen.uncounted_minutes > 0) {
+    parts.push(el('p', { class: 'muted', text: 'Home screen and system: ' + fmtMinutes(screen.uncounted_minutes)
+      + ', not counted.' }));
+  }
+  if (screen.is_today && BLOCKED_TEXT[screen.suspend_reason]) {
+    parts.push(el('p', { class: 'warn', text: BLOCKED_TEXT[screen.suspend_reason]
+      + ': every app that is not always free is paused on ' + dev.name + '.' }));
+  }
+  if (screen.is_today && screen.daily_limit_minutes > 0) parts.push(bonusButtons(dev));
+  return el('div', { class: 'stack st-summary' }, parts);
+}
+
+/** "+ time today": extra minutes for the child's current day only (FR-3.11). */
+function bonusButtons(dev) {
+  const grant = (minutes) => el('button', {
+    class: 'btn', type: 'button', text: '+' + minutes + ' min',
+    'aria-label': 'Give ' + minutes + ' extra minutes today',
+    onclick: () => act('+' + minutes + ' min today', async () => {
+      await api('/children/' + dev.child_id + '/bonus', { method: 'POST', body: { minutes } });
+      toast(minutes + ' extra minutes for today. ' + dev.name + ' picks them up within seconds.');
+      refresh();
+    }),
+  });
+  return el('div', { class: 'stack' },
+    el('span', { class: 'muted', text: 'Extra time, today only:' }),
+    el('div', { class: 'btn-grid' }, grant(15), grant(30), grant(60)));
 }
 
 /**
@@ -2038,32 +2107,57 @@ function dayActivityCard(dev, timeline) {
  * all reporting zero is how a real list gets learned as noise — but dropping them silently would
  * understate the day, so the count says how many there are.
  */
-function appUsageTable(apps) {
+function appUsageTable(apps, screen) {
   if (!apps.length) {
     return el('p', { class: 'muted', text: 'No app was open on this day.' });
   }
   const minutes = (a) => Math.round(a.foreground_ms / 60000);
-  const shown = apps.filter((a) => minutes(a) >= 1);
+  const shown = apps.filter((a) => minutes(a) >= 1 || a.blocked);
   const brief = apps.length - shown.length;
   if (!shown.length) {
     return el('p', { class: 'muted', text: apps.length + ' app(s) were opened, none for a full minute.' });
   }
+  // One scale for every bar in the table, so two apps can be compared by eye: the longest use or
+  // the largest own limit, whichever is further.
+  const scale = Math.max(1, ...shown.map((a) => Math.max(minutes(a), a.limit_minutes || 0)));
+  const pct = (m) => Math.min(100, (m / scale) * 100).toFixed(1) + '%';
+
   return el('div', {},
-    el('table', { class: 'tbl' },
-      el('thead', {}, el('tr', {},
-        el('th', { text: 'App' }),
-        el('th', { class: 'num', text: 'Used' }))),
-      el('tbody', {}, shown.map((a) => el('tr', {},
-        el('td', {},
-          el('span', { class: 'swatch', 'aria-hidden': 'true', style: { background: packageHue(a.package_name) } }),
-          // The label is joined on from the phone's inventory and is empty for an app that has
-          // since been uninstalled — the package name is the honest fallback, not a placeholder.
-          el('b', { text: a.label || a.package_name }),
-          el('small', { text: a.package_name + (a.system_app ? ' · system' : '') })),
-        el('td', { class: 'num', text: fmtMinutes(minutes(a)) }))))),
+    el('ul', { class: 'app-bars' }, shown.map((a) => {
+      const used = minutes(a);
+      const own = a.limit_minutes || 0;
+      const over = own > 0 && used >= own;
+      return el('li', { class: 'app-bar' },
+        el('div', { class: 'row' },
+          el('span', {},
+            el('span', { class: 'swatch', 'aria-hidden': 'true', style: { background: packageHue(a.package_name) } }),
+            // The label is joined on from the phone's inventory and is empty for an app that has
+            // since been uninstalled — the package name is the honest fallback, not a placeholder.
+            el('b', { text: a.label || a.package_name })),
+          el('span', { class: 'num', text: own > 0 ? fmtMinutes(used) + ' of ' + fmtMinutes(own) : fmtMinutes(used) })),
+        el('div', {
+          class: 'ubar', role: 'img',
+          'aria-label': (a.label || a.package_name) + ': ' + fmtMinutes(used)
+            + (own > 0 ? ' of its own ' + fmtMinutes(own) + ' limit' : ''),
+        },
+        el('span', { class: 'ubar-fill' + (over ? ' over' : '') + (a.counted === false ? ' uncounted' : ''), style: { width: pct(used) } }),
+        own > 0 ? el('span', { class: 'ubar-limit', title: 'Limit ' + fmtMinutes(own), style: { left: pct(own) } }) : null),
+        el('small', { text: a.package_name + (a.system_app ? ' · system' : '') + ' · ' + appStatusText(a, screen) }));
+    })),
     brief
       ? el('p', { class: 'muted', text: brief + ' more app(s) were opened for under a minute.' })
       : null);
+}
+
+/** What governs an app, and why it is paused if it is (FR-3.10). */
+function appStatusText(a, screen) {
+  const rule = a.counted === false ? 'Not counted (home screen / system)'
+    : a.rule === 'ALLOW' ? 'Always free'
+      : a.rule === 'BLOCK' ? 'Blocked by you'
+        : (a.limit_minutes || 0) > 0 ? 'Own limit ' + fmtMinutes(a.limit_minutes) + ' a day, and counts toward the daily limit'
+          : 'Counts toward the daily limit';
+  const now = screen && screen.is_today && BLOCKED_TEXT[a.blocked] ? ' · now: ' + BLOCKED_TEXT[a.blocked] : '';
+  return rule + now;
 }
 /** `2026-09-20` plus or minus whole days, done in UTC where a day is always 86400000 ms. */
 function shiftDay(day, by) {

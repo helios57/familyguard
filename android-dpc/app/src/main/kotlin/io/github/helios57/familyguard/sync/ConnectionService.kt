@@ -48,6 +48,7 @@ import io.github.helios57.familyguard.enforce.AlarmBooking
 import io.github.helios57.familyguard.enforce.AlarmDecision
 import io.github.helios57.familyguard.enforce.DesiredState
 import io.github.helios57.familyguard.enforce.EnforcementAlarm
+import io.github.helios57.familyguard.enforce.EnforcementEngine
 import io.github.helios57.familyguard.enforce.Input
 import io.github.helios57.familyguard.enroll.CredentialStore
 import io.github.helios57.familyguard.enroll.Credentials
@@ -90,6 +91,7 @@ import io.github.helios57.familyguard.usage.EncryptedSessionStore
 import io.github.helios57.familyguard.usage.EncryptedUsageStore
 import io.github.helios57.familyguard.usage.ScreenOnClock
 import io.github.helios57.familyguard.usage.SessionLog
+import io.github.helios57.familyguard.usage.UncountedPackages
 import io.github.helios57.familyguard.usage.UsageAccess
 import io.github.helios57.familyguard.usage.UsageLedger
 import io.github.helios57.familyguard.usage.UsageStatsForegroundReader
@@ -558,6 +560,7 @@ class ConnectionService : Service() {
                 serverUrl = credentials.serverUrl,
                 managedApps = managedAppApplier(api, policy),
                 filter = policy?.let { filterApplier(this, it.alwaysOnVpn) },
+                supportText = { state -> whyPaused(state) },
             ),
             recovery = RecoveryMode(recoveryStore.mode),
             telemetry = {
@@ -940,6 +943,7 @@ class ConnectionService : Service() {
             tracker = tracker,
             ledger = ledger,
             zone = zone,
+            uncounted = { input -> UncountedPackages.on(this, input) },
             usage = UsageReporter(ledger, sessions) { day, samples, sittings ->
                 api.reportUsage(
                     UsageRequest(
@@ -985,6 +989,7 @@ class ConnectionService : Service() {
      */
     private fun applied(state: DesiredState, why: String) {
         describe(state)
+        pausedNotice(state)
         val decision = book(state, why)
         if (decision is AlarmDecision.Scheduled && decision.exact) Log.i(TAG, "$why: $decision")
         if (decision is AlarmDecision.Cancelled) Log.i(TAG, "$why: $decision")
@@ -1440,6 +1445,7 @@ class ConnectionService : Service() {
             adFilterFetchedAt = filter.fetchedAt,
             adFilterRunning = filter.running,
             adFilterReason = filter.reason,
+            homePackages = CriticalPackages.homeScreen(this),
             connectivity = when {
                 capabilities == null -> "none"
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
@@ -1536,6 +1542,59 @@ class ConnectionService : Service() {
      * sync puts it back while the grant is still missing. It is cancelled the moment the grant
      * arrives, which is what makes it a signal rather than furniture.
      */
+    /**
+     * The sentence a child reads on Android's "blocked by your administrator" screen (FR-3.10). One
+     * message for the whole phone — the platform has no per-app text — so it names the state the
+     * phone is in, and points at FamilyGuard for the per-app reasons.
+     */
+    private fun whyPaused(state: DesiredState): String = when (state.suspendReason) {
+        EnforcementEngine.REASON_QUOTA -> getString(R.string.why_quota, state.usedMinutes, state.quotaMinutes)
+        EnforcementEngine.REASON_BEDTIME -> getString(R.string.why_bedtime, localClock(state.nextChangeAt))
+        else -> getString(R.string.why_app)
+    }
+
+    /** "07:00" out of an RFC 3339 instant already in the policy's zone, or "" when there is none. */
+    private fun localClock(instant: String): String =
+        runCatching { OffsetDateTime.parse(instant).format(DateTimeFormatter.ofPattern("HH:mm")) }.getOrDefault("")
+
+    /**
+     * Says on the phone that apps are paused and why, for as long as they are (FR-3.10), and opens
+     * FamilyGuard's own screen — which lists each app and its reason — when tapped.
+     *
+     * Default importance and no sound change: it is information the child needs at the moment they
+     * find their apps paused, raised once per state, and cancelled the moment the state is over.
+     */
+    private fun pausedNotice(state: DesiredState) {
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        val title = when (state.suspendReason) {
+            EnforcementEngine.REASON_QUOTA -> getString(R.string.limits_title_quota)
+            EnforcementEngine.REASON_BEDTIME -> getString(R.string.limits_title_bedtime)
+            else -> {
+                manager.cancel(LIMITS_NOTIFICATION_ID)
+                return
+            }
+        }
+        manager.createNotificationChannel(
+            NotificationChannel(LIMITS_CHANNEL, getString(R.string.limits_channel), NotificationManager.IMPORTANCE_DEFAULT),
+        )
+        val text = whyPaused(state)
+        val open = PendingIntent.getActivity(
+            this, 3, Intent(this, RecoveryActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
+        )
+        manager.notify(
+            LIMITS_NOTIFICATION_ID,
+            NotificationCompat.Builder(this, LIMITS_CHANNEL)
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setContentIntent(open)
+                .setOnlyAlertOnce(true)
+                .setOngoing(true)
+                .build(),
+        )
+    }
+
     private fun usageAccessNotice(missing: Boolean) {
         val manager = getSystemService(NotificationManager::class.java) ?: return
         if (!missing) {
@@ -1765,6 +1824,10 @@ class ConnectionService : Service() {
         private const val UNLINKED_NOTIFICATION_ID = 3
         private const val SETUP_NOTIFICATION_ID = 2
 
+        /** FR-3.10: apps paused by the daily limit or bedtime, and why. */
+        private const val LIMITS_CHANNEL = "family-guard-limits"
+        private const val LIMITS_NOTIFICATION_ID = 7
+
         /**
          * The inventory digest lives in its own preferences file, so that clearing the policy cache
          * or the credential cannot take it — and, more importantly, so that clearing *it* cannot
@@ -1909,6 +1972,8 @@ private class Reporting(
     val tracker: UsageTracker,
     private val ledger: UsageLedger,
     private val zone: PolicyZone,
+    /** FR-3.8: what this phone leaves out of its own count, the same set the server leaves out. */
+    private val uncounted: (Input) -> Set<String>,
     private val usage: UsageReporter,
     private val inventory: InventoryReporter,
     private val wallClock: () -> Long = { System.currentTimeMillis() },
@@ -1958,7 +2023,8 @@ private class Reporting(
         val day = DayAttribution.key(wallClock(), policyZone)
         // Floor, matching the server's own millis-to-minutes conversion. The two numbers are
         // combined with max, so a rounding difference of under a minute cannot change enforcement.
-        return (ledger.totals(day).values.sum() / 60_000L).toInt()
+        val skip = uncounted(input)
+        return (ledger.totals(day).filterKeys { it !in skip }.values.sum() / 60_000L).toInt()
     }
 
     /**

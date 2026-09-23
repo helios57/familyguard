@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -41,6 +42,7 @@ func commands() []command {
 		{"devices", "", "list every enrolled device", true, cmdDevices},
 		{"device", "<device-id>", "one device with its reported state", true, cmdDevice},
 		{"policy", "<child-id>", "the policy in force for a child", true, cmdPolicy},
+		{"bonus", "<child-id> <minutes>", "extra screen time for today only, on top of the daily limit", true, cmdBonus},
 		{"commands", "<device-id> [--limit n]", "the command queue and its timings", true, cmdCommands},
 		{"send", "<device-id> <TYPE>", "queue any command in the server's set", true, cmdSend},
 		{"apps", "", "the APKs this deployment hosts", true, cmdApps},
@@ -338,6 +340,34 @@ func cmdDevice(ctx context.Context, env *environment, args []string) error {
 				fmt.Fprintln(w, "\t• Settings → Apps → FamilyGuard → Alarms and reminders → allow")
 			}
 		}
+	})
+}
+
+// cmdBonus is the console's "+ time today" (FR-3.11): extra minutes for the child's current local
+// day only, which the phone drops again at midnight.
+func cmdBonus(ctx context.Context, env *environment, args []string) error {
+	if len(args) != 2 {
+		return fmt.Errorf("usage: fgctl bonus <child-id> <minutes>")
+	}
+	minutes, err := strconv.Atoi(args[1])
+	if err != nil || minutes < 1 || minutes > 1440 {
+		return fmt.Errorf("minutes must be a number from 1 to 1440, not %q", args[1])
+	}
+	var out struct {
+		Day               string `json:"day"`
+		BonusMinutes      int    `json:"bonus_minutes"`
+		DailyLimitMinutes int    `json:"daily_limit_minutes"`
+		LimitTodayMinutes int    `json:"limit_today_minutes"`
+	}
+	if err := env.client.Do(ctx, http.MethodPost, "/api/v1/children/"+args[0]+"/bonus",
+		map[string]int{"minutes": minutes}, &out); err != nil {
+		return err
+	}
+	return env.emit(out, func(w *tabwriter.Writer) {
+		fmt.Fprintf(w, "day\t%s\n", out.Day)
+		fmt.Fprintf(w, "extra today\t%d minutes\n", out.BonusMinutes)
+		fmt.Fprintf(w, "limit today\t%d minutes (%d + %d extra)\n",
+			out.LimitTodayMinutes, out.DailyLimitMinutes, out.BonusMinutes)
 	})
 }
 

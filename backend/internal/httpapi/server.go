@@ -108,7 +108,7 @@ func New(d Deps) (*Server, error) {
 		store:             d.Store,
 		verifier:          d.Verifier,
 		sessions:          d.Sessions,
-		resolver:          enforce.New(d.Store, d.Config.PublicURL.String()),
+		resolver:          enforce.New(d.Store, d.Config.PublicURL.String()).WithOwnPackage(d.Config.DPCPackage()),
 		catalog:           catalog.New(d.Config.APKDir, d.Store, d.Logger, d.Config.DPCPackage()),
 		hub:               NewHub(d.Logger),
 		debug:             newDebugRelay(),
@@ -236,6 +236,8 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.PATCH("/children/:id", s.updateChild)
 	p.DELETE("/children/:id", s.deleteChild)
 	p.GET("/children/:id/policy", s.getPolicy)
+	// Extra screen time for today only (FR-3.11).
+	p.POST("/children/:id/bonus", s.grantBonus)
 	p.PATCH("/children/:id/policy", s.patchPolicy)
 	p.GET("/children/:id/app-rules", s.listAppRules)
 	p.PUT("/children/:id/app-rules", s.putAppRule)

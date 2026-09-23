@@ -65,6 +65,15 @@ object CriticalPackages {
      * without a warning across this app's whole supported range (minSdk 29). The suppression is on
      * the legacy branch alone, which is the only place it is true.
      */
+    /**
+     * What this phone opens for HOME right now — the launcher (FR-3.8). Time on it is not use: a
+     * phone left on its charger with the screen on spends its minutes there, and on 2026-09-23 that
+     * spent a whole daily limit with nobody holding the phone.
+     */
+    fun homeScreen(context: Context): List<String> =
+        listOfNotNull(resolve(context, Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)))
+            .filter { it.isNotBlank() && it != "android" }
+
     private fun resolve(context: Context, intent: Intent): String? {
         val pm = context.packageManager
         val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

@@ -256,15 +256,24 @@ type Settings struct {
 	// rebooted while the switch is on comes back restricted until its next sync clears it. That
 	// floor deliberately reads no cached policy at all, and widening it would weaken the one path
 	// that runs when nothing is known.
-	AllowUninstall    bool   `json:"allow_uninstall"`
-	YouTubeBlocked    bool   `json:"youtube_blocked"`
-	DailyLimitMinutes int    `json:"daily_limit_minutes"`
-	BedtimeEnabled    bool   `json:"bedtime_enabled"`
-	BedtimeStart      string `json:"bedtime_start"`
-	BedtimeEnd        string `json:"bedtime_end"`
-	DNSHost           string `json:"dns_host"`
-	Timezone          string `json:"timezone"`
-	Version           int64  `json:"version"`
+	AllowUninstall    bool `json:"allow_uninstall"`
+	YouTubeBlocked    bool `json:"youtube_blocked"`
+	DailyLimitMinutes int  `json:"daily_limit_minutes"`
+
+	// BonusMinutes is extra screen time a parent granted for ONE local day, BonusDay (YYYY-MM-DD in
+	// the policy's zone), on top of DailyLimitMinutes (FR-3.11). It counts only on that day: a phone
+	// that is offline across midnight recomputes from its cached input, and a bonus that outlived
+	// its day would be a permanent raise nobody chose. Ignored when there is no daily limit — extra
+	// time on top of "unlimited" is not a quantity.
+	BonusMinutes int    `json:"bonus_minutes"`
+	BonusDay     string `json:"bonus_day"`
+
+	BedtimeEnabled bool   `json:"bedtime_enabled"`
+	BedtimeStart   string `json:"bedtime_start"`
+	BedtimeEnd     string `json:"bedtime_end"`
+	DNSHost        string `json:"dns_host"`
+	Timezone       string `json:"timezone"`
+	Version        int64  `json:"version"`
 
 	// AdFilter turns on the on-device advertising and tracker filter (FR-6.6 to FR-6.9): a local
 	// VpnService that terminates connections, reads the name out of a TLS ClientHello or a Host:
@@ -345,6 +354,11 @@ type AppLimit struct {
 	Minutes     int    `json:"minutes"`
 }
 
+// PlatformUncountedPackages is foreground time on every phone that is not use (FR-3.8): System UI
+// is the shade, the lock screen and the recents screen. The home screen is added per phone, from
+// what it reports, and this system's own app by the server's configuration.
+var PlatformUncountedPackages = []string{"com.android.systemui"}
+
 // Input is everything the engine needs. Nothing else is consulted.
 type Input struct {
 	Settings  Settings `json:"settings"`
@@ -362,6 +376,13 @@ type Input struct {
 	// it, so a device that does not report it simply enforces no per-app cap — which is the right
 	// failure direction for a map that can be absent.
 	UsedMinutesByPackage map[string]int `json:"used_minutes_by_package"`
+
+	// UncountedPackages are foreground time that is not USE (FR-3.8): the home screen this device
+	// reports, System UI, and this system's own app. UsedMinutesToday already excludes them — the
+	// server subtracts them before the engine runs — so the engine never reads this. It travels in
+	// the Input for the phone, which recounts the day from its own measurement when it is offline
+	// and has to leave out exactly the same packages or its number and the server's disagree.
+	UncountedPackages []string `json:"uncounted_packages"`
 	// Now is the instant to evaluate, RFC 3339 with an offset.
 	Now string `json:"now"`
 }
@@ -397,9 +418,13 @@ type DesiredState struct {
 	AllowInstalls    bool     `json:"allow_installs"`
 	UserRestrictions []string `json:"user_restrictions"`
 
+	// QuotaMinutes is the limit in force today: the daily limit plus today's bonus (FR-3.11).
 	QuotaMinutes     int `json:"quota_minutes"`
 	UsedMinutes      int `json:"used_minutes"`
 	RemainingMinutes int `json:"remaining_minutes"`
+	// BonusMinutes is the part of QuotaMinutes that is a bonus for today, so a phone and a console
+	// can say "60 + 30 extra" instead of a number that changed for no visible reason.
+	BonusMinutes int `json:"bonus_minutes"`
 
 	// ManagedApps is passed through from the settings, sorted by package name and never nil. The
 	// engine does not decide anything about it — which applications a child has is a parent's
@@ -516,10 +541,15 @@ func Compute(in Input) (DesiredState, error) {
 	// stranger does not care what the enforcement mode is set to.
 	out.Locked = in.ParentLock
 
-	out.QuotaMinutes = in.Settings.DailyLimitMinutes
+	quota := in.Settings.DailyLimitMinutes
+	if quota > 0 && in.Settings.BonusMinutes > 0 && in.Settings.BonusDay == local.Format("2006-01-02") {
+		out.BonusMinutes = in.Settings.BonusMinutes
+		quota += in.Settings.BonusMinutes
+	}
+	out.QuotaMinutes = quota
 	out.UsedMinutes = in.UsedMinutesToday
-	if in.Settings.DailyLimitMinutes > 0 {
-		out.RemainingMinutes = max(0, in.Settings.DailyLimitMinutes-in.UsedMinutesToday)
+	if quota > 0 {
+		out.RemainingMinutes = max(0, quota-in.UsedMinutesToday)
 	}
 
 	// ---- tracking-only: measure, do not restrain (FR-8) ----
@@ -556,7 +586,7 @@ func Compute(in Input) (DesiredState, error) {
 		}
 	}
 
-	quotaReached := in.Settings.DailyLimitMinutes > 0 && in.UsedMinutesToday >= in.Settings.DailyLimitMinutes
+	quotaReached := quota > 0 && in.UsedMinutesToday >= quota
 
 	switch {
 	case inBedtime:

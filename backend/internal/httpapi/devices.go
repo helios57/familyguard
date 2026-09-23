@@ -405,7 +405,13 @@ func (s *Server) deviceUsageTimeline(c *gin.Context) {
 	// enforced against. On a day before this build they are all a parent has, and showing them is
 	// better than an empty tab — so the console draws the table whenever it has rows, whether or not
 	// the chart above it has any.
-	apps, err := s.store.UsageForDay(c.Request.Context(), id, day)
+	samples, err := s.store.UsageForDay(c.Request.Context(), id, day)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	// FR-3.9 / FR-3.10: each app with what governs it, and the day against the limit that applied.
+	apps, screen, err := s.describeDay(c.Request.Context(), dev, pol, day, samples)
 	if err != nil {
 		s.fail(c, err)
 		return
@@ -414,8 +420,9 @@ func (s *Server) deviceUsageTimeline(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"day": day, "timezone": pol.Timezone,
 		"from": from, "to": to,
-		"hours": hourlyScreenTime(sessions, from, to),
-		"apps":  apps,
+		"hours":       hourlyScreenTime(sessions, from, to),
+		"apps":        apps,
+		"screen_time": screen,
 		// Still served, though the console no longer draws them: the sittings ARE the record FR-3.7
 		// is about, the chart above is a summary of them, and a summary is not something to hand an
 		// API caller instead of the thing it was computed from.

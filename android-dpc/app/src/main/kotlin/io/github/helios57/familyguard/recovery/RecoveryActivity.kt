@@ -13,10 +13,13 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import io.github.helios57.familyguard.BuildConfig
 import io.github.helios57.familyguard.R
+import io.github.helios57.familyguard.enforce.EnforcementEngine
+import io.github.helios57.familyguard.enforce.TodayReport
 import io.github.helios57.familyguard.enroll.EncryptedCredentialStore
 import io.github.helios57.familyguard.enroll.EnrollResult
 import io.github.helios57.familyguard.enroll.Enroller
@@ -28,6 +31,7 @@ import io.github.helios57.familyguard.status.StatusLine
 import io.github.helios57.familyguard.status.deviceStatus
 import io.github.helios57.familyguard.status.deviceStatusFacts
 import io.github.helios57.familyguard.sync.ConnectionService
+import io.github.helios57.familyguard.usage.TodayReportReader
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -81,6 +85,10 @@ class RecoveryActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var statusLoading: TextView
     private lateinit var statusLines: LinearLayout
+    private lateinit var todayGroup: LinearLayout
+    private lateinit var todaySummary: TextView
+    private lateinit var todayWhy: TextView
+    private lateinit var todayApps: LinearLayout
 
     // FR-1.8. Shown whenever this phone holds a credential — see [render].
     private lateinit var relinkGroup: LinearLayout
@@ -106,6 +114,10 @@ class RecoveryActivity : AppCompatActivity() {
         status = findViewById(R.id.recovery_status)
         statusLoading = findViewById(R.id.status_loading)
         statusLines = findViewById(R.id.status_lines)
+        todayGroup = findViewById(R.id.today_group)
+        todaySummary = findViewById(R.id.today_summary)
+        todayWhy = findViewById(R.id.today_why)
+        todayApps = findViewById(R.id.today_apps)
 
         relinkGroup = findViewById(R.id.relink_group)
         relinkExplain = findViewById(R.id.relink_explain)
@@ -156,6 +168,7 @@ class RecoveryActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshStatus()
+        refreshToday()
     }
 
     override fun onDestroy() {
@@ -388,6 +401,95 @@ class RecoveryActivity : AppCompatActivity() {
             renderStatus(computed)
         }
     }
+
+    /** FR-3.10: today's screen time and each app's reason, recomputed the way the service enforces. */
+    private fun refreshToday() {
+        scope.launch {
+            val report = withContext(Dispatchers.IO) {
+                runCatching { TodayReportReader.read(this@RecoveryActivity) }.getOrNull()
+            }
+            renderToday(report)
+        }
+    }
+
+    private fun renderToday(report: TodayReport?) {
+        if (report == null) {
+            todayGroup.visibility = View.GONE
+            return
+        }
+        todayGroup.visibility = View.VISIBLE
+        todaySummary.text = when {
+            report.limitMinutes <= 0 -> getString(R.string.today_used_nolimit, report.usedMinutes)
+            report.bonusMinutes > 0 -> getString(
+                R.string.today_used_bonus, report.usedMinutes, report.limitMinutes, report.bonusMinutes,
+            )
+            else -> getString(R.string.today_used, report.usedMinutes, report.limitMinutes)
+        }
+        val why = when (report.suspendReason) {
+            EnforcementEngine.REASON_QUOTA -> getString(R.string.block_quota)
+            EnforcementEngine.REASON_BEDTIME -> getString(R.string.block_bedtime)
+            else -> null
+        }
+        todayWhy.text = why.orEmpty()
+        todayWhy.visibility = if (why == null) View.GONE else View.VISIBLE
+
+        todayApps.removeAllViews()
+        val inflater = LayoutInflater.from(this)
+        if (report.apps.isEmpty()) {
+            val empty = inflater.inflate(R.layout.today_app_row, todayApps, false)
+            empty.findViewById<TextView>(R.id.today_app_name).text = getString(R.string.today_no_apps)
+            empty.findViewById<ProgressBar>(R.id.today_app_bar).visibility = View.GONE
+            todayApps.addView(empty)
+            return
+        }
+        // One scale for every bar, so two apps compare by eye.
+        val scale = maxOf(1, report.apps.maxOf { maxOf(it.usedMinutes, it.ownLimitMinutes) })
+        for (app in report.apps) {
+            val row = inflater.inflate(R.layout.today_app_row, todayApps, false)
+            val name = labelOf(app.packageName)
+            val minutes = if (app.ownLimitMinutes > 0) {
+                getString(R.string.app_minutes_of, app.usedMinutes, app.ownLimitMinutes)
+            } else {
+                getString(R.string.app_minutes, app.usedMinutes)
+            }
+            val status = listOfNotNull(ruleText(app), app.blocked?.let { blockText(it) }).joinToString(" · ")
+            row.findViewById<TextView>(R.id.today_app_name).text = name
+            row.findViewById<TextView>(R.id.today_app_minutes).text = minutes
+            row.findViewById<TextView>(R.id.today_app_status).apply {
+                text = status
+                if (app.blocked != null) setTextColor(colorFor(android.R.attr.colorError))
+            }
+            row.findViewById<ProgressBar>(R.id.today_app_bar).apply {
+                max = scale
+                progress = app.usedMinutes
+                secondaryProgress = app.ownLimitMinutes
+            }
+            row.contentDescription = "$name, $minutes. $status"
+            todayApps.addView(row)
+        }
+    }
+
+    private fun ruleText(app: TodayReport.AppLine): String = when {
+        !app.counted -> getString(R.string.rule_not_counted)
+        app.rule == TodayReport.Rule.ALWAYS_FREE -> getString(R.string.rule_always_free)
+        app.rule == TodayReport.Rule.BLOCKED_BY_PARENT -> getString(R.string.rule_blocked)
+        app.rule == TodayReport.Rule.OWN_LIMIT -> getString(R.string.rule_own_limit, app.ownLimitMinutes)
+        else -> getString(R.string.rule_counts)
+    }
+
+    private fun blockText(block: TodayReport.Block): String? = when (block) {
+        TodayReport.Block.QUOTA -> getString(R.string.block_quota)
+        TodayReport.Block.BEDTIME -> getString(R.string.block_bedtime)
+        TodayReport.Block.APP_LIMIT -> getString(R.string.block_app_limit)
+        TodayReport.Block.PENDING -> getString(R.string.block_pending)
+        // Already said by the rule text; saying "blocked" twice reads as two reasons.
+        TodayReport.Block.BLOCKED -> null
+    }
+
+    /** The app's name as the phone shows it, or its package when it has none (uninstalled). */
+    private fun labelOf(pkg: String): String = runCatching {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+    }.getOrDefault(pkg)
 
     private fun renderStatus(computed: DeviceStatus?) {
         statusLoading.visibility = View.GONE

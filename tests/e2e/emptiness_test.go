@@ -335,6 +335,10 @@ func collectionsAt(s stage, childID, deviceID string) []collection {
 // never reaches a client at all. Each is here with the reason it cannot be driven by the table
 // above, so the ratchet can tell "covered elsewhere" from "nobody noticed this one".
 var collectionsCoveredElsewhere = map[string]string{
+	"HomePackages": "never served as a list of its own: it is unioned into the uncounted list the " +
+		"phone receives inside /device/policy (input.uncounted_packages), which always holds System UI " +
+		"and so is never empty — screen_time_test asserts that field on the wire; the store function " +
+		"itself returns []string{} for a missing row and for NULL",
 	"ListParents": "asserted by name and role in section 2: this is the one collection that is " +
 		"legitimately non-empty on a fresh system, because a deployer configured it",
 	"ListAudit": "asserted in section 2 as exactly one row — the sign-in this test performed",

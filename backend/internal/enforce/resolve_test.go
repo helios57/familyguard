@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -35,6 +36,20 @@ type fakeSource struct {
 	blocklist      []string
 	fail           map[string]error
 	usageDay       string // the day key the resolver actually asked for
+	home           []string
+	bonus          map[string]int // day -> minutes
+	uncountedAsked []string       // what the resolver asked the store to leave out
+}
+
+func (f *fakeSource) HomePackages(context.Context, uuid.UUID) ([]string, error) {
+	if f.home == nil {
+		return []string{}, nil
+	}
+	return f.home, nil
+}
+
+func (f *fakeSource) BonusMinutes(_ context.Context, _ uuid.UUID, day string) (int, error) {
+	return f.bonus[day], nil
 }
 
 func (f *fakeSource) GetDevice(context.Context, uuid.UUID) (*store.Device, error) {
@@ -95,8 +110,9 @@ func (f *fakeSource) UsageMinutesByPackageForDay(_ context.Context, _ uuid.UUID,
 	return f.usageByPackage[day], nil
 }
 
-func (f *fakeSource) UsageMinutesForDay(_ context.Context, _ uuid.UUID, day string) (int, error) {
+func (f *fakeSource) UsageMinutesCountedForDay(_ context.Context, _ uuid.UUID, day string, uncounted []string) (int, error) {
 	f.usageDay = day
+	f.uncountedAsked = uncounted
 	if err := f.fail["usage"]; err != nil {
 		return 0, err
 	}
@@ -480,5 +496,33 @@ func TestTheDownloadPathEscapesWhatItInterpolates(t *testing.T) {
 	}
 	if want := "/api/v1/device/apps/com.example%2F..%2F..%2Fetc/1.apk"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// FR-3.8 and FR-3.11 at the resolver: the store is asked to leave out the phone's reported home
+// screen, System UI and this system's own app, the phone is handed the same list, and a bonus
+// reaches the engine only with the day it belongs to.
+func TestResolveLeavesOutWhatIsNotUseAndCarriesTodaysBonus(t *testing.T) {
+	f := baseSource()
+	f.home = []string{"com.sec.android.app.launcher"}
+	f.policy.DailyLimitMinutes = 60
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	f.bonus = map[string]int{"2026-09-23": 30}
+
+	_, in, err := New(f, "https://guard.example.com").WithOwnPackage("io.github.helios57.familyguard").
+		Resolve(context.Background(), f.device.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"com.android.systemui", "com.sec.android.app.launcher", "io.github.helios57.familyguard"}
+	if fmt.Sprint(f.uncountedAsked) != fmt.Sprint(want) {
+		t.Errorf("the store was asked to leave out %v, want %v", f.uncountedAsked, want)
+	}
+	if fmt.Sprint(in.UncountedPackages) != fmt.Sprint(want) {
+		t.Errorf("the phone was handed %v as not counted, want %v — its offline count would disagree", in.UncountedPackages, want)
+	}
+	if in.Settings.BonusMinutes != 30 || in.Settings.BonusDay != f.usageDay {
+		t.Errorf("bonus %d for %q, want 30 for the day the usage was read for (%q)",
+			in.Settings.BonusMinutes, in.Settings.BonusDay, f.usageDay)
 	}
 }

@@ -617,6 +617,21 @@ input[type="checkbox"] { width: auto; min-height: auto; }
 .meter > span { display: block; height: 100%; background: var(--ok); }
 .meter > span.over { background: var(--danger); }
 
+/* Per-app bars on the Activity card (FR-3.9). Widths and the limit marker's position are set
+   through CSSOM by app.js — never as a style attribute, which this console's CSP drops. */
+.app-bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.app-bar { display: grid; gap: 4px; min-width: 0; }
+.app-bar .row { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
+.app-bar .row > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-bar small { color: var(--text-dim); }
+.ubar { position: relative; height: 10px; border-radius: 999px; background: var(--surface-2); }
+.ubar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: var(--accent); }
+.ubar-fill.over { background: var(--danger); }
+.ubar-fill.uncounted { background: var(--text-dim); opacity: 0.5; }
+/* The limit, drawn as a tick across the bar so a parent sees "how far past" as well as "past". */
+.ubar-limit { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--text); }
+.st-summary { margin: 8px 0 12px; }
+
 /* ---- the day, hour by hour (FR-3.7) ------------------------------------- */
 
 /* One column per hour the day actually had — 23 or 25 of them on the two mornings the clocks move,

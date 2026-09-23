@@ -7253,3 +7253,90 @@ index `sha256:a2ab7690…b677`, `/dpc.apk` byte-identical to the signed build.
 after the tunnel came up logged *policy re-applied; the running tunnel already matches it* instead
 of rebuilding it.
 
+
+---
+
+## Phase 32 — why an app is paused, what counts, and extra time for today (FR-3.8 … FR-3.11)
+
+The owner, 2026-09-23, with the family's test phone locked for the day:
+
+> *"because now everything is locked but it has not been used? and the child does not see why"* —
+> *"it should be shown on the phone and app why some applications are not usable any more and how
+> long each application has been used"* — *"with a nice graph per app how long and what the limit
+> is/was"* — *"also add a button in the control to add additional time just for today"*
+
+### 32.1 — the limit was spent by a phone lying on its charger
+
+Read over the tunnel from Phase 31: `stay_on_while_plugged_in = 15` (Developer options → "Stay
+awake"), the phone charging, the display on since 10:24. The server had counted 119.7 minutes
+against a 60-minute limit: **Jellyfin 59.8** — the remote test left it in front — and **the home
+screen 56.9**, with nobody holding the phone. FamilyGuard does not set that switch; it was turned off
+over adb and read back (`mStayOn=false`).
+
+The product defect under it is that a home screen counted as use. **FR-3.8**: the phone reports its
+home screen on every heartbeat (`home_packages`), and the home screen, System UI and FamilyGuard's
+own package are left out of the count — by the server before the engine runs, and by the phone's
+own offline count from the same list, which travels in the Input (`uncounted_packages`). The reported
+home screen also joins the critical set: enrolment recorded the launcher the phone had THEN, and
+without this a switched launcher is listed as paused at bedtime.
+
+### 32.2 — extra time for today (FR-3.11)
+
+A bonus is a number FOR one local day (`bonus_minutes` + `bonus_day` in the settings), not a raise
+of the limit: a phone offline across midnight recomputes from its cached input and drops it by
+itself. Both engines add it only on that day and only on top of a limit, and report it
+(`bonus_minutes`) so a phone and a console say "60 + 30 extra". Four shared vectors pin it, and both
+engines replay 43. `POST /children/:id/bonus` adds up, caps a day at 1440, refuses a child with no
+limit (`no_daily_limit`), audits `BONUS_GRANTED`, and wakes every phone of the child. The console
+has +15 / +30 / +60 on the device card and on the Activity card; `fgctl bonus <child> <minutes>`
+does the same with the API key.
+
+### 32.3 — each app against its limit, and the limit that applied (FR-3.9)
+
+The Activity card's table became one bar per app on a shared scale, the app's own limit a tick
+across it, the number still in text beside it; above it, the day's counted minutes against the
+limit including extra time, and the uncounted time as its own line. `day_limits` records the limits
+in force while a day is current (on each usage report, grant and policy change), so a past day is
+drawn against what applied then; a day before the table existed says "not recorded".
+
+### 32.4 — why, where it is noticed (FR-3.10)
+
+One list of reasons — `QUOTA`, `BEDTIME`, `APP_LIMIT`, `BLOCKED`, `PENDING` — derived on the server
+(`httpapi.blockedReason`) and on the phone (`TodayReport.blockedReason`) from the same engine output,
+line for line. On the phone:
+
+- **Android's "blocked by your administrator" screen** carries one line — the short support message,
+  the only text a DPC controls there (see the suspend-dialog memory: no button, no per-app text).
+  Written by a new applier with a read-back, like every device-policy call here.
+- **A notification** while the daily limit or bedtime pauses apps, cancelled when it is over; it
+  opens FamilyGuard.
+- **FamilyGuard's own screen** opens on "Heute": counted minutes against the limit, the pause reason,
+  and every app of the day with a bar, its own limit as the secondary bar, and its reason.
+
+The child reads German (`values-de`, for these strings only).
+
+### 32.5 — calibration
+
+| # | file | the one value | measured |
+|---|---|---|---|
+| 1 | `TodayReport.kt` | an own limit counts as spent only PAST it, not at it | **RED** — *expected APP_LIMIT but was BLOCKED* |
+| 2 | `enforce/resolve.go` | the uncounted list is not passed to the store | **RED** — *the phone is told used=115 reason="QUOTA"; only the 50 are use* — the family phone's morning, reproduced |
+| 3 | `policy/engine.go` | the bonus is compared with tomorrow's date | **RED** — *after 30 extra minutes the phone is told reason="QUOTA" quota=60 bonus=0* |
+| 4 | `EnforcementEngine.kt` | the same, in Kotlin | **RED** — the shared vector *extra time granted for today lifts the limit*, `suspend_reason` |
+| 5 | `app.js` | the limit tick is placed at the minutes used | **RED** — *draws a bar "50%" wide with the limit at "50%"; want 50% and 100%* |
+
+Cumulative: **94 probes, 92 red, one deliberate green, and one green that corrected a comment.**
+
+**Two findings on the way, both the kind this file keeps finding.** The first draft numbered the
+bonus as a fourth item under FR-4 — which is Bedtime — so every citation would have resolved — to the wrong requirement —
+and passed the existence check (the FR-18 trap from Phase 31, one section over). Renumbered FR-3.11
+before anything was committed. And the e2e caught a real defect in the first run: the reported home
+screen was listed as paused by the daily limit, because the server's critical set came only from
+enrolment — fixed in the resolver, above.
+
+### 32.6 — what is NOT proven
+
+- **The support message on a real "blocked" screen, and the notification.** Unit-tested (the text,
+  the read-back) and to be seen on the family phone after 0.6.15, which is in a QUOTA state today.
+- **Samsung's launcher as the reported home screen.** `CATEGORY_HOME` resolves the default; a phone
+  with no default chosen resolves the chooser, which is `android` and filtered out.

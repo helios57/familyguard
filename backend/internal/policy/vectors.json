@@ -2179,6 +2179,207 @@
         "hidden_packages": [],
         "remaining_minutes": 60
       }
+    },
+    {
+      "name": "bonus: extra time granted for today lifts the limit, and says how much of it is extra",
+      "requirements": [
+        "FR-3.11"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_minutes": 30,
+          "bonus_day": "2026-08-17"
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 60,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "quota_minutes": 90,
+        "used_minutes": 60,
+        "remaining_minutes": 30,
+        "bonus_minutes": 30
+      }
+    },
+    {
+      "name": "bonus: once today's extra time is spent too, the limit holds again",
+      "requirements": [
+        "FR-3.11"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_minutes": 30,
+          "bonus_day": "2026-08-17"
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 90,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "QUOTA",
+        "suspended_packages": [
+          "com.example.game"
+        ],
+        "quota_minutes": 90,
+        "remaining_minutes": 0,
+        "bonus_minutes": 30
+      }
+    },
+    {
+      "name": "bonus: extra time granted for yesterday is not extra time today",
+      "requirements": [
+        "FR-3.11"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_minutes": 30,
+          "bonus_day": "2026-08-16"
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 60,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "QUOTA",
+        "suspended_packages": [
+          "com.example.game"
+        ],
+        "quota_minutes": 60,
+        "remaining_minutes": 0,
+        "bonus_minutes": 0
+      }
+    },
+    {
+      "name": "bonus: with no daily limit there is nothing to add to",
+      "requirements": [
+        "FR-3.11"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_minutes": 30,
+          "bonus_day": "2026-08-17"
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false
+          }
+        ],
+        "used_minutes_today": 500,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-08-17T15:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "quota_minutes": 0,
+        "remaining_minutes": 0,
+        "bonus_minutes": 0
+      }
     }
   ]
 }
