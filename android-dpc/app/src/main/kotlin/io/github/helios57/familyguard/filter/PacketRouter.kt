@@ -203,6 +203,8 @@ class PacketRouter(
                 flowsOpened++
             }
             apply(entry, entry.flow.fromClient(buffer, ip, tcp))
+            // An ACK from the app may have drained the flow's queue below the line: read again.
+            if (!entry.flow.upstreamShouldPause()) entry.upstream?.resumeReading()
         }
     }
 
@@ -308,7 +310,12 @@ class PacketRouter(
         override fun onConnected() = Unit
 
         override fun onData(bytes: ByteArray, offset: Int, length: Int) {
-            synchronized(flows) { apply(entry, entry.flow.fromUpstream(bytes, offset, length)) }
+            synchronized(flows) {
+                apply(entry, entry.flow.fromUpstream(bytes, offset, length))
+                // The app is behind: stop taking bytes from the destination until it catches up.
+                // Without this the flow's queue would grow for as long as the download lasted.
+                if (entry.flow.upstreamShouldPause()) entry.upstream?.pauseReading()
+            }
         }
 
         override fun onClosed() {

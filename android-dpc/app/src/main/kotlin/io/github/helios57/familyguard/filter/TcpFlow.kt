@@ -154,6 +154,23 @@ class TcpFlow(
      */
     private val unacked = ByteArrayOutputStream()
 
+    /**
+     * Bytes the destination sent that the app's window has no room for yet, in order (FR-6.13).
+     *
+     * This is the half of flow control that was missing. Upstream reads a whole buffer whenever
+     * the socket is readable; the app's window is usually smaller than that and shrinks to zero
+     * while it is busy. What did not fit used to be dropped — and the next bytes were numbered as
+     * if nothing was missing, so the app's TLS saw a stream with a hole in it and aborted. Every
+     * download larger than a window or two died that way: measured 2026-09-23 on the family phone,
+     * Jellyfin's 650 KB bundles arrived as 172 KB and the app showed a black screen, and on a real
+     * kernel TUN a 4 MiB download arrived as exactly 65 536 bytes. Held here instead, drained as the
+     * app acknowledges, and bounded by pausing the upstream read (see [upstreamShouldPause]).
+     */
+    private val pendingToClient = ByteArrayOutputStream()
+
+    /** The destination has finished; a FIN is owed once [pendingToClient] has drained. */
+    private var upstreamEnded = false
+
     /** What the app may still send us. Shrinks as bytes wait for an upstream socket to take them. */
     private fun advertisedWindow(): Int = (RECEIVE_CAPACITY - upstreamQueued - sniffed.size()).coerceAtLeast(0)
 
@@ -161,8 +178,14 @@ class TcpFlow(
     private fun sendableNow(): Int =
         (minOf(clientWindow, SEND_CAPACITY) - unacked.size()).coerceAtLeast(0)
 
-    /** True once the service must stop reading from the upstream socket and wait for an ACK. */
-    fun upstreamShouldPause(): Boolean = sendableNow() <= 0
+    /**
+     * True while the service must not read from the upstream socket: the app is this far behind.
+     *
+     * The router consults this after every batch it hands over and after every ACK that may have
+     * reopened the window. It used to exist and be called by nothing, which is how the loss
+     * described on [pendingToClient] went unnoticed — a guard defined and never wired.
+     */
+    fun upstreamShouldPause(): Boolean = pendingToClient.size() >= PENDING_CAPACITY
 
     /** The service reports what it actually managed to write, so the window can reopen. */
     fun upstreamWrote(count: Int) {
@@ -202,6 +225,9 @@ class TcpFlow(
         if (!tcp.isAck) return effects // nothing else is meaningful before the handshake completes
 
         acknowledgeOurData(tcp.acknowledgementNumber)
+        // Every ACK may have reopened the window, and a window update carries no payload at all;
+        // either way this is the moment queued bytes can move.
+        if (phase == Phase.OPEN) effects += drain()
 
         if (phase == Phase.HANDSHAKE) {
             phase = Phase.SNIFFING
@@ -265,9 +291,37 @@ class TcpFlow(
      */
     fun fromUpstream(bytes: ByteArray, offset: Int = 0, length: Int = bytes.size - offset): List<FlowEffect> {
         if (phase != Phase.OPEN) return emptyList()
+        // Everything is kept. What the window cannot take now waits for the next ACK.
+        pendingToClient.write(bytes, offset, length)
+        return drain()
+    }
+
+    /**
+     * Put as much of [pendingToClient] on the wire as the app's window allows, then the FIN if the
+     * destination has finished and nothing is left. Never numbers a byte it has not sent.
+     */
+    private fun drain(): List<FlowEffect> {
+        val effects = mutableListOf<FlowEffect>()
+        val size = minOf(pendingToClient.size(), sendableNow())
+        if (size > 0) {
+            val queued = pendingToClient.toByteArray()
+            effects += segments(queued, 0, size)
+            pendingToClient.reset()
+            pendingToClient.write(queued, size, queued.size - size)
+        }
+        if (upstreamEnded && pendingToClient.size() == 0 && !finSent) {
+            finSent = true
+            val fin = segment(TcpHeader.FLAG_ACK or TcpHeader.FLAG_FIN)
+            sendNext = (sendNext + 1) and 0xFFFFFFFFL
+            effects += FlowEffect.ToClient(fin)
+        }
+        return effects
+    }
+
+    private fun segments(bytes: ByteArray, offset: Int, length: Int): List<FlowEffect> {
         val effects = mutableListOf<FlowEffect>()
         var at = offset
-        val end = offset + minOf(length, sendableNow())
+        val end = offset + length
         while (at < end) {
             val take = minOf(maximumSegment, end - at)
             effects += FlowEffect.ToClient(
@@ -296,10 +350,10 @@ class TcpFlow(
     /** The destination closed cleanly. Pass that on as a FIN rather than a reset. */
     fun upstreamClosed(): List<FlowEffect> {
         if (phase != Phase.OPEN || finSent) return emptyList()
-        finSent = true
-        val fin = segment(TcpHeader.FLAG_ACK or TcpHeader.FLAG_FIN)
-        sendNext = (sendNext + 1) and 0xFFFFFFFFL
-        return listOf(FlowEffect.ToClient(fin))
+        // Behind whatever is still queued: a FIN that overtook the last bytes of a response would
+        // end it early, which is the same truncation by a different route.
+        upstreamEnded = true
+        return drain()
     }
 
     /**
@@ -456,5 +510,11 @@ class TcpFlow(
 
         /** How much we may have in flight towards the app, on top of whatever window it offers. */
         const val SEND_CAPACITY = 64 * 1024
+
+        /**
+         * How far the app may fall behind before the upstream read pauses. One more read buffer
+         * can land after the pause is asked for, so the true ceiling is this plus that buffer.
+         */
+        const val PENDING_CAPACITY = 64 * 1024
     }
 }

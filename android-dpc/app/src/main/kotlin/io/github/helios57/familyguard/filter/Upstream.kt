@@ -18,6 +18,17 @@ interface Upstream {
 
     /** Drop the connection. Safe to call twice. */
     fun close()
+
+    /**
+     * Stop reading from the destination until [resumeReading]: the app is behind. The kernel's
+     * receive buffer then fills and TCP's own flow control holds the destination back, which is
+     * the only back-pressure there is — the alternative is reading on and holding the whole
+     * download in this process. A no-op for a transport with no stream to hold back.
+     */
+    fun pauseReading() {}
+
+    /** Start reading again; harmless when not paused. */
+    fun resumeReading() {}
 }
 
 /** What one connection tells the router about itself, always on the router's own thread. */

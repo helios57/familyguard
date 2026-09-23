@@ -245,6 +245,79 @@ class TcpFlowTest {
         assertFalse("the window must not be stuck shut", flow.upstreamShouldPause())
     }
 
+    /**
+     * The download that the family phone could not finish.
+     *
+     * A destination is read a buffer at a time, and a buffer is routinely more than the app's window
+     * has room for. The test above acknowledges after every chunk — an app that is never behind —
+     * and passed for months while every real download larger than a window or two lost its middle:
+     * the bytes that did not fit were dropped and the next ones numbered as if they had been sent.
+     * Here the destination bursts far past the window before the app acknowledges anything, and
+     * every byte must still arrive, once, in order.
+     */
+    @Test
+    fun `a burst larger than the app's window is held, not dropped, and arrives byte for byte`() {
+        val flow = open(maximumSegment = 1000)
+        val body = ByteArray(300_000).also { java.util.Random(7).nextBytes(it) }
+
+        val received = java.io.ByteArrayOutputStream()
+        var next = (SERVER_ISN + 1).toLong()
+        fun take(effects: List<FlowEffect>) {
+            for ((packet, tcp) in packetsWith(effects)) {
+                if (tcp.payloadLength == 0) continue
+                assertEquals("a segment arrived out of order or twice", next, tcp.sequenceNumber)
+                received.write(packet, tcp.payloadOffset, tcp.payloadLength)
+                next = (next + tcp.payloadLength) and 0xFFFFFFFFL
+            }
+        }
+
+        // The whole body in 32 KB reads, the way the upstream socket hands it over, with no ACK.
+        var at = 0
+        while (at < body.size) {
+            val n = minOf(32 * 1024, body.size - at)
+            take(flow.fromUpstream(body, at, n))
+            at += n
+        }
+        assertTrue("the app is far behind; the upstream read must be told to pause", flow.upstreamShouldPause())
+
+        // Now the app catches up, acknowledging what it has, until nothing more comes.
+        repeat(1000) {
+            if (received.size() == body.size) return@repeat
+            take(flow.accept(ack(acknowledgement = next.toInt())))
+        }
+
+        assertEquals("bytes were lost between the destination and the app", body.size, received.size())
+        assertBytes("the stream the app received is not the one the destination sent", body, received.toByteArray())
+        assertFalse("with everything delivered the upstream read must resume", flow.upstreamShouldPause())
+    }
+
+    @Test
+    fun `a destination that finishes while bytes are queued is ended after them, not before`() {
+        val flow = open(maximumSegment = 1000)
+        val body = ByteArray(200_000) { (it % 251).toByte() }
+
+        var next = (SERVER_ISN + 1).toLong()
+        var delivered = 0
+        var finAt = -1
+        fun take(effects: List<FlowEffect>) {
+            for (tcp in packets(effects)) {
+                if (tcp.isFin) finAt = delivered
+                delivered += tcp.payloadLength
+                next = (next + tcp.payloadLength) and 0xFFFFFFFFL
+            }
+        }
+
+        take(flow.fromUpstream(body))
+        take(flow.upstreamClosed())
+        assertEquals("the FIN overtook bytes the app had not been sent", -1, finAt)
+
+        repeat(1000) {
+            if (finAt >= 0) return@repeat
+            take(flow.accept(ack(acknowledgement = next.toInt())))
+        }
+        assertEquals("the FIN must come after the last byte, and it must come", body.size, finAt)
+    }
+
     @Test
     fun `an out-of-order segment is refused with a duplicate acknowledgement, never accepted`() {
         val flow = open()

@@ -42,6 +42,7 @@ Exit 0 both arms behaved, 1 measured wrong, 2 could not measure.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import http.server
 import os
 import shutil
@@ -111,8 +112,24 @@ def make_certificate(tmpdir: str) -> tuple[str, str]:
     return cert, key
 
 
+# FR-6.13. A response far larger than any window on the path, so the relay has to hold the server back while
+# the app catches up.  The small BODY above fits in one window and could never show that: on
+# 2026-09-23 the family phone's filter lost a chunk out of the middle of every download larger than
+# a few dozen kilobytes — Jellyfin's 650 KB bundles arrived as 172 KB and the app showed a black
+# screen — while every small fetch in this file stayed green.  Random bytes, compared by hash, so a
+# lost or reordered chunk cannot pass by coincidence.
+LARGE = os.urandom(4 << 20)
+LARGE_SHA = hashlib.sha256(LARGE).hexdigest()
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802  (the base class names it)
+        if self.path == "/large":
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(LARGE)))
+            self.end_headers()
+            self.wfile.write(LARGE)
+            return
         payload = BODY.encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(payload)))
@@ -159,6 +176,20 @@ def fetch(name: str) -> tuple[int, str]:
     return result.returncode, result.stdout.strip()
 
 
+def fetch_large(name: str) -> tuple[int, int, str]:
+    """Download /large as the client uid.  Returns (curl exit status, bytes received, sha256)."""
+    result = subprocess.run(
+        [
+            "setpriv", "--reuid", str(CLIENT_UID), "--regid", str(CLIENT_UID), "--clear-groups",
+            "curl", "-sS", "-k", "--max-time", "30",
+            "--resolve", f"{name}:{SERVER_PORT}:{SERVER_ADDRESS}",
+            f"https://{name}/large",
+        ],
+        capture_output=True,
+    )
+    return result.returncode, len(result.stdout), hashlib.sha256(result.stdout).hexdigest()
+
+
 def arm(label: str, tun_fd: int, classpath: str, rules: str, tmpdir: str) -> dict[str, tuple[int, str]]:
     rules_path = os.path.join(tmpdir, f"sni-rules-{label}.txt")
     with open(rules_path, "w", encoding="utf-8") as handle:
@@ -169,6 +200,7 @@ def arm(label: str, tun_fd: int, classpath: str, rules: str, tmpdir: str) -> dic
     )
     try:
         results = {BLOCKED_NAME: fetch(BLOCKED_NAME), ALLOWED_NAME: fetch(ALLOWED_NAME)}
+        results["large"] = fetch_large(ALLOWED_NAME)
     finally:
         log = list(tunnel.log) + [f"packets: tun->filter {tunnel.from_tun}, filter->tun {tunnel.to_tun}"]
         tunnel.close()
@@ -206,7 +238,13 @@ def main() -> int:
 
     def show(title: str, results: dict[str, tuple[int, str]]) -> None:
         print(f"  {title}")
-        for name, (status, body) in results.items():
+        for name, outcome in results.items():
+            if name == "large":
+                status, size, digest = outcome
+                intact = "intact" if digest == LARGE_SHA else f"CORRUPT ({size} of {len(LARGE)} bytes)"
+                print(f"    {'4 MiB download':26} curl={status:<3} {intact}")
+                continue
+            status, body = outcome
             verdict = CURL_STATUS.get(status, f"curl error {status}") if status != 0 else (body or "empty")
             print(f"    {name:26} curl={status:<3} {verdict}")
 
@@ -230,6 +268,15 @@ def main() -> int:
         )
     if open_arm[ALLOWED_NAME][1] != BODY:
         failures.append(f"CALIBRATION FAILED: {ALLOWED_NAME} did not connect with no rules either")
+
+    for label, results in (("with the rule loaded", filtering), ("with no rules", open_arm)):
+        status, size, digest = results["large"]
+        if digest != LARGE_SHA:
+            failures.append(
+                f"{label}: a 4 MiB download through the tunnel arrived as {size} of {len(LARGE)} bytes "
+                f"(curl={status}) with a different hash -- the relay lost or reordered data, which "
+                f"breaks every large download on the phone"
+            )
 
     if failures:
         print("\nFAILED:")

@@ -180,6 +180,21 @@ class NioUpstreamPool(
         private var sendClosed = false
         private var closed = false
 
+        /** Set from the router's thread, read on the selector's. See [Upstream.pauseReading]. */
+        @Volatile private var readPaused = false
+
+        override fun pauseReading() {
+            if (readPaused) return
+            readPaused = true
+            submit { interest() }
+        }
+
+        override fun resumeReading() {
+            if (!readPaused) return
+            readPaused = false
+            submit { interest() }
+        }
+
         override fun send(bytes: ByteArray) {
             synchronized(outgoing) {
                 if (closed) return
@@ -268,7 +283,7 @@ class NioUpstreamPool(
         private fun interest() {
             val key = channel.keyFor(selector) ?: return
             if (!key.isValid) return
-            var ops = SelectionKey.OP_READ
+            var ops = if (readPaused) 0 else SelectionKey.OP_READ
             if (!connected) {
                 ops = SelectionKey.OP_CONNECT
             } else if (synchronized(outgoing) { outgoing.isNotEmpty() }) {

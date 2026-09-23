@@ -317,6 +317,13 @@ Applied at provisioning and re-applied on every boot:
   each time closes every connection it is carrying: every five minutes with the screen on, and on
   every change a parent makes anywhere in the policy. A new filter list does not need a new tunnel;
   its rules replace the old ones inside the running filter.
+- FR-6.13 The filter delivers every byte a destination sends, in order, however far the app falls
+  behind. A destination is read faster than an app reads its socket; what the app's window has no
+  room for yet waits and is sent as the app acknowledges, the read from the destination pauses
+  while the app is that far behind, and a destination that finishes is ended after its last byte,
+  never before. Measured 2026-09-23: without it, every download larger than a window or two lost
+  its middle — Jellyfin's 650 KB scripts arrived as 172 KB and the app showed a black screen, and a
+  4 MiB download through a real kernel tunnel arrived as exactly 65 536 bytes.
 
 ### FR-7 YouTube killswitch
 One toggle per child that blocks YouTube across every layer available to us:

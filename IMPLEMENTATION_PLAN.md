@@ -7209,3 +7209,37 @@ comment rather than a test.**
   calling it on every sync is not driven by any test, and the phone's log line *policy re-applied;
   the running tunnel already matches it* is the evidence to look for.
 
+### 31.5 — Jellyfin: the filter lost the middle of every large download (FR-6.13)
+
+Read over the tunnel from 31.2, on the family phone, the same afternoon — the first thing it was
+used for. With the filter on, Jellyfin reached its login page and never finished loading it (a
+spinner that did not stop, no splash image); with it off, the same screen loaded completely. The
+filter logged no blocked name. From the phone's own shell, through the filter, every small request
+succeeded — and the large ones came back **short with curl exit 56**: `node_modules.@jellyfin.sdk`
+654 528 bytes arrived as 172 032, `@mui.material` 736 059 as 340 000–500 000, a different cut each
+time, each after ~0.1 s.
+
+The cause was a guard defined and never called. `TcpFlow.fromUpstream` sent at most what the app's
+window allowed and **dropped the rest**, on the documented understanding that the caller would
+check `upstreamShouldPause()` before reading — and nothing, anywhere, called it. The upstream socket
+was read a full 32 KB buffer at a time; whatever did not fit the window vanished, the next bytes
+were numbered as if it had been sent, and the app's TLS saw a stream with a hole in it. The unit
+test for the window acknowledged after every chunk — an app that is never behind — and passed
+throughout.
+
+Fixed as flow control, in both halves: what the window cannot take waits in the flow (bounded) and
+drains on every ACK; the router pauses the upstream read while that queue is full and resumes it on
+the ACK that empties it; a destination's FIN waits behind queued bytes.
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| 9 | realtun, real kernel TUN | the fix absent (the red was taken FIRST, on the unfixed tree) | **RED** — *a 4 MiB download arrived as 65536 of 4194304 bytes (curl=56)*, in both arms, so the relay and not the rules; with the fix the identical run is **intact** in both arms, and the rule still resets its host |
+| 10 | `TcpFlow.kt` | `fromUpstream` queues only what fits the window again (the old drop) | **RED** ×2 — *the FIN overtook bytes the app had not been sent* (at byte 65 535), and *the upstream read must be told to pause* |
+
+Cumulative: **89 probes, 87 red, one deliberate green, and one green that corrected a comment.**
+
+**What this does not claim:** that Jellyfin now works on the phone. The fix is proven on a real
+kernel and in the flow; the phone takes it as 0.6.14, and the check is the same one that found it —
+the bundles at full length from the phone's shell with the filter on, and the app's login screen
+with its splash image.
+
