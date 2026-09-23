@@ -7205,9 +7205,12 @@ comment rather than a test.**
 - **Jellyfin.** FR-6.12 removes a real defect the owner's report exposed, but nothing here shows it
   was THE defect behind the black screen; the phone's own log over this tunnel is how that gets
   answered.
-- **FR-6.12's service wiring.** `TunnelPlan.keeps` is unit-tested and calibrated; the service
-  calling it on every sync is not driven by any test, and the phone's log line *policy re-applied;
-  the running tunnel already matches it* is the evidence to look for.
+- **FR-6.12's service wiring** is still driven by no test; it has been SEEN working on the family
+  phone (31.5), which is evidence, not a control.
+- **Pairing, mDNS discovery and the TLS leg through the real ingress** were exercised on the family
+  phone on 2026-09-23 — `adb pair` through the relay answered *Successfully paired*, and every
+  `fgctl adb` since found the phone's own port with no `--port` — but by use, not by a test.
+  **The device-owner switch for Wireless debugging was not exercised**: it was already on.
 
 ### 31.5 — Jellyfin: the filter lost the middle of every large download (FR-6.13)
 
@@ -7238,8 +7241,15 @@ the ACK that empties it; a destination's FIN waits behind queued bytes.
 
 Cumulative: **89 probes, 87 red, one deliberate green, and one green that corrected a comment.**
 
-**What this does not claim:** that Jellyfin now works on the phone. The fix is proven on a real
-kernel and in the flow; the phone takes it as 0.6.14, and the check is the same one that found it —
-the bundles at full length from the phone's shell with the filter on, and the app's login screen
-with its splash image.
+**Verified on the family phone, 0.6.14, filter on (`tunnel up: mode=FULL rules=181115`), over the
+same tunnel:** the three bundles arrive at their exact server sizes — 654 528, 736 059 and
+484 689 bytes, curl exit 0, twice each — and the 659 335-byte splash image too; before the fix the
+same requests ended in exit 56 between 170 and 500 KB. A cold-started Jellyfin shows its complete
+login screen, splash image and all, with no spinner — the same screen it showed with the filter off.
+Delivered as `UPDATE_APP` over `fgctl` (acknowledged *22 → 23, downloaded and verified*), image
+index `sha256:a2ab7690…b677`, `/dpc.apk` byte-identical to the signed build.
+
+**FR-6.12 was also seen working on the phone**, which 31.4 listed as unproven: the syncs straight
+after the tunnel came up logged *policy re-applied; the running tunnel already matches it* instead
+of rebuilding it.
 
