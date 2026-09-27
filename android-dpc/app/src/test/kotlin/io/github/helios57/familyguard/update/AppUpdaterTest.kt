@@ -234,7 +234,7 @@ class AppUpdaterTest {
      * update" — so the guard was unreachable and this test is what held it that way.
      *
      * Measured 2026-09-20: one `apk-info` call on the family phone failed with
-     * `Failed to connect to familyguard.lu-mi.ch/…:443`, and the console carried
+     * `Failed to connect to guard.example.com/…:443`, and the console carried
      * "This phone did not take the last update" for the next 81 minutes while the phone sat on the
      * newest build heartbeating every 60 seconds.
      */

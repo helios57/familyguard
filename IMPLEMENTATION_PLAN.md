@@ -4236,7 +4236,7 @@ in that family's data.
 
 Applied against the live database in one transaction mirroring `SetFamilyBlockedPackage` exactly:
 lift any dismissal, upsert the row, `UPDATE policies SET version = version + 1`. Read back: one row,
-and Aurelia's policy v2 → v3. The audit row is written with `actor_type = 'SYSTEM'` rather than
+and the child's policy v2 → v3. The audit row is written with `actor_type = 'SYSTEM'` rather than
 `'PARENT'`, because no parent performed it and a console that showed one would be lying about who
 did. The one thing the SQL cannot do is the handler's `notifyChild` fan-out, so a device learns at
 its next poll rather than immediately — moot here, as no phone is currently linked.
@@ -5096,7 +5096,7 @@ The pilot phone took 0.6.4 at 19:00:02Z on 2026-09-07 and reported, on its first
 build 13:
 
 ```
-Aurelia  v0.6.4 build13  power_exempt=false  exact_alarms=false  usage_access=true
+<child>  v0.6.4 build13  power_exempt=false  exact_alarms=false  usage_access=true
 ```
 
 **Both switches are off.** The diagnosis in 19.2 was an inference from timing; this is the phone
@@ -6324,7 +6324,7 @@ Selected verdicts:
 The owner read the console on the day 0.6.9 shipped and sent back what it said, verbatim:
 
 > `This phone did not take the last update. the server did not say which build to install (Failed to
-> connect to familyguard.lu-mi.ch/…:443)`
+> connect to guard.example.com/…:443)`
 
 The phone had taken the update. `device_state` at that moment: `app_version_name` **0.6.9**,
 `app_version_code` **18** — the newest build there is — `connectivity` wifi, `last_seen_at` **2.6
