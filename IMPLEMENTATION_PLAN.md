@@ -7721,3 +7721,20 @@ feature, the fgctl test red on the unknown command, `RequirementCitationsTest` r
 FR-22 numbers, and the 360 px layout guard red on the editor as first drawn. Every probe a value
 change, restored with `cp` and verified with `cmp`. This phase: **40 probes, 38 red, 2 invalid first
 attempts retaken.** Cumulative: **197 probes.**
+
+### 36.3 — live
+
+Deployed 2026-09-27 as 0.6.20, server first. The release run (tag `v0.6.20`) and CI on `main` both
+green; the control plane runs image `sha256:e897cc19…eb6ea` — read from GHCR anonymously and from the
+pod's `imageID`, one pod, ArgoCD *Synced / Healthy* at the deploy commit. `/dpc.apk` is byte-identical
+to the signed `familyguard-0.6.20-versionCode-29.apk` (`796d8bca…be63`, signer `b62cda94…8e10`,
+matching `familyguard.der`); 0.6.19 stays beside it on the node as the rollback. Read back live with
+the owner's key: `GET /children/:id/plan` and `/today` answer 200 (so migration 0019 ran), and the
+served `app.js` carries the plan editor's *Save plan* and the waiting card while an impossible string
+counts 0. Both family phones were online on 0.6.19 at the moment of the deploy. The first took 0.6.20
+by its own update check within about fifteen minutes (heartbeat at 17:36Z reporting 0.6.20). The second
+refused it: *"INSTALL_FAILED_VERIFICATION_FAILURE: Install not allowed"* — Play Protect, which on a
+fully managed phone silently rejects an install that did not come from the Play Store, the DPC's own
+device-owner session included (§17.12). It stays on 0.6.19 until *Scan apps with Play Protect* is
+switched off on that handset; a 0.6.19 phone ignores the plan's new keys, so the plan reaches it only
+after the update.
