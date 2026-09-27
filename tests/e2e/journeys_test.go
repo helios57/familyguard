@@ -128,6 +128,8 @@ type desiredStateDTO struct {
 	AllowInstalls         bool     `json:"allow_installs"`
 	UserRestrictions      []string `json:"user_restrictions"`
 	QuotaMinutes          int      `json:"quota_minutes"`
+	DailyLimitMinutes     int      `json:"daily_limit_minutes"`
+	BonusMinutes          int      `json:"bonus_minutes"`
 	UsedMinutes           int      `json:"used_minutes"`
 	RemainingMinutes      int      `json:"remaining_minutes"`
 	NextChangeAt          string   `json:"next_change_at"`

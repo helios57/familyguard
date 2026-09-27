@@ -127,6 +127,25 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 		expect(http.StatusOK)
 	byParent("BONUS_GRANTED", "child", child.ID)
 
+	// FR-21: time taken away, and a pause and its end — each its own action, not a sign on another.
+	h.call(http.MethodPost, "/children/"+child.ID+"/bonus", parent.Token, map[string]any{"minutes": -5}).
+		expect(http.StatusOK)
+	byParent("TIME_REDUCED", "child", child.ID)
+	h.call(http.MethodPost, "/children/"+child.ID+"/pause", parent.Token, map[string]any{"paused": true}).
+		expect(http.StatusOK)
+	byParent("PROFILE_PAUSED", "child", child.ID)
+	h.call(http.MethodPost, "/children/"+child.ID+"/pause", parent.Token, map[string]any{"paused": false}).
+		expect(http.StatusOK)
+	byParent("PROFILE_UNPAUSED", "child", child.ID)
+
+	// FR-18: the family blocklist. Written through blocklistChanged, which the source scan could
+	// not see until FR-21 taught it the helper — so until then nothing asserted these two rows.
+	h.blockForFamily(parent.Token, "com.example.familyblocked", "", "")
+	byParent("FAMILY_BLOCKLIST_SET", "family", "")
+	h.call(http.MethodDelete, "/family/blocked-packages?package_name=com.example.familyblocked", parent.Token, nil).
+		expect(http.StatusNoContent)
+	byParent("FAMILY_BLOCKLIST_CLEARED", "family", "")
+
 	h.call(http.MethodPut, "/children/"+child.ID+"/app-rules", parent.Token,
 		map[string]any{"package_name": pkgGame, "action": "BLOCK"}).expect(http.StatusOK)
 	byParent("APP_RULE_SET", "child", child.ID)
@@ -344,6 +363,8 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 		value  any
 	}{
 		{"PARENT_ADDED", "email", "third@family.test"},
+		{"FAMILY_BLOCKLIST_SET", "package", "com.example.familyblocked"},
+		{"FAMILY_BLOCKLIST_CLEARED", "package", "com.example.familyblocked"},
 		{"PARENT_ROLE_CHANGED", "from", "GUARDIAN"},
 		{"PARENT_ROLE_CHANGED", "to", "ADMIN"},
 		{"CHILD_ADDED", "name", "Mira"},
@@ -401,6 +422,40 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 			"this test knows how to cover (%s). Extend this test to drive the new one's reachable "+
 			"names before changing this number", dynamic, `"COMMAND_"+cmd.State`)
 	}
+
+	// A call site that passes its action in a VARIABLE is invisible to both patterns above, so it
+	// would add actions this test never learns about while everything stays green. Found by doing
+	// exactly that (FR-21's first draft chose "BONUS_GRANTED" or "TIME_REDUCED" into a variable, and
+	// this test passed without either pause action being driven). The one such site allowed is the
+	// helpers bumpAndNotify and blocklistChanged, which pass through the literal their callers give
+	// them — those callers are matched by the third and fourth literal patterns.
+	if n := variableActionSites(t); n != 2 {
+		t.Errorf("the handlers pass an audit action in a variable at %d call sites, not the 2 in "+
+			"bumpAndNotify and blocklistChanged. Write each action as a literal at its call site so "+
+			"this test can see it", n)
+	}
+}
+
+// variableActionSites counts `s.auditParent(c, someVariable, …` in the handler source.
+func variableActionSites(t *testing.T) int {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join("..", "..", "backend", "internal", "httpapi", "*.go"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("could not read the handler source (%d files, err %v)", len(files), err)
+	}
+	re := regexp.MustCompile(`\bs\.auditParent\(c,\s*[a-z][A-Za-z0-9_.]*\s*,`)
+	n := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("could not read %s: %v", f, err)
+		}
+		n += len(re.FindAllString(string(src), -1))
+	}
+	return n
 }
 
 // auditActionsInHandlers reads the action names out of the handler source, returning the literals
@@ -440,6 +495,7 @@ func auditActionsInHandlers(t *testing.T) (literals []string, dynamic int) {
 		regexp.MustCompile(`\bs\.audit\(c,[^,\n]+,[^,\n]+,\s*"([A-Z](?:[A-Z0-9_]*[A-Z0-9])?)"`),
 		regexp.MustCompile(`\bs\.auditParent\(c,\s*"([A-Z](?:[A-Z0-9_]*[A-Z0-9])?)"`),
 		regexp.MustCompile(`\bs\.bumpAndNotify\(c,\s*[^,\n]+,\s*"([A-Z](?:[A-Z0-9_]*[A-Z0-9])?)"`),
+		regexp.MustCompile(`\bs\.blocklistChanged\(c,\s*"([A-Z](?:[A-Z0-9_]*[A-Z0-9])?)"`),
 	}
 	// An action assembled from a prefix and a variable, e.g. `"COMMAND_"+cmd.State`.
 	dynamicPattern := regexp.MustCompile(`"[A-Z][A-Z0-9_]*_"\s*\+`)

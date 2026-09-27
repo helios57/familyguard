@@ -65,6 +65,7 @@ var guardianAllowlist = map[routeKey]bool{
 	{http.MethodGet, "/api/v1/family"}:                    true,
 	{http.MethodGet, "/api/v1/children"}:                  true,
 	{http.MethodPost, "/api/v1/children/:id/bonus"}:       true,
+	{http.MethodPost, "/api/v1/children/:id/pause"}:       true,
 	{http.MethodGet, "/api/v1/devices"}:                   true,
 	{http.MethodGet, "/api/v1/devices/:id/desired-state"}: true,
 	{http.MethodGet, "/api/v1/events"}:                    true,

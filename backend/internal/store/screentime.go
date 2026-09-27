@@ -36,16 +36,23 @@ func (s *Store) UsageMinutesCountedForDay(ctx context.Context, deviceID uuid.UUI
 	return int(ms / 60000), nil
 }
 
-// GrantBonus adds minutes to a child's bonus for one local day and returns the day's new total.
-func (s *Store) GrantBonus(ctx context.Context, childID uuid.UUID, day string, minutes int) (int, error) {
+// AdjustDay adds a signed number of minutes to a child's adjustment for one local day (FR-3.11,
+// FR-21) and returns the day's new total.
+//
+// Two bounds, deliberately different. Extra time past MaxBonusMinutesPerDay is refused
+// (ErrBonusTooLarge): a grant that large is a mistake worth a sentence. Time taken away below floor —
+// the negative of the day's limit, i.e. no minutes left — is CLAMPED instead: a guardian pressing −15
+// with ten minutes left means "none left today", and so that a +15 afterwards gives back exactly 15
+// minutes rather than vanishing into a deeper negative nobody can see.
+func (s *Store) AdjustDay(ctx context.Context, childID uuid.UUID, day string, minutes, floor int) (int, error) {
 	var total int
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO bonus_minutes (child_id, day, minutes) VALUES ($1, $2::date, $3)
+		`INSERT INTO bonus_minutes (child_id, day, minutes) VALUES ($1, $2::date, GREATEST($3::int, $5::int))
 		 ON CONFLICT (child_id, day) DO UPDATE
-		   SET minutes = bonus_minutes.minutes + EXCLUDED.minutes, updated_at = NOW()
-		   WHERE bonus_minutes.minutes + EXCLUDED.minutes <= $4
+		   SET minutes = GREATEST(bonus_minutes.minutes + $3::int, $5::int), updated_at = NOW()
+		   WHERE bonus_minutes.minutes + $3::int <= $4
 		 RETURNING minutes`,
-		childID, day, minutes, MaxBonusMinutesPerDay).Scan(&total)
+		childID, day, minutes, MaxBonusMinutesPerDay, floor).Scan(&total)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The conditional update matched nothing: the sum would pass the ceiling.
 		return 0, ErrBonusTooLarge

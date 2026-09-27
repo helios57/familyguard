@@ -55,12 +55,13 @@ type grantBonusRequest struct {
 	Minutes int `json:"minutes"`
 }
 
-// grantBonus adds screen time to a child for today only (FR-3.11) — the console's "+ time today".
+// grantBonus adjusts a child's time for today only (FR-3.11, FR-21) — the console's "+ time today"
+// and the guardian window's −15. Positive is extra time, negative is time taken away.
 //
 // "Today" is the child's calendar day in the policy's zone, the same day key the quota counts
-// minutes under, so the extra time and the minutes it offsets can never land on different days. It
-// is carried to the phone as a bonus FOR that day, which the phone's own engine drops at midnight
-// even when it is offline and cannot be told.
+// minutes under, so the adjustment and the minutes it offsets can never land on different days. It
+// is carried to the phone as an adjustment FOR that day, which the phone's own engine drops at
+// midnight even when it is offline and cannot be told.
 func (s *Server) grantBonus(c *gin.Context) {
 	childID, ok := uuidParam(c, "id")
 	if !ok {
@@ -70,8 +71,8 @@ func (s *Server) grantBonus(c *gin.Context) {
 	if !bindJSON(c, &req) {
 		return
 	}
-	if req.Minutes < 1 || req.Minutes > store.MaxBonusMinutesPerDay {
-		failWith(c, http.StatusBadRequest, "invalid_input", "minutes must be between 1 and 1440")
+	if req.Minutes == 0 || req.Minutes < -store.MaxBonusMinutesPerDay || req.Minutes > store.MaxBonusMinutesPerDay {
+		failWith(c, http.StatusBadRequest, "invalid_input", "minutes must be between -1440 and 1440, and not 0")
 		return
 	}
 	ctx := c.Request.Context()
@@ -82,7 +83,7 @@ func (s *Server) grantBonus(c *gin.Context) {
 	}
 	if pol.DailyLimitMinutes <= 0 {
 		failWith(c, http.StatusConflict, "no_daily_limit",
-			"this child has no daily limit, so there is nothing to add extra time to")
+			"this child has no daily limit, so there is no time to add to or take from")
 		return
 	}
 	day, err := enforce.DayKey(pol, s.now())
@@ -90,7 +91,7 @@ func (s *Server) grantBonus(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
-	total, err := s.store.GrantBonus(ctx, childID, day, req.Minutes)
+	total, err := s.store.AdjustDay(ctx, childID, day, req.Minutes, -pol.DailyLimitMinutes)
 	if errors.Is(err, store.ErrBonusTooLarge) {
 		failWith(c, http.StatusConflict, "bonus_too_large", "a day cannot have more than 1440 minutes of extra time")
 		return
@@ -103,15 +104,19 @@ func (s *Server) grantBonus(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
-	s.auditParent(c, "BONUS_GRANTED", "child", childID.String(), map[string]any{
-		"minutes": req.Minutes, "day": day, "bonus_minutes": total,
-	})
-	// Every phone of this child re-syncs now: the extra time is only real once the phone lifts
-	// the suspension, and a parent pressing the button is standing next to a child waiting for it.
+	detail := map[string]any{"minutes": req.Minutes, "day": day, "bonus_minutes": total}
+	// Written out rather than chosen into a variable, so the audit test can find both.
+	if req.Minutes < 0 {
+		s.auditParent(c, "TIME_REDUCED", "child", childID.String(), detail)
+	} else {
+		s.auditParent(c, "BONUS_GRANTED", "child", childID.String(), detail)
+	}
+	// Every phone of this child re-syncs now: the change is only real once the phone applies it,
+	// and a parent pressing the button is standing next to a child waiting for it.
 	s.notifyChild(c, childID, "policy")
 	c.JSON(http.StatusOK, gin.H{
 		"day": day, "bonus_minutes": total, "daily_limit_minutes": pol.DailyLimitMinutes,
-		"limit_today_minutes": pol.DailyLimitMinutes + total,
+		"limit_today_minutes": max(0, pol.DailyLimitMinutes+total),
 	})
 }
 

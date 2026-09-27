@@ -172,7 +172,7 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 		return nil, nil, fmt.Errorf("bonus: %w", err)
 	}
 	bonusDay := ""
-	if bonus > 0 {
+	if bonus != 0 {
 		bonusDay = day
 	}
 	rules, err := r.src.ListAppRules(ctx, dev.ChildID)
@@ -209,6 +209,7 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 			AllowUninstall:        pol.AllowUninstall,
 			YouTubeBlocked:        pol.YouTubeBlocked,
 			DailyLimitMinutes:     pol.DailyLimitMinutes,
+			Paused:                pol.Paused,
 			BonusMinutes:          bonus,
 			BonusDay:              bonusDay,
 			BedtimeEnabled:        pol.BedtimeEnabled,

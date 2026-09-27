@@ -243,6 +243,8 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.GET("/children/:id/policy", admins, s.getPolicy)
 	// Extra screen time for today only (FR-3.11).
 	p.POST("/children/:id/bonus", everyone, s.grantBonus)
+	// FR-21: pause a profile's phones, from the guardian window among others.
+	p.POST("/children/:id/pause", everyone, s.pauseChild)
 	p.PATCH("/children/:id/policy", admins, s.patchPolicy)
 	p.GET("/children/:id/app-rules", admins, s.listAppRules)
 	p.PUT("/children/:id/app-rules", admins, s.putAppRule)

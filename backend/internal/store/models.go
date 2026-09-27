@@ -238,13 +238,16 @@ type Policy struct {
 	// AllowUninstall withholds no_uninstall_apps, so apps can be removed over adb or from Settings
 	// (FR-5.7). False everywhere it is not deliberately turned on: uninstalling is how a child
 	// escapes a suspension.
-	AllowUninstall    bool   `json:"allow_uninstall"`
-	YouTubeBlocked    bool   `json:"youtube_blocked"`
-	DailyLimitMinutes int    `json:"daily_limit_minutes"`
-	BedtimeEnabled    bool   `json:"bedtime_enabled"`
-	BedtimeStart      string `json:"bedtime_start"`
-	BedtimeEnd        string `json:"bedtime_end"`
-	DNSHost           string `json:"dns_host"`
+	AllowUninstall    bool `json:"allow_uninstall"`
+	YouTubeBlocked    bool `json:"youtube_blocked"`
+	DailyLimitMinutes int  `json:"daily_limit_minutes"`
+	// Paused is a parent's or guardian's pause (FR-21), and PausedAt when it began.
+	Paused         bool       `json:"paused"`
+	PausedAt       *time.Time `json:"paused_at"`
+	BedtimeEnabled bool       `json:"bedtime_enabled"`
+	BedtimeStart   string     `json:"bedtime_start"`
+	BedtimeEnd     string     `json:"bedtime_end"`
+	DNSHost        string     `json:"dns_host"`
 	// AdFilter runs the on-device advertising and tracker filter (FR-6.6 to FR-6.9): a local
 	// VpnService that reads the server name out of a TLS ClientHello and resets what a list names.
 	// It is the only layer in this product that reaches an advertisement inside a game, because an
