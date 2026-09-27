@@ -340,12 +340,19 @@ async function boot() {
       // Caught rather than awaited alongside the rest: a deployment that cannot say which build it
       // hosts must still show a parent their family. The console then simply says nothing about
       // updates, which is the honest rendering of not knowing.
-      api('/dpc').catch(() => null),
+      //
+      // Not asked at all by a guardian (FR-20.1): the answer would be a 403, and a guardian's page
+      // asking for what only an admin may read is exactly what the role test looks for.
+      api('/me').then((m) => (m && m.role === 'GUARDIAN' ? null : api('/dpc'))).catch(() => null),
     ]);
     state.parent = me;
     state.family = family;
     state.children = children.children || [];
     state.dpc = dpc;
+    if (isGuardian()) {
+      document.getElementById('mainnav').hidden = true;
+      document.getElementById('child-switcher').hidden = true;
+    }
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) return;
     toast('Could not load your family: ' + err.message, true);
@@ -389,7 +396,8 @@ function renderChildSwitcher() {
 /* Which child is on screen, for the widths where the switcher itself is in the drawer. Without it
    every screen below the header is ambiguous the moment a family has two children. */
 function renderCrumb() {
-  const child = state.children.find((c) => c.id === state.childId);
+  // A guardian's page shows every profile at once, so naming one of them here would be wrong.
+  const child = isGuardian() ? null : state.children.find((c) => c.id === state.childId);
   document.getElementById('crumb').textContent = child ? child.name : '';
 }
 
@@ -411,6 +419,9 @@ function selectChild(id) {
 function onRoute() {
   const want = (location.hash.replace('#/', '') || 'home').split('?')[0];
   state.view = ['home', 'rules', 'apps', 'activity', 'family'].includes(want) ? want : 'home';
+  // FR-20: a guardian has one page. An old link to an admin page lands there too, rather than on a
+  // "Could not load this page" made of 403s.
+  if (isGuardian()) state.view = 'guardian';
   for (const tab of document.querySelectorAll('.tab')) {
     if (tab.dataset.tab === state.view) tab.setAttribute('aria-current', 'page');
     else tab.removeAttribute('aria-current');
@@ -425,7 +436,10 @@ const VIEWS = {
   apps: { load: loadApps, render: renderApps },
   activity: { load: loadActivity, render: renderActivity },
   family: { load: loadFamily, render: renderFamily },
+  guardian: { load: loadGuardian, render: renderGuardian },
 };
+
+function isGuardian() { return !!state.parent && state.parent.role === 'GUARDIAN'; }
 
 /* ---- empty states ------------------------------------------------------- */
 
@@ -452,7 +466,7 @@ async function refresh() {
   const mine = ++refreshToken;
   const main = document.getElementById('view');
 
-  if (!state.childId && state.view !== 'family') {
+  if (!state.childId && state.view !== 'family' && state.view !== 'guardian') {
     main.replaceChildren(emptyCard('♦', 'Add your first child',
       'Rules, apps and screen time all belong to a child. Add one here, then set up their phone.',
       el('button', { class: 'btn btn-primary', type: 'button', text: 'Add a child', onclick: addChild })));
@@ -2132,6 +2146,71 @@ function bonusButtons(dev) {
     el('div', { class: 'btn-grid' }, grant(15), grant(30), grant(60)));
 }
 
+/* ---- guardian ----------------------------------------------------------- */
+
+/* The guardian window (FR-20, spec §6). One card per profile, in German, because the people this
+   page is for are the family's non-admins. Phase 2 adds pause and −time; phase 3 adds the tasks
+   waiting for confirmation above the cards. */
+async function loadGuardian() {
+  return Promise.all(state.children.map(async (child) => {
+    const devices = ((await api('/devices?child_id=' + encodeURIComponent(child.id))).devices || [])
+      .filter((d) => d.enrolled);
+    const states = await Promise.all(devices.map((d) =>
+      api('/devices/' + d.id + '/desired-state').then((r) => (r && r.desired) || null).catch(() => null)));
+    return { child, devices: devices.map((dev, i) => ({ dev, desired: states[i] })) };
+  }));
+}
+
+function renderGuardian(profiles) {
+  if (!profiles.length) {
+    return [el('div', { class: 'card full' }, el('h2', { text: 'Noch kein Profil' }),
+      el('p', { class: 'muted', text: 'Ein Admin richtet die Profile ein.' }))];
+  }
+  return profiles.map(({ child, devices }) => {
+    const card = el('div', { class: 'card full guardian-card' }, el('h2', { text: child.name }));
+    if (!devices.length) {
+      card.append(el('p', { class: 'muted', text: 'Noch kein Handy eingerichtet.' }));
+      return card;
+    }
+    let hasLimit = false;
+    for (const { dev, desired } of devices) {
+      if (!desired) {
+        card.append(el('p', { class: 'muted', text: dev.name + ': noch keine Angaben vom Handy.' }));
+        continue;
+      }
+      const used = desired.used_minutes || 0;
+      const quota = desired.quota_minutes || 0;
+      hasLimit = hasLimit || quota > 0;
+      card.append(el('p', { text: dev.name + ' — Heute ' + fmtMinutes(used)
+        + (quota > 0 ? ' von ' + fmtMinutes(quota) : ' (kein Tageslimit)')
+        + (desired.bonus_minutes ? ' (inkl. ' + fmtMinutes(desired.bonus_minutes) + ' extra)' : '') }));
+      if (desired.suspend_reason) {
+        card.append(el('p', { class: 'muted', text: 'Apps pausiert: ' + guardianReason(desired.suspend_reason) + '.' }));
+      }
+    }
+    if (hasLimit) card.append(guardianTimeButtons(child));
+    return card;
+  });
+}
+
+function guardianReason(reason) {
+  return ({ QUOTA: 'Tageslimit erreicht', BEDTIME: 'Bettzeit' })[reason] || reason.toLowerCase();
+}
+
+function guardianTimeButtons(child) {
+  const grant = (minutes) => el('button', {
+    class: 'btn', type: 'button', text: '+' + minutes + ' min', 'data-minutes': String(minutes),
+    'aria-label': minutes + ' Minuten mehr für heute',
+    onclick: () => act('+' + minutes + ' min für heute', async () => {
+      await api('/children/' + child.id + '/bonus', { method: 'POST', body: { minutes } });
+      refresh();
+    }),
+  });
+  return el('div', { class: 'stack' },
+    el('span', { class: 'muted', text: 'Mehr Zeit, nur heute:' }),
+    el('div', { class: 'btn-grid' }, grant(15), grant(30), grant(60)));
+}
+
 /**
  * Every app that was open on the day, longest first, as text.
  *
@@ -2422,41 +2501,70 @@ function cliCard(cli) {
   return card;
 }
 
+const ROLES = [['GUARDIAN', 'Guardian'], ['ADMIN', 'Admin'], ['PRIMARY_ADMIN', 'Primary admin']];
+
+function roleLabel(role) {
+  const hit = ROLES.find(([value]) => value === role);
+  return hit ? hit[1] : role;
+}
+
+/* `selected` is set on the option, not `value` on the select: the options are appended after the
+   select is created, and a value set before its option exists does not take. */
+function roleSelect(current, label, onchange) {
+  return el('select', { class: 'role-select', 'aria-label': label, onchange },
+    ROLES.map(([value, text]) => el('option', { value, text, selected: value === current })));
+}
+
 function renderFamily(data) {
   const isPrimary = data.isPrimary;
 
   const parents = el('div', { class: 'card full' },
-    el('div', { class: 'card-head' }, el('h2', { text: 'Parents' })),
-    el('ul', { class: 'list' }, data.parents.map((p) => el('li', {},
+    el('div', { class: 'card-head' }, el('h2', { text: 'People & rights' })),
+    el('p', { class: 'muted', text: 'Primary admin: everything. Admin: everything except people and '
+      + 'API keys. Guardian: the guardian window only \u2014 see today, give time.' }),
+    el('ul', { class: 'list' }, data.parents.map((p) => el('li', { class: 'person' },
       el('span', { class: 'label' },
         el('b', { text: p.display_name || p.email }),
-        el('small', { text: p.email + ' · ' + p.role.replaceAll('_', ' ').toLowerCase() })),
+        el('small', { text: p.email + ' \u00b7 ' + roleLabel(p.role) })),
       isPrimary && p.id !== state.parent.id
-        ? el('button', {
-          class: 'btn btn-quiet btn-danger', type: 'button', text: 'Remove',
-          onclick: async () => {
-            if (!confirm('Remove ' + p.email + '?')) return;
-            await act('Parent removed', () => api('/parents/' + p.id, { method: 'DELETE' }));
+        ? el('span', { class: 'row-actions' },
+          roleSelect(p.role, 'Role of ' + p.email, async (e) => {
+            const role = e.target.value;
+            if (!confirm('Make ' + p.email + ' ' + roleLabel(role).toLowerCase() + '?')) {
+              e.target.value = p.role;
+              return;
+            }
+            await act('Role changed', () => api('/parents/' + p.id, { method: 'PATCH', body: { role } }));
             refresh();
-          },
-        })
+          }),
+          el('button', {
+            class: 'btn btn-quiet btn-danger', type: 'button', text: 'Remove',
+            onclick: async () => {
+              if (!confirm('Remove ' + p.email + '?')) return;
+              await act('Person removed', () => api('/parents/' + p.id, { method: 'DELETE' }));
+              refresh();
+            },
+          }))
         : el('span', { class: 'badge', text: p.id === state.parent.id ? 'you' : '' })))));
 
   if (isPrimary) {
+    const role = roleSelect('GUARDIAN', 'Role of the new person', null);
     parents.append(el('form', {
-      class: 'field-row',
+      class: 'field-row add-person',
       onsubmit: async (e) => {
         e.preventDefault();
         const email = e.target.querySelector('input').value.trim();
         if (!email) return;
-        await act('Parent added', () => api('/parents', { method: 'POST', body: { email, role: 'ADMIN' } }));
+        await act('Person added', () => api('/parents', { method: 'POST', body: { email, role: role.value } }));
         refresh();
       },
     },
-      el('input', { type: 'email', placeholder: 'parent@example.com', autocapitalize: 'none', autocorrect: 'off' }),
+      el('input', { type: 'email', placeholder: 'person@example.com', autocapitalize: 'none', autocorrect: 'off',
+        'aria-label': 'Email of the new person' }),
+      role,
       el('button', { class: 'btn btn-primary', type: 'submit', text: 'Add' })));
   } else {
-    parents.append(el('p', { class: 'muted', text: 'Only the primary admin can add or remove parents.' }));
+    parents.append(el('p', { class: 'muted', text: 'Only the primary admin can add people or change roles.' }));
   }
 
   const children = el('div', { class: 'card full' },

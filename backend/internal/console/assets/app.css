@@ -508,6 +508,18 @@ input[type="checkbox"] { width: auto; min-height: auto; }
 
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
+/* People & rights (FR-20.3): the address takes the full width, the role and "Add" share the row
+   under it. Three controls in the two-column row above would leave "Add" alone on a third line. */
+.add-person { grid-template-columns: 1fr auto; }
+.add-person input { grid-column: 1 / -1; }
+
+/* A person's role and Remove. The row wraps, and the name and address claim a basis wide enough
+   that on a phone the controls move UNDER them: side by side at 360 px they left the address about
+   40 px, and it broke one letter per line. On a wider screen everything stays on one line. */
+.list li.person { flex-wrap: wrap; }
+.list li.person .label { flex: 1 1 14rem; }
+.row-actions { display: flex; gap: 8px; align-items: center; flex: 0 0 auto; margin-left: auto; }
+
 /* A labelled control that stacks — used where the label cannot sit beside the input, as a file
    picker's does not. */
 .field { display: flex; flex-direction: column; gap: 6px; }
