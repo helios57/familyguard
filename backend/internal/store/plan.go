@@ -362,7 +362,10 @@ func (s *Store) EarnedCredits(ctx context.Context, childID uuid.UUID, since stri
 // floored per day — the phones report it with their day totals.
 func (s *Store) EarnedSpentByDay(ctx context.Context, childID uuid.UUID, since string) (map[string]int, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT to_char(u.day, 'YYYY-MM-DD'), SUM(u.earned_ms) / 60000
+		// SUM over a BIGINT is NUMERIC, and NUMERIC / 60000 keeps the fraction — which Scan refuses
+		// into an int. Cast back to BIGINT first, so the division is integer and floors like the
+		// phone's own split.
+		`SELECT to_char(u.day, 'YYYY-MM-DD'), (SUM(u.earned_ms)::bigint / 60000)::int
 		   FROM usage_samples u JOIN devices d ON d.id = u.device_id
 		  WHERE d.child_id = $1 AND u.day >= $2::date
 		  GROUP BY u.day`, childID, since)

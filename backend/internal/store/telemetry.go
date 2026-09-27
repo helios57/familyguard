@@ -141,7 +141,10 @@ type UsageDay struct {
 // UsageHistory returns one row per day that has data, for the console's chart.
 func (s *Store) UsageHistory(ctx context.Context, deviceID uuid.UUID, days int) ([]UsageDay, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT day::text, COALESCE(SUM(foreground_ms), 0) / 60000
+		// Integer division on purpose: SUM over a BIGINT is NUMERIC, NUMERIC / 60000 keeps the
+		// fraction, and Scan refuses a fraction into an int64 — which made this answer 500 for any
+		// real phone, whose milliseconds are never whole minutes.
+		`SELECT day::text, COALESCE(SUM(foreground_ms), 0)::bigint / 60000
 		   FROM usage_samples
 		  WHERE device_id = $1 AND day >= (CURRENT_DATE - ($2::int - 1))
 		  GROUP BY day ORDER BY day`, deviceID, days)

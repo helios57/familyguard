@@ -265,3 +265,35 @@ func TestAReportOutsideItsDaysIsRefusedAndDecisionsAreChecked(t *testing.T) {
 	h.call(http.MethodPut, "/children/"+f.child.ID+"/plan", guardian.Token, map[string]any{"groups": []planGroupDTO{}}).
 		expectError(http.StatusForbidden, "forbidden")
 }
+
+// A phone reports earned time in milliseconds, and a real phone never reports whole minutes. The sum
+// divided into minutes is then a fraction in PostgreSQL, and reading it as an integer failed every
+// request that asked for the balance — the day view, the phone's policy and the desired state the
+// guardian window is drawn from — for the first family phone that ran 0.6.20 (2026-09-27).
+func TestEarnedTimeInAFractionOfAMinuteIsFloored(t *testing.T) {
+	h := newHarness(t)
+	f := enrolledFixture(t, h)
+	h.patchPolicy(f.parent.Token, f.child.ID, map[string]any{"daily_limit_minutes": 60, "timezone": "Europe/Zurich"})
+	h.call(http.MethodPost, "/device/usage", f.deviceToken(), map[string]any{
+		"samples": map[string]int64{pkgGame: 75*60000 + 4050},
+		"earned":  map[string]int64{pkgGame: 2*60000 + 4050},
+	}).expect(http.StatusOK)
+
+	if d := h.today(f.parent.Token, f.child.ID); d.Earned.Spent != 2 {
+		t.Errorf("2 min 4.05 s of earned time reads as %d minutes spent; want 2, floored", d.Earned.Spent)
+	}
+	h.call(http.MethodGet, "/devices/"+f.device.ID+"/desired-state", f.parent.Token, nil).expect(http.StatusOK)
+	h.call(http.MethodGet, "/device/policy", f.deviceToken(), nil).expect(http.StatusOK)
+
+	// The same division, on screen time: the usage history behind `fgctl usage` and MCP get_usage.
+	// It had answered 500 for every real phone since it was written; the console does not call it.
+	var usage struct {
+		Days []struct {
+			Minutes int `json:"minutes"`
+		} `json:"history"`
+	}
+	h.call(http.MethodGet, "/devices/"+f.device.ID+"/usage", f.parent.Token, nil).expect(http.StatusOK).decode(&usage)
+	if len(usage.Days) != 1 || usage.Days[0].Minutes != 75 {
+		t.Errorf("75 min 4.05 s of screen time reads %+v; want one day of 75 minutes", usage.Days)
+	}
+}
