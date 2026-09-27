@@ -189,4 +189,22 @@
     <string name="block_app_limit">Paused: its own limit is used up</string>
     <string name="block_blocked">Blocked by your parents</string>
     <string name="block_pending">Waiting for your parents\' approval</string>
+    <string name="plan_heading">To do today</string>
+    <string name="plan_group">%1$s · %2$s–%3$s</string>
+    <string name="plan_group_worth">%1$s · %2$s–%3$s · %4$d min earned time</string>
+    <string name="plan_group_done">Done: +%1$d min earned time</string>
+    <string name="task_done">Done</string>
+    <string name="task_state_reported">reported — waiting for your parents</string>
+    <string name="task_state_confirmed">confirmed</string>
+    <string name="task_state_rejected">not done — report it again</string>
+    <string name="task_state_closed">only %1$s–%2$s</string>
+    <string name="report_failed">No connection — try again later.</string>
+    <string name="report_refused">Not possible right now: %1$s</string>
+    <string name="earned_line">Earned time: %1$d min</string>
+    <string name="earned_running">Earned time running — %1$d min left</string>
+    <string name="earned_running_title">Earned time running</string>
+    <string name="earned_expiring">%1$d min of it valid until %2$s</string>
+    <string name="earned_debt">Earned time: %1$d min overdrawn</string>
+    <string name="block_earned">Only with earned time</string>
+    <string name="rule_bonus">Bonus app — runs only on earned time</string>
 </resources>

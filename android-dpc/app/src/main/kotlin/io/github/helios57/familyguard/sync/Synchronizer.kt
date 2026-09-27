@@ -126,6 +126,9 @@ class Synchronizer(
 
     /** Called with the input and the state each time the engine runs — FR-22 attributes from them. */
     private val onEnforced: (Input, DesiredState) -> Unit = { _, _ -> },
+
+    /** Where the day's plan the server sent is kept for the Heute screen (FR-22). */
+    private val dayPlans: io.github.helios57.familyguard.plan.DayPlanStore? = null,
 ) {
 
     /** Per package, the larger of the two. See [localUsedMinutesByPackage] for why it is a max. */
@@ -150,6 +153,7 @@ class Synchronizer(
             // to the new policy rather than to the one before it, and the applier is idempotent, so
             // re-applying costs a few platform calls and never a wrong state.
             cache.save(response.input)
+            response.today?.let { dayPlans?.save(it) }
             // Stamped here — on receipt — and nowhere else. Not in `applyFrom`, which also runs for
             // a cached policy and would then report a phone that has not seen the server in a week
             // as having reached it a minute ago; and not after the apply, because a policy that

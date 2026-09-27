@@ -21,6 +21,13 @@ import io.github.helios57.familyguard.R
 import io.github.helios57.familyguard.enforce.EnforcementEngine
 import io.github.helios57.familyguard.enforce.TodayReport
 import io.github.helios57.familyguard.enroll.EncryptedCredentialStore
+import io.github.helios57.familyguard.net.ApiException
+import io.github.helios57.familyguard.plan.EncryptedDayPlanStore
+import io.github.helios57.familyguard.plan.TaskReporter
+import io.github.helios57.familyguard.plan.DayTask
+import io.github.helios57.familyguard.plan.DayPlanView
+import io.github.helios57.familyguard.plan.DayPlan
+import io.github.helios57.familyguard.plan.DayGroup
 import io.github.helios57.familyguard.enroll.EnrollResult
 import io.github.helios57.familyguard.enroll.Enroller
 import io.github.helios57.familyguard.enroll.androidDeviceFacts
@@ -89,6 +96,10 @@ class RecoveryActivity : AppCompatActivity() {
     private lateinit var todaySummary: TextView
     private lateinit var todayWhy: TextView
     private lateinit var todayApps: LinearLayout
+    // FR-22: earned time, the day's tasks, and what happened to the last "Fertig".
+    private lateinit var todayEarned: TextView
+    private lateinit var todayPlan: LinearLayout
+    private lateinit var todayPlanStatus: TextView
 
     // FR-1.8. Shown whenever this phone holds a credential — see [render].
     private lateinit var relinkGroup: LinearLayout
@@ -118,6 +129,9 @@ class RecoveryActivity : AppCompatActivity() {
         todaySummary = findViewById(R.id.today_summary)
         todayWhy = findViewById(R.id.today_why)
         todayApps = findViewById(R.id.today_apps)
+        todayEarned = findViewById(R.id.today_earned)
+        todayPlan = findViewById(R.id.today_plan)
+        todayPlanStatus = findViewById(R.id.today_plan_status)
 
         relinkGroup = findViewById(R.id.relink_group)
         relinkExplain = findViewById(R.id.relink_explain)
@@ -405,12 +419,124 @@ class RecoveryActivity : AppCompatActivity() {
     /** FR-3.10: today's screen time and each app's reason, recomputed the way the service enforces. */
     private fun refreshToday() {
         scope.launch {
-            val report = withContext(Dispatchers.IO) {
-                runCatching { TodayReportReader.read(this@RecoveryActivity) }.getOrNull()
+            val (report, plan) = withContext(Dispatchers.IO) {
+                runCatching { TodayReportReader.read(this@RecoveryActivity) }.getOrNull() to
+                    runCatching { EncryptedDayPlanStore(this@RecoveryActivity).load() }.getOrNull()
             }
             renderToday(report)
+            renderPlan(plan, report)
         }
     }
+
+    /**
+     * FR-22: the day's tasks with "Fertig", and the earned time in gold. The balance comes from the
+     * engine's own state, so it falls as this phone spends it; the credits and their expiry from the
+     * last day plan the server sent.
+     */
+    private fun renderPlan(plan: DayPlan?, report: TodayReport?) {
+        val left = report?.earnedMinutesLeft ?: plan?.earned?.leftMinutes ?: 0
+        val running = report?.earnedActive.orEmpty().isNotEmpty()
+        val hasPlan = plan != null && plan.groups.isNotEmpty()
+        if (left != 0 || running || hasPlan) {
+            val line = when {
+                running -> getString(R.string.earned_running, maxOf(0, left))
+                left < 0 -> getString(R.string.earned_debt, -left)
+                else -> getString(R.string.earned_line, left)
+            }
+            val expiring = plan?.let { DayPlanView.soonestExpiry(it.earned.credits) }
+                ?.takeIf { left > 0 }
+                ?.let { getString(R.string.earned_expiring, minOf(it.minutes, left), weekdayOf(it.expiresOn)) }
+            todayEarned.text = listOfNotNull(line, expiring).joinToString("\n")
+            todayEarned.visibility = View.VISIBLE
+        } else {
+            todayEarned.visibility = View.GONE
+        }
+
+        todayPlan.removeAllViews()
+        if (!hasPlan) {
+            todayPlan.visibility = View.GONE
+            return
+        }
+        todayPlan.visibility = View.VISIBLE
+        todayPlan.addView(TextView(this).apply {
+            text = getString(R.string.plan_heading)
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
+        })
+        for (group in plan.groups) {
+            todayPlan.addView(TextView(this).apply {
+                text = if (group.earnedMinutes > 0) {
+                    getString(R.string.plan_group_worth, group.title, group.startsAt, group.endsAt, group.earnedMinutes)
+                } else {
+                    getString(R.string.plan_group, group.title, group.startsAt, group.endsAt)
+                }
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyLarge)
+                setPadding(0, dp(12), 0, dp(4))
+            })
+            if (group.creditedMinutes > 0) {
+                todayPlan.addView(TextView(this).apply {
+                    text = getString(R.string.plan_group_done, group.creditedMinutes)
+                    setTextColor(getColor(R.color.earned_gold))
+                })
+            }
+            for (task in group.tasks) todayPlan.addView(taskRow(group, task))
+        }
+    }
+
+    private fun taskRow(group: DayGroup, task: DayTask): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            minimumHeight = dp(48)
+        }
+        val state = when (task.state) {
+            DayTask.REPORTED -> getString(R.string.task_state_reported)
+            DayTask.CONFIRMED -> getString(R.string.task_state_confirmed)
+            DayTask.REJECTED -> getString(R.string.task_state_rejected)
+            else -> if (!group.open) getString(R.string.task_state_closed, group.startsAt, group.endsAt) else null
+        }
+        row.addView(TextView(this).apply {
+            text = listOfNotNull(
+                task.title + if (task.note.isNotBlank()) " (${task.note})" else "",
+                state,
+            ).joinToString("\n")
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        if (DayPlanView.canReport(group, task)) {
+            row.addView(Button(this).apply {
+                text = getString(R.string.task_done)
+                contentDescription = getString(R.string.task_done) + ": " + task.title
+                setOnClickListener { button -> report(task, button) }
+            })
+        }
+        return row
+    }
+
+    /** "Fertig": needs the server, and says so rather than pretending when it cannot reach it. */
+    private fun report(task: DayTask, button: View) {
+        button.isEnabled = false
+        todayPlanStatus.visibility = View.GONE
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { TaskReporter.report(this@RecoveryActivity, task.id) }
+            }
+            result.onSuccess { refreshToday() }.onFailure { e ->
+                button.isEnabled = true
+                todayPlanStatus.text = if (e is ApiException) {
+                    getString(R.string.report_refused, e.detail)
+                } else {
+                    getString(R.string.report_failed)
+                }
+                todayPlanStatus.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    /** "Sonntag" for an ISO day, in the phone's language. */
+    private fun weekdayOf(iso: String): String = runCatching {
+        java.time.LocalDate.parse(iso).dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.getDefault())
+    }.getOrDefault(iso)
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun renderToday(report: TodayReport?) {
         if (report == null) {
@@ -477,6 +603,7 @@ class RecoveryActivity : AppCompatActivity() {
         !app.counted -> getString(R.string.rule_not_counted)
         app.rule == TodayReport.Rule.ALWAYS_FREE -> getString(R.string.rule_always_free)
         app.rule == TodayReport.Rule.FREE_PREINSTALLED -> getString(R.string.rule_free_preinstalled)
+        app.rule == TodayReport.Rule.BONUS -> getString(R.string.rule_bonus)
         app.rule == TodayReport.Rule.BLOCKED_BY_PARENT -> getString(R.string.rule_blocked)
         app.rule == TodayReport.Rule.OWN_LIMIT -> getString(R.string.rule_own_limit, app.ownLimitMinutes)
         else -> getString(R.string.rule_counts)
@@ -484,6 +611,7 @@ class RecoveryActivity : AppCompatActivity() {
 
     private fun blockText(block: TodayReport.Block): String? = when (block) {
         TodayReport.Block.PAUSED -> getString(R.string.block_paused)
+        TodayReport.Block.EARNED -> getString(R.string.block_earned)
         TodayReport.Block.QUOTA -> getString(R.string.block_quota)
         TodayReport.Block.BEDTIME -> getString(R.string.block_bedtime)
         TodayReport.Block.APP_LIMIT -> getString(R.string.block_app_limit)

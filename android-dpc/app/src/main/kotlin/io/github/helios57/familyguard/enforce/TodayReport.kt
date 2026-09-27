@@ -22,6 +22,10 @@ data class TodayReport(
     val bonusMinutes: Int,
     /** The plain daily limit, 0 for none — the one number that says whether there is a limit at all. */
     val dailyLimitMinutes: Int,
+    /** Earned time left today (FR-22), negative for an overdraft. */
+    val earnedMinutesLeft: Int = 0,
+    /** BEDTIME or QUOTA while earned time is carrying it, else "". */
+    val earnedActive: String = "",
     /** PAUSED, QUOTA or BEDTIME while that pauses every app that is not always free, else "". */
     val suspendReason: String,
     /** When [suspendReason] ends, RFC 3339, or "". */
@@ -42,10 +46,10 @@ data class TodayReport(
     )
 
     /** [FREE_PREINSTALLED] is a preinstalled app nobody decided about (FR-5.10). */
-    enum class Rule { ALWAYS_FREE, FREE_PREINSTALLED, OWN_LIMIT, COUNTS, BLOCKED_BY_PARENT }
+    enum class Rule { ALWAYS_FREE, FREE_PREINSTALLED, BONUS, OWN_LIMIT, COUNTS, BLOCKED_BY_PARENT }
 
     /** The server's reason names (httpapi.BlockedByRule and friends). */
-    enum class Block { PAUSED, QUOTA, BEDTIME, APP_LIMIT, BLOCKED, PENDING }
+    enum class Block { PAUSED, EARNED, QUOTA, BEDTIME, APP_LIMIT, BLOCKED, PENDING }
 
     companion object {
         fun of(
@@ -64,6 +68,7 @@ data class TodayReport(
             val pending = state.pendingApproval.toSet()
             val suspended = state.suspendedPackages.toSet()
             val freeByDefault = state.freeByDefault.toSet()
+            val bonus = state.bonusPackages.toSet()
 
             val packages = usedByPackage.filterValues { it > 0 }.keys + pending
             val lines = packages.map { pkg ->
@@ -77,11 +82,15 @@ data class TodayReport(
                         pkg in parentBlocked -> Rule.BLOCKED_BY_PARENT
                         pkg in allowed -> Rule.ALWAYS_FREE
                         pkg in freeByDefault -> Rule.FREE_PREINSTALLED
+                        pkg in bonus -> Rule.BONUS
                         own > 0 -> Rule.OWN_LIMIT
                         else -> Rule.COUNTS
                     },
                     counted = pkg !in uncounted,
-                    blocked = blockedReason(pkg, hidden, pending, suspended, own, used, state.suspendReason),
+                    blocked = blockedReason(
+                        pkg, hidden, pending, suspended, own, used, state.suspendReason,
+                        bonusWithoutEarnedTime = pkg in bonus && state.earnedMinutesLeft <= 0,
+                    ),
                 )
             }.sortedWith(compareByDescending<AppLine> { it.usedMinutes }.thenBy { it.packageName })
 
@@ -90,6 +99,8 @@ data class TodayReport(
                 limitMinutes = state.quotaMinutes,
                 bonusMinutes = state.bonusMinutes,
                 dailyLimitMinutes = state.dailyLimitMinutes,
+                earnedMinutesLeft = state.earnedMinutesLeft,
+                earnedActive = state.earnedActive,
                 suspendReason = state.suspendReason,
                 nextChangeAt = if (state.suspendReason.isEmpty()) "" else state.nextChangeAt,
                 apps = lines,
@@ -105,12 +116,14 @@ data class TodayReport(
             ownLimit: Int,
             usedMinutes: Int,
             suspendReason: String,
+            bonusWithoutEarnedTime: Boolean = false,
         ): Block? = when {
             pkg in hidden -> Block.BLOCKED
             pkg in pending -> Block.PENDING
             pkg !in suspended -> null
             ownLimit > 0 && usedMinutes >= ownLimit -> Block.APP_LIMIT
             suspendReason == EnforcementEngine.REASON_PAUSED -> Block.PAUSED
+            bonusWithoutEarnedTime -> Block.EARNED
             suspendReason == EnforcementEngine.REASON_QUOTA -> Block.QUOTA
             suspendReason == EnforcementEngine.REASON_BEDTIME -> Block.BEDTIME
             else -> Block.BLOCKED

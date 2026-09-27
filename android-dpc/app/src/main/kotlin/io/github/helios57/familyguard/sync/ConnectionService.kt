@@ -581,6 +581,7 @@ class ConnectionService : Service() {
             // FR-22: this phone's own attribution of earned time, and the state it attributes against.
             localEarnedMinutes = { input -> reports.earnedMinutesToday(input) },
             onEnforced = { input, state -> reports.enforced(input, state) },
+            dayPlans = io.github.helios57.familyguard.plan.EncryptedDayPlanStore(this),
         )
         journal = recoveryJournal
         // Published before the first sync, so an alarm that fires during it waits on `syncLock`
@@ -1582,6 +1583,15 @@ class ConnectionService : Service() {
      */
     private fun pausedNotice(state: DesiredState) {
         val manager = getSystemService(NotificationManager::class.java) ?: return
+        // FR-22: earned time is spent automatically, so the phone says the moment it starts.
+        if (state.earnedActive.isNotEmpty()) {
+            notifyLimits(
+                manager,
+                getString(R.string.earned_running_title),
+                getString(R.string.earned_running, maxOf(0, state.earnedMinutesLeft)),
+            )
+            return
+        }
         val title = when (state.suspendReason) {
             EnforcementEngine.REASON_PAUSED -> getString(R.string.limits_title_paused)
             EnforcementEngine.REASON_QUOTA -> getString(R.string.limits_title_quota)
@@ -1591,10 +1601,13 @@ class ConnectionService : Service() {
                 return
             }
         }
+        notifyLimits(manager, title, whyPaused(state))
+    }
+
+    private fun notifyLimits(manager: NotificationManager, title: String, text: String) {
         manager.createNotificationChannel(
             NotificationChannel(LIMITS_CHANNEL, getString(R.string.limits_channel), NotificationManager.IMPORTANCE_DEFAULT),
         )
-        val text = whyPaused(state)
         val open = PendingIntent.getActivity(
             this, 3, Intent(this, RecoveryActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
         )

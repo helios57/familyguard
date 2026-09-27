@@ -61,6 +61,33 @@
                 android:textColor="?attr/colorError"
                 android:visibility="gone" />
 
+            <!-- FR-22: earned time in gold, then the day's tasks with their "Fertig". -->
+            <TextView
+                android:id="@+id/today_earned"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:textAppearance="?attr/textAppearanceTitleMedium"
+                android:textColor="@color/earned_gold"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/today_plan"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="vertical"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/today_plan_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?attr/colorError"
+                android:visibility="gone" />
+
             <LinearLayout
                 android:id="@+id/today_apps"
                 android:layout_width="match_parent"

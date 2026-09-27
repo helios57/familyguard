@@ -33,4 +33,22 @@
     <string name="debug_channel">Fernwartung</string>
     <string name="debug_connected_title">Ein Elternteil ist zur Fehlersuche verbunden</string>
     <string name="debug_connected_text">Deine Eltern schauen sich dieses Handy an, um ein Problem zu beheben.</string>
+    <string name="plan_heading">Heute zu tun</string>
+    <string name="plan_group">%1$s · %2$s–%3$s</string>
+    <string name="plan_group_worth">%1$s · %2$s–%3$s · %4$d Min. Bonuszeit</string>
+    <string name="plan_group_done">Geschafft: +%1$d Min. Bonuszeit</string>
+    <string name="task_done">Fertig</string>
+    <string name="task_state_reported">gemeldet — wartet auf deine Eltern</string>
+    <string name="task_state_confirmed">bestätigt</string>
+    <string name="task_state_rejected">nicht erledigt — nochmal melden</string>
+    <string name="task_state_closed">nur %1$s–%2$s</string>
+    <string name="report_failed">Keine Verbindung — später nochmal.</string>
+    <string name="report_refused">Das geht gerade nicht: %1$s</string>
+    <string name="earned_line">Bonuszeit: %1$d Min.</string>
+    <string name="earned_running">Bonuszeit läuft — noch %1$d Min.</string>
+    <string name="earned_running_title">Bonuszeit läuft</string>
+    <string name="earned_expiring">%1$d Min. davon gültig bis %2$s</string>
+    <string name="earned_debt">Bonuszeit: %1$d Min. im Minus</string>
+    <string name="block_earned">Nur mit Bonuszeit</string>
+    <string name="rule_bonus">Bonus-App — läuft nur mit Bonuszeit</string>
 </resources>

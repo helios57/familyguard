@@ -138,6 +138,26 @@ class TodayReportTest {
     }
 
     @Test
+    fun `a bonus app without earned time says it runs only on earned time`() {
+        val base = input(used = 5, byPackage = mapOf("com.example.video" to 1, "com.example.game" to 4))
+        val r = report(base.copy(settings = base.settings.copy(bonusPackages = listOf("com.example.video"))))
+
+        assertEquals(TodayReport.Block.EARNED, r.apps.single { it.packageName == "com.example.video" }.blocked)
+        assertEquals(TodayReport.Rule.BONUS, r.apps.single { it.packageName == "com.example.video" }.rule)
+        assertNull(r.apps.single { it.packageName == "com.example.game" }.blocked)
+    }
+
+    @Test
+    fun `earned time carrying the day is on the report, with what is left`() {
+        val base = input(used = 60, byPackage = mapOf("com.example.game" to 60))
+        val r = report(base.copy(settings = base.settings.copy(earnedAvailableMinutes = 30), earnedSpentMinutesToday = 5))
+
+        assertEquals("", r.suspendReason)
+        assertEquals(EnforcementEngine.REASON_QUOTA, r.earnedActive)
+        assertEquals(25, r.earnedMinutesLeft)
+    }
+
+    @Test
     fun `extra time today raises the limit the phone shows`() {
         val r = report(input(used = 60, byPackage = mapOf("com.example.game" to 60), bonus = 30))
 

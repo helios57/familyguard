@@ -75,6 +75,8 @@ data class EnrollResponse(
 data class PolicyResponse(
     @SerialName("desired") val desired: DesiredState = DesiredState(),
     @SerialName("input") val input: Input = Input(),
+    /** FR-22: the day as the plan sees it — the Heute screen's tasks and earned time. */
+    @SerialName("today") val today: io.github.helios57.familyguard.plan.DayPlan? = null,
 )
 
 @Serializable
@@ -363,6 +365,11 @@ class ApiClient(
 
     fun policy(): PolicyResponse =
         get("/api/v1/device/policy").let { json.decodeFromString(PolicyResponse.serializer(), it) }
+
+    /** The child's "Fertig" (FR-22). Answers the day as it now stands. */
+    fun reportTask(taskId: String): io.github.helios57.familyguard.plan.DayPlan =
+        post("/api/v1/device/tasks/$taskId/report", "{}")
+            .let { json.decodeFromString(io.github.helios57.familyguard.plan.DayPlan.serializer(), it) }
 
     fun heartbeat(request: HeartbeatRequest): HeartbeatResponse =
         post("/api/v1/device/heartbeat", json.encodeToString(HeartbeatRequest.serializer(), request))

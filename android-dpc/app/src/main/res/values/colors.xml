@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Earned time (Bonuszeit, FR-22) is gold everywhere. A dark goldenrod on light backgrounds,
+         a warm gold on dark ones: both pass 4.5:1 against the theme's surface. -->
+    <color name="earned_gold">#8A6100</color>
+</resources>
