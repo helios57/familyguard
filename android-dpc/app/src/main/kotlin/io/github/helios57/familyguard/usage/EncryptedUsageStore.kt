@@ -17,14 +17,18 @@ import kotlinx.serialization.json.Json
  * Encrypted for the same reason as the policy — a per-minute record of which apps a child used all
  * day is not something a lost phone should give up as a readable file.
  */
-class EncryptedUsageStore(context: Context) : UsageStore {
+class EncryptedUsageStore(
+    context: Context,
+    /** The file; the earned-time ledger (FR-22) keeps its own, beside the day totals. */
+    private val file: String = FILE,
+) : UsageStore {
 
     private val json = Json { ignoreUnknownKeys = true }
 
     private val serializer =
         MapSerializer(String.serializer(), MapSerializer(String.serializer(), Long.serializer()))
 
-    private val preferences: SharedPreferences by lazy { encryptedPreferences(context, FILE) }
+    private val preferences: SharedPreferences by lazy { encryptedPreferences(context, file) }
 
     override fun load(): Map<String, Map<String, Long>> {
         val stored = preferences.getString(KEY, null) ?: return emptyMap()

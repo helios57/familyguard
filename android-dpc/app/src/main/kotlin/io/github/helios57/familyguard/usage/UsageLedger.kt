@@ -60,12 +60,20 @@ class UsageLedger(
      *
      * @return the days whose totals changed.
      */
-    fun add(byDay: Map<String, Map<String, Long>>, budgetMillis: Long): Set<String> {
-        if (budgetMillis <= 0) return emptySet()
-        val measured = byDay.values.sumOf { packages -> packages.values.sumOf { it.coerceAtLeast(0) } }
-        if (measured <= 0) return emptySet()
+    fun add(byDay: Map<String, Map<String, Long>>, budgetMillis: Long): Set<String> =
+        addCredited(byDay, budgetMillis).keys
 
-        val changed = linkedSetOf<String>()
+    /**
+     * [add], returning what was actually credited per day and package — the window after the budget
+     * ceiling. FR-22 attributes earned time from exactly these amounts, so a minute the ceiling took
+     * away can never be charged as earned time.
+     */
+    fun addCredited(byDay: Map<String, Map<String, Long>>, budgetMillis: Long): Map<String, Map<String, Long>> {
+        if (budgetMillis <= 0) return emptyMap()
+        val measured = byDay.values.sumOf { packages -> packages.values.sumOf { it.coerceAtLeast(0) } }
+        if (measured <= 0) return emptyMap()
+
+        val credit = linkedMapOf<String, MutableMap<String, Long>>()
         for ((day, packages) in byDay) {
             for ((pkg, raw) in packages) {
                 if (pkg.isBlank() || raw <= 0) continue
@@ -75,12 +83,12 @@ class UsageLedger(
                 if (credited <= 0) continue
                 val bucket = totals.getOrPut(day) { linkedMapOf() }
                 bucket[pkg] = (bucket[pkg] ?: 0L) + credited
-                changed += day
+                credit.getOrPut(day) { linkedMapOf() }[pkg] = credited
             }
         }
-        if (changed.isNotEmpty()) prune()
-        if (changed.isNotEmpty()) store.save(snapshot())
-        return changed
+        if (credit.isNotEmpty()) prune()
+        if (credit.isNotEmpty()) store.save(snapshot())
+        return credit
     }
 
     /** The cumulative total for one day, in milliseconds per package. Empty for a day never seen. */

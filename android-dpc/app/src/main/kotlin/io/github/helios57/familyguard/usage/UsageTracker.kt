@@ -52,6 +52,8 @@ class UsageTracker(
     private val zone: () -> ZoneId,
     private val wallClock: () -> Long,
     private val monotonicClock: () -> Long,
+    /** Each window as credited, per day and package — where FR-22 attributes earned time. */
+    private val onCredited: (Map<String, Map<String, Long>>) -> Unit = {},
 ) {
 
     private var windowStart: Long? = null
@@ -135,7 +137,9 @@ class UsageTracker(
             listOfNotNull(window.open?.let { ForegroundSpan(it.packageName, maxOf(it.startMillis, from), now) })
 
         val byDay = DayAttribution.byDay(measured, zone())
-        val changed = ledger.add(byDay, budget)
+        val credited = ledger.addCredited(byDay, budget)
+        if (credited.isNotEmpty()) onCredited(credited)
+        val changed = credited.keys
         if (changed.isEmpty()) return UsageTick.Idle
         return UsageTick.Measured(changed.associateWith { ledger.totals(it) })
     }

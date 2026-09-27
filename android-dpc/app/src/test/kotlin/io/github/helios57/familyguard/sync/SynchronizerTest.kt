@@ -60,6 +60,8 @@ class SynchronizerTest {
         now: String = DEVICE_NOW,
         localUsedMinutes: (Input) -> Int = { 0 },
         localUsedMinutesByPackage: (Input) -> Map<String, Int> = { emptyMap() },
+        localEarnedMinutes: (Input) -> Int = { 0 },
+        onEnforced: (Input, DesiredState) -> Unit = { _, _ -> },
     ) = Synchronizer(
         api,
         cache,
@@ -69,6 +71,8 @@ class SynchronizerTest {
         now = { now },
         localUsedMinutes = localUsedMinutes,
         localUsedMinutesByPackage = localUsedMinutesByPackage,
+        localEarnedMinutes = localEarnedMinutes,
+        onEnforced = onEnforced,
     )
 
     // ---- the happy path ---------------------------------------------------------------------
@@ -238,6 +242,38 @@ class SynchronizerTest {
         assertEquals(EnforcementEngine.REASON_QUOTA, result.state.suspendReason)
         assertEquals(90, result.state.usedMinutes)
         assertTrue("the quota suspended nothing", result.state.suspendedPackages.isNotEmpty())
+    }
+
+    /**
+     * FR-22, the same staleness argument for earned time: the gold this phone has spent since its
+     * last delivered report is only known here. Without the merge a child with no signal would run
+     * on thirty minutes of Bonuszeit all evening.
+     */
+    @Test
+    fun `earned time runs out from the device's own attribution when the server's is stale`() {
+        answerWithQuota(limit = 60, serverUsed = 60, earnedAvailable = 30, serverEarnedSpent = 5)
+        var seen: Input? = null
+
+        val result = synchronizer(
+            localUsedMinutes = { 60 },
+            localEarnedMinutes = { 30 },
+            onEnforced = { input, _ -> seen = input },
+        ).sync() as SyncResult.Applied
+
+        assertEquals(EnforcementEngine.REASON_QUOTA, result.state.suspendReason)
+        assertEquals(0, result.state.earnedMinutesLeft)
+        assertEquals("the attribution context is built from the input the engine really ran on",
+            30, seen?.earnedSpentMinutesToday)
+    }
+
+    @Test
+    fun `earned time the server knows was spent is not handed back by a phone that measured less`() {
+        answerWithQuota(limit = 60, serverUsed = 60, earnedAvailable = 30, serverEarnedSpent = 20)
+
+        val result = synchronizer(localUsedMinutes = { 60 }, localEarnedMinutes = { 0 }).sync() as SyncResult.Applied
+
+        assertEquals(10, result.state.earnedMinutesLeft)
+        assertEquals(EnforcementEngine.REASON_QUOTA, result.state.earnedActive)
     }
 
     /**
@@ -672,7 +708,7 @@ class SynchronizerTest {
 
     private val events = mutableListOf<String>()
 
-    private fun answerWithQuota(limit: Int, serverUsed: Int) {
+    private fun answerWithQuota(limit: Int, serverUsed: Int, earnedAvailable: Int = 0, serverEarnedSpent: Int = 0) {
         server.answerWith { request ->
             if (request.path.endsWith("/heartbeat")) {
                 HttpResponse(200, body = """{"policy_version":99,"pending_commands":2}""")
@@ -680,7 +716,12 @@ class SynchronizerTest {
                 HttpResponse(
                     200,
                     body = policyBody(
-                        inputAt(SERVER_NOW, dailyLimitMinutes = limit, usedMinutesToday = serverUsed)
+                        inputAt(SERVER_NOW, dailyLimitMinutes = limit, usedMinutesToday = serverUsed).let {
+                            it.copy(
+                                settings = it.settings.copy(earnedAvailableMinutes = earnedAvailable),
+                                earnedSpentMinutesToday = serverEarnedSpent,
+                            )
+                        }
                     ),
                 )
             }

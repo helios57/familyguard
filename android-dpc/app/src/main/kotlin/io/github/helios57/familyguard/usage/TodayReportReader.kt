@@ -27,7 +27,10 @@ object TodayReportReader {
         val byPackage = UsageLedger(EncryptedUsageStore(context)).totals(day)
             .mapValues { (_, ms) -> (ms / 60_000L).toInt() }
         val uncounted = UncountedPackages.on(context, input)
-        val localCounted = byPackage.filterKeys { it !in uncounted }.values.sum()
+        // FR-22: minutes paid from earned time are not also budget minutes, exactly as the service
+        // counts them.
+        val counted = UsageLedger(EncryptedUsageStore(context)).totals(day).filterKeys { it !in uncounted }
+        val (localCounted, localEarned) = EarnedAccount.open(context).split(day, counted, uncounted)
 
         // The same combination the Synchronizer uses: max, never sum, per total and per package.
         val merged = (input.usedMinutesByPackage.keys + byPackage.keys).associateWith {
@@ -38,6 +41,7 @@ object TodayReportReader {
                 now = OffsetDateTime.now(zone).format(RFC3339),
                 usedMinutesToday = maxOf(input.usedMinutesToday, localCounted),
                 usedMinutesByPackage = merged,
+                earnedSpentMinutesToday = maxOf(input.earnedSpentMinutesToday, localEarned),
             ),
         )
         return TodayReport.of(input, state, merged, uncounted)

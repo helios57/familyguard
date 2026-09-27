@@ -47,6 +47,7 @@ import io.github.helios57.familyguard.device.PlatformInstalledAppReader
 import io.github.helios57.familyguard.enforce.AlarmBooking
 import io.github.helios57.familyguard.enforce.AlarmDecision
 import io.github.helios57.familyguard.enforce.DesiredState
+import io.github.helios57.familyguard.enforce.EarnedAttribution
 import io.github.helios57.familyguard.enforce.EnforcementAlarm
 import io.github.helios57.familyguard.enforce.EnforcementEngine
 import io.github.helios57.familyguard.enforce.Input
@@ -89,6 +90,7 @@ import io.github.helios57.familyguard.update.runningVersionCode
 import io.github.helios57.familyguard.usage.DayAttribution
 import io.github.helios57.familyguard.usage.EncryptedSessionStore
 import io.github.helios57.familyguard.usage.EncryptedUsageStore
+import io.github.helios57.familyguard.usage.EarnedAccount
 import io.github.helios57.familyguard.usage.ScreenOnClock
 import io.github.helios57.familyguard.usage.SessionLog
 import io.github.helios57.familyguard.usage.UncountedPackages
@@ -576,6 +578,9 @@ class ConnectionService : Service() {
             localUsedMinutes = { input -> reports.usedMinutesToday(input) },
             // Same measurement, per package, for the per-app allowances (FR-5.8).
             localUsedMinutesByPackage = { input -> reports.usedMinutesByPackageToday(input) },
+            // FR-22: this phone's own attribution of earned time, and the state it attributes against.
+            localEarnedMinutes = { input -> reports.earnedMinutesToday(input) },
+            onEnforced = { input, state -> reports.enforced(input, state) },
         )
         journal = recoveryJournal
         // Published before the first sync, so an alarm that fires during it waits on `syncLock`
@@ -923,6 +928,7 @@ class ConnectionService : Service() {
      */
     private fun reporting(api: ApiClient, policy: DeviceOwnerPolicy?, deviceId: () -> String): Reporting {
         val ledger = UsageLedger(EncryptedUsageStore(this))
+        val earned = EarnedAccount.open(this)
         val sessions = SessionLog(EncryptedSessionStore(this))
         val power = getSystemService(PowerManager::class.java)
         val zone = PolicyZone()
@@ -937,6 +943,8 @@ class ConnectionService : Service() {
             zone = { zone.current },
             wallClock = { System.currentTimeMillis() },
             monotonicClock = { SystemClock.elapsedRealtime() },
+            // FR-22: each window, as credited, is attributed to earned time here.
+            onCredited = { credited -> earned.charge(credited) },
         )
         val digests = encryptedPreferences(this, INVENTORY_FILE)
         // Bound to the device record it was sent to, so a phone enrolled again sends its list to the
@@ -949,6 +957,7 @@ class ConnectionService : Service() {
         return Reporting(
             tracker = tracker,
             ledger = ledger,
+            earned = earned,
             zone = zone,
             uncounted = { input -> UncountedPackages.on(this, input) },
             usage = UsageReporter(ledger, sessions) { day, samples, sittings ->
@@ -956,6 +965,7 @@ class ConnectionService : Service() {
                     UsageRequest(
                         day = day,
                         samples = samples,
+                        earned = earned.ledger.totals(day),
                         sessions = sittings.map {
                             UsageSessionReport(
                                 packageName = it.packageName,
@@ -1978,6 +1988,8 @@ private data class ReportOutcome(
 private class Reporting(
     val tracker: UsageTracker,
     private val ledger: UsageLedger,
+    /** FR-22: the earned time this device has spent, and the context it is attributed with. */
+    private val earned: EarnedAccount,
     private val zone: PolicyZone,
     /** FR-3.8: what this phone leaves out of its own count, the same set the server leaves out. */
     private val uncounted: (Input) -> Set<String>,
@@ -2031,7 +2043,23 @@ private class Reporting(
         // Floor, matching the server's own millis-to-minutes conversion. The two numbers are
         // combined with max, so a rounding difference of under a minute cannot change enforcement.
         val skip = uncounted(input)
-        return (ledger.totals(day).filterKeys { it !in skip }.values.sum() / 60_000L).toInt()
+        // FR-22: a minute paid from earned time is not also a budget minute.
+        return earned.split(day, ledger.totals(day).filterKeys { it !in skip }, skip).first
+    }
+
+    /** The earned time this device has spent today (FR-22), floored like [usedMinutesToday]. */
+    fun earnedMinutesToday(input: Input): Int {
+        val policyZone = DayAttribution.zoneOf(input.settings.timezone) ?: return 0
+        val day = DayAttribution.key(wallClock(), policyZone)
+        val skip = uncounted(input)
+        return earned.split(day, ledger.totals(day).filterKeys { it !in skip }, skip).second
+    }
+
+    /** Records the state just enforced, so the next window is attributed against it (FR-22). */
+    fun enforced(input: Input, state: DesiredState) {
+        val policyZone = DayAttribution.zoneOf(input.settings.timezone) ?: return
+        val day = DayAttribution.key(wallClock(), policyZone)
+        earned.context = EarnedAttribution.contextOf(input, state, uncounted(input), day)
     }
 
     /**

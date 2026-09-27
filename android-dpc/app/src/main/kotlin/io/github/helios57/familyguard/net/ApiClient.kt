@@ -203,6 +203,11 @@ data class UsageRequest(
     @SerialName("day") val day: String = "",
     @SerialName("samples") val samples: Map<String, Long> = emptyMap(),
     /**
+     * FR-22: of [samples], the part of each package's day that was paid from earned time — cumulative
+     * like them, merged by the server with GREATEST like them.
+     */
+    @SerialName("earned") val earned: Map<String, Long> = emptyMap(),
+    /**
      * The sittings this phone has measured and not yet delivered (FR-3.7).
      *
      * Rides along with the day totals rather than having a request of its own, because the two are

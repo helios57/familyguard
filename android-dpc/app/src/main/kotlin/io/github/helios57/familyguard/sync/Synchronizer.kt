@@ -117,6 +117,15 @@ class Synchronizer(
      * device does not keeps the server's number rather than dropping to zero.
      */
     private val localUsedMinutesByPackage: (Input) -> Map<String, Int> = { emptyMap() },
+
+    /**
+     * The earned time this device has spent today (FR-22), from its own attribution. Merged with the
+     * server's with `max`, like [localUsedMinutes]: neither side can hand back gold the other saw spent.
+     */
+    private val localEarnedMinutes: (Input) -> Int = { 0 },
+
+    /** Called with the input and the state each time the engine runs — FR-22 attributes from them. */
+    private val onEnforced: (Input, DesiredState) -> Unit = { _, _ -> },
 ) {
 
     /** Per package, the larger of the two. See [localUsedMinutesByPackage] for why it is a max. */
@@ -202,18 +211,18 @@ class Synchronizer(
         // response was built, which for a cached policy is hours or days ago, and for a fresh one is
         // still not now. Computing bedtime from it would mean a phone that fetched at 20:00 and woke
         // at 21:00 decided it was 20:00.
+        val effective = input.copy(
+            now = now(),
+            // See `localUsedMinutes`: max, never sum, and never a replacement.
+            usedMinutesToday = maxOf(input.usedMinutesToday, localUsedMinutes(input)),
+            usedMinutesByPackage = mergeByMax(
+                input.usedMinutesByPackage,
+                localUsedMinutesByPackage(input),
+            ),
+            earnedSpentMinutesToday = maxOf(input.earnedSpentMinutesToday, localEarnedMinutes(input)),
+        )
         val state = try {
-            EnforcementEngine.compute(
-                input.copy(
-                    now = now(),
-                    // See `localUsedMinutes`: max, never sum, and never a replacement.
-                    usedMinutesToday = maxOf(input.usedMinutesToday, localUsedMinutes(input)),
-                    usedMinutesByPackage = mergeByMax(
-                        input.usedMinutesByPackage,
-                        localUsedMinutesByPackage(input),
-                    ),
-                )
-            )
+            EnforcementEngine.compute(effective).also { onEnforced(effective, it) }
         } catch (e: InvalidPolicyInput) {
             // Refusing beats guessing. The alternative — a default state — is an unlocked phone
             // produced by a typo in the console, with nothing anywhere reporting a problem.
