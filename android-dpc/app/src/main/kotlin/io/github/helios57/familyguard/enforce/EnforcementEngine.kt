@@ -312,11 +312,20 @@ object EnforcementEngine {
         if (input.settings.trackingOnly) {
             // FR-21: a pause is an explicit act, like LOCK_NOW, and is honoured here too. Mirrors
             // the Go engine line for line.
-            if (!input.settings.paused) return base
+            if (!input.settings.paused) return base.copy(
+                bonusPackages = sortedSetOfPackages(input.settings.bonusPackages).toList(),
+                earnedMinutesLeft = input.settings.earnedAvailableMinutes - input.earnedSpentMinutesToday,
+                earnedSpentMinutes = input.earnedSpentMinutesToday,
+            )
             val paused = sortedSetOf<String>()
             for (app in input.installed) if (app.pkg.isNotEmpty() && app.launchable != false) paused.add(app.pkg)
             paused.removeAll(critical)
-            return base.copy(suspendReason = REASON_PAUSED, suspendedPackages = paused.toList())
+            return base.copy(
+                suspendReason = REASON_PAUSED, suspendedPackages = paused.toList(),
+                bonusPackages = sortedSetOfPackages(input.settings.bonusPackages).toList(),
+                earnedMinutesLeft = input.settings.earnedAvailableMinutes - input.earnedSpentMinutesToday,
+                earnedSpentMinutes = input.earnedSpentMinutesToday,
+            )
         }
 
         // ---- enforcement ----
@@ -336,12 +345,20 @@ object EnforcementEngine {
         }
         val quotaReached = limit > 0 && input.usedMinutesToday >= quota
 
-        val reason = when {
+        val wanted = when {
             input.settings.paused -> REASON_PAUSED
             inBedtime -> REASON_BEDTIME
             quotaReached -> REASON_QUOTA
             else -> REASON_NONE
         }
+        // FR-22: earned time. While there is some, a spent budget and bedtime suspend nothing — the
+        // phone runs on it and says what it is covering. A pause and a parent's block are not
+        // covered. Mirrors the Go engine line for line.
+        val bonusApps = sortedSetOfPackages(input.settings.bonusPackages)
+        val gold = input.settings.earnedAvailableMinutes - input.earnedSpentMinutesToday
+        val earnedActive =
+            if (gold > 0 && (wanted == REASON_BEDTIME || wanted == REASON_QUOTA)) wanted else ""
+        val reason = if (earnedActive.isNotEmpty()) REASON_NONE else wanted
 
         val allowed = sortedSetOfPackages(input.settings.allowedPackages)
 
@@ -374,7 +391,7 @@ object EnforcementEngine {
             // wait — including LIMIT, which is why that action exists: "yes, and it counts like
             // everything else" was previously not a sentence a parent could say.
             if (!input.settings.allowChildInstalls && app.newSinceBaseline && !app.system &&
-                app.pkg !in allowed && app.pkg !in blocked && app.pkg !in limited
+                app.pkg !in allowed && app.pkg !in blocked && app.pkg !in limited && app.pkg !in bonusApps
             ) {
                 suspended.add(app.pkg)
                 pending.add(app.pkg)
@@ -389,7 +406,7 @@ object EnforcementEngine {
             // default, unless the server lists it as screen time or the parent decided anything
             // about it. Only an explicit launchable = true qualifies; null keeps the old sweep.
             val freeByDefault = app.system && app.launchable == true && app.pkg !in countedSystem &&
-                app.pkg !in allowed && app.pkg !in blocked && app.pkg !in limited
+                app.pkg !in allowed && app.pkg !in blocked && app.pkg !in limited && app.pkg !in bonusApps
             if (freeByDefault) free.add(app.pkg)
             if (reason != REASON_NONE && app.pkg !in allowed && app.launchable != false && !freeByDefault) {
                 suspended.add(app.pkg)
@@ -397,6 +414,8 @@ object EnforcementEngine {
             // FR-21: a pause takes everything the child can open, always-free and preinstalled-free
             // apps included. What it leaves is the whitelist, removed below.
             if (reason == REASON_PAUSED && app.launchable != false) suspended.add(app.pkg)
+            // FR-22: a bonus app runs only on earned time — none left, and it is paused whatever the hour.
+            if (app.pkg in bonusApps && gold <= 0 && app.launchable != false) suspended.add(app.pkg)
             // FR-5.8: an app with an allowance of its own, spent. Independent of the shared quota,
             // so this suspends one app on a phone with screen time left — and deliberately not a
             // suspendReason: the phone is not in a quota state, one app is.
@@ -417,6 +436,10 @@ object EnforcementEngine {
             hiddenPackages = hidden.toList(),
             pendingApproval = pending.toList(),
             freeByDefault = free.toList(),
+            bonusPackages = bonusApps.toList(),
+            earnedMinutesLeft = gold,
+            earnedSpentMinutes = input.earnedSpentMinutesToday,
+            earnedActive = earnedActive,
             nextChangeAt = nextChangeAt(input.settings, local, zone),
         )
     }
@@ -655,6 +678,10 @@ data class Settings(
      * rather than compiled in, so the server can change the list without a phone update.
      */
     @SerialName("counted_system_packages") val countedSystemPackages: List<String> = emptyList(),
+    /** Apps that run only on earned time (FR-22, app rule BONUS). */
+    @SerialName("bonus_packages") val bonusPackages: List<String> = emptyList(),
+    /** Earned time available today: the server's balance at the start of the day plus today's credits. */
+    @SerialName("earned_available_minutes") val earnedAvailableMinutes: Int = 0,
 )
 
 /**
@@ -716,6 +743,8 @@ data class Input(
      * packages out of its OWN count, which it takes over when it is offline.
      */
     @SerialName("uncounted_packages") val uncountedPackages: List<String> = emptyList(),
+    /** Earned time this device spent today, attributed as it measured (FR-22). */
+    @SerialName("earned_spent_minutes_today") val earnedSpentMinutesToday: Int = 0,
     @SerialName("now") val now: String = "",
 )
 
@@ -771,4 +800,10 @@ data class DesiredState(
      * (FR-5.10), sorted and never null — so the phone can say "always free (preinstalled)".
      */
     @SerialName("free_by_default") val freeByDefault: List<String> = emptyList(),
+    /** Earned time left today, negative for an overdraft (FR-22). */
+    @SerialName("earned_minutes_left") val earnedMinutesLeft: Int = 0,
+    @SerialName("earned_spent_minutes") val earnedSpentMinutes: Int = 0,
+    /** BEDTIME or QUOTA while earned time is covering it, else "". */
+    @SerialName("earned_active") val earnedActive: String = "",
+    @SerialName("bonus_packages") val bonusPackages: List<String> = emptyList(),
 )

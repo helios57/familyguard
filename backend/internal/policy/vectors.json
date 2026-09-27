@@ -3501,6 +3501,665 @@
         "bonus_minutes": 0,
         "daily_limit_minutes": 60
       }
+    },
+    {
+      "name": "earned time: it carries a spent daily limit, and says it is doing so",
+      "requirements": [
+        "FR-22",
+        "FR-3.4"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_packages": [
+            "com.example.movies"
+          ],
+          "earned_available_minutes": 30
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.whatsapp",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 60,
+        "earned_spent_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-09-28T14:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "earned_active": "QUOTA",
+        "suspended_packages": [],
+        "earned_minutes_left": 30,
+        "earned_spent_minutes": 0
+      }
+    },
+    {
+      "name": "earned time: it outranks bedtime",
+      "requirements": [
+        "FR-22",
+        "FR-4.2"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_packages": [
+            "com.example.movies"
+          ],
+          "earned_available_minutes": 20
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.whatsapp",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 10,
+        "earned_spent_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-09-28T22:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "earned_active": "BEDTIME",
+        "suspended_packages": [],
+        "earned_minutes_left": 20
+      }
+    },
+    {
+      "name": "earned time: spent to zero, the limit is back",
+      "requirements": [
+        "FR-22",
+        "FR-3.4"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_packages": [
+            "com.example.movies"
+          ],
+          "earned_available_minutes": 30
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.whatsapp",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 60,
+        "earned_spent_minutes_today": 30,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-09-28T14:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "QUOTA",
+        "earned_active": "",
+        "suspended_packages": [
+          "com.example.game",
+          "com.example.movies"
+        ],
+        "earned_minutes_left": 0,
+        "earned_spent_minutes": 30
+      }
+    },
+    {
+      "name": "earned time: an overdraft is a debt, and the limit applies",
+      "requirements": [
+        "FR-22"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_packages": [
+            "com.example.movies"
+          ],
+          "earned_available_minutes": 10
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.whatsapp",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 60,
+        "earned_spent_minutes_today": 15,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-09-28T14:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "QUOTA",
+        "earned_minutes_left": -5,
+        "suspended_packages": [
+          "com.example.game",
+          "com.example.movies"
+        ]
+      }
+    },
+    {
+      "name": "bonus apps: without earned time they are paused, whatever the hour",
+      "requirements": [
+        "FR-22"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_packages": [
+            "com.example.movies"
+          ],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.whatsapp",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 10,
+        "earned_spent_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-09-28T14:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "earned_active": "",
+        "suspended_packages": [
+          "com.example.movies"
+        ],
+        "bonus_packages": [
+          "com.example.movies"
+        ]
+      }
+    },
+    {
+      "name": "bonus apps: with earned time they run, in the middle of the day",
+      "requirements": [
+        "FR-22"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_packages": [
+            "com.example.movies"
+          ],
+          "earned_available_minutes": 30
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.whatsapp",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 10,
+        "earned_spent_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-09-28T14:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "earned_active": "",
+        "suspended_packages": [],
+        "earned_minutes_left": 30
+      }
+    },
+    {
+      "name": "bonus apps: with earned time they run in bedtime too, and so does everything else",
+      "requirements": [
+        "FR-22",
+        "FR-4.2"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_packages": [
+            "com.example.movies"
+          ],
+          "earned_available_minutes": 30
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.whatsapp",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 10,
+        "earned_spent_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-09-28T22:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "earned_active": "BEDTIME",
+        "suspended_packages": []
+      }
+    },
+    {
+      "name": "earned time: a pause outranks it",
+      "requirements": [
+        "FR-22",
+        "FR-21"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_packages": [
+            "com.example.movies"
+          ],
+          "earned_available_minutes": 30,
+          "paused": true
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.whatsapp",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 10,
+        "earned_spent_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-09-28T14:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "PAUSED",
+        "earned_active": "",
+        "suspended_packages": [
+          "com.example.game",
+          "com.example.movies"
+        ]
+      }
+    },
+    {
+      "name": "bonus apps: marking one ends its wait for approval",
+      "requirements": [
+        "FR-22",
+        "FR-5.4"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": false,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_packages": [
+            "com.example.movies"
+          ],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": true,
+            "launchable": true
+          },
+          {
+            "package": "com.example.newgame",
+            "system": false,
+            "new_since_baseline": true,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 10,
+        "earned_spent_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-09-28T14:00:00+02:00"
+      },
+      "expect": {
+        "pending_approval": [
+          "com.example.newgame"
+        ],
+        "suspended_packages": [
+          "com.example.movies",
+          "com.example.newgame"
+        ]
+      }
+    },
+    {
+      "name": "bonus apps: tracking-only restrains nothing, bonus apps included",
+      "requirements": [
+        "FR-22",
+        "FR-8"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": true,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "bonus_packages": [
+            "com.example.movies"
+          ],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "com.example.game",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.whatsapp",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 10,
+        "earned_spent_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-09-28T14:00:00+02:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": []
+      }
     }
   ]
 }

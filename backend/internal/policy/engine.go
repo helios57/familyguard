@@ -347,6 +347,14 @@ type Settings struct {
 	// rather than compiled into either engine so the list can change without a phone update; the
 	// server fills it from DefaultCountedSystemPackages.
 	CountedSystemPackages []string `json:"counted_system_packages"`
+
+	// BonusPackages are the apps a parent marked as bonus apps (FR-22, app rule BONUS): they run only
+	// on earned time, never on the daily budget.
+	BonusPackages []string `json:"bonus_packages"`
+	// EarnedAvailableMinutes is the profile's earned time (Bonuszeit) available today: the server's
+	// balance at the start of the day plus what was earned since (FR-22). The phone subtracts its own
+	// spending today, so the balance runs out correctly while it is offline.
+	EarnedAvailableMinutes int `json:"earned_available_minutes"`
 }
 
 // ManagedApp is one entry of that set: which application, which exact build, and everything the
@@ -424,6 +432,11 @@ type Input struct {
 	// the Input for the phone, which recounts the day from its own measurement when it is offline
 	// and has to leave out exactly the same packages or its number and the server's disagree.
 	UncountedPackages []string `json:"uncounted_packages"`
+	// EarnedSpentMinutesToday is the earned time this device has spent today (FR-22). The device
+	// attributes each measured window when it measures it — a minute is earned time when it was a
+	// bonus app, inside bedtime, or past the daily budget — and UsedMinutesToday leaves those minutes
+	// out, so no minute is paid for twice.
+	EarnedSpentMinutesToday int `json:"earned_spent_minutes_today"`
 	// Now is the instant to evaluate, RFC 3339 with an offset.
 	Now string `json:"now"`
 }
@@ -483,6 +496,17 @@ type DesiredState struct {
 	// governing it are separate decisions, and a parent who declares one has not thereby allowed
 	// it at midnight.
 	ManagedApps []ManagedApp `json:"managed_apps"`
+
+	// EarnedMinutesLeft is the earned time left today (FR-22), negative for an overdraft the next
+	// credit settles; EarnedSpentMinutes is what this device spent of it today.
+	EarnedMinutesLeft  int `json:"earned_minutes_left"`
+	EarnedSpentMinutes int `json:"earned_spent_minutes"`
+	// EarnedActive is what earned time is covering right now — BEDTIME or QUOTA — while the phone
+	// runs on it, "" otherwise. A phone and a console say "Bonuszeit läuft" from this.
+	EarnedActive string `json:"earned_active"`
+	// BonusPackages is passed through, sorted and never nil, so a screen can say "nur mit
+	// Bonuszeit" about an app without holding the rules.
+	BonusPackages []string `json:"bonus_packages"`
 
 	// FreeByDefault lists the preinstalled apps this state leaves usable because nothing was
 	// decided about them (FR-5.10), sorted and never nil. Reported so a console and the phone can
@@ -632,6 +656,9 @@ func Compute(in Input) (DesiredState, error) {
 		out.HiddenPackages = []string{}
 		out.PendingApproval = []string{}
 		out.FreeByDefault = []string{}
+		out.BonusPackages = newSet(in.Settings.BonusPackages).sorted()
+		out.EarnedMinutesLeft = in.Settings.EarnedAvailableMinutes - in.EarnedSpentMinutesToday
+		out.EarnedSpentMinutes = in.EarnedSpentMinutesToday
 		out.NextChangeAt = ""
 		return out, nil
 	}
@@ -665,6 +692,18 @@ func Compute(in Input) (DesiredState, error) {
 	case quotaReached:
 		out.SuspendReason = ReasonQuota
 	default:
+		out.SuspendReason = ReasonNone
+	}
+
+	// FR-22: earned time. While there is some, a spent budget and bedtime suspend nothing — the phone
+	// runs on it, and says what it is covering. A pause and a parent's block are not covered.
+	bonus := newSet(in.Settings.BonusPackages)
+	gold := in.Settings.EarnedAvailableMinutes - in.EarnedSpentMinutesToday
+	out.EarnedMinutesLeft = gold
+	out.EarnedSpentMinutes = in.EarnedSpentMinutesToday
+	out.BonusPackages = bonus.sorted()
+	if gold > 0 && (out.SuspendReason == ReasonBedtime || out.SuspendReason == ReasonQuota) {
+		out.EarnedActive = out.SuspendReason
 		out.SuspendReason = ReasonNone
 	}
 
@@ -711,7 +750,7 @@ func Compute(in Input) (DesiredState, error) {
 		// else" was previously unable to say anything at all.
 		_, isLimited := limited[app.Package]
 		if !in.Settings.AllowChildInstalls && app.NewSinceBaseline && !app.System &&
-			!allowed.has(app.Package) && !blocked.has(app.Package) && !isLimited {
+			!allowed.has(app.Package) && !blocked.has(app.Package) && !isLimited && !bonus.has(app.Package) {
 			suspended.add(app.Package)
 			pending.add(app.Package)
 		}
@@ -727,7 +766,7 @@ func Compute(in Input) (DesiredState, error) {
 		// cannot turn every system service it failed to classify into an exemption.
 		freeByDefault := app.System && app.Launchable != nil && *app.Launchable &&
 			!countedSystem.has(app.Package) && !allowed.has(app.Package) &&
-			!blocked.has(app.Package) && !isLimited
+			!blocked.has(app.Package) && !isLimited && !bonus.has(app.Package)
 		if freeByDefault {
 			free.add(app.Package)
 		}
@@ -737,6 +776,10 @@ func Compute(in Input) (DesiredState, error) {
 		// FR-21: a pause takes everything the child can open, the apps a parent made always free
 		// and the preinstalled free ones included. What it leaves is the whitelist, removed below.
 		if out.SuspendReason == ReasonPaused && app.canBeOpened() {
+			suspended.add(app.Package)
+		}
+		// FR-22: a bonus app runs only on earned time — none left, and it is paused whatever the hour.
+		if bonus.has(app.Package) && gold <= 0 && app.canBeOpened() {
 			suspended.add(app.Package)
 		}
 		// FR-5.8: an app with an allowance of its own, spent. Independent of the shared quota, so
