@@ -518,6 +518,13 @@ func (s *Server) deviceDesiredState(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
+	// A guardian may read the state (FR-20.1) but not what it was computed from: the input carries the
+	// child's installed apps, the minutes per app and every rule, which /devices/:id/apps and /usage
+	// refuse a guardian. Returning it here would be those routes by another name.
+	if p := parentOf(c); p != nil && p.Role == store.RoleGuardian {
+		c.JSON(http.StatusOK, gin.H{"desired": state})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"desired": state, "input": input})
 }
 

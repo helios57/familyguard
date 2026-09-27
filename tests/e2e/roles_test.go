@@ -4,6 +4,7 @@ package e2e
 // route DECLARES its roles; these prove the declarations are what a signed-in person actually meets.
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 )
@@ -252,6 +253,22 @@ func TestAGuardianIsRefusedEverythingOutsideTheGuardianWindow(t *testing.T) {
 			t.Errorf("admin GET %s was refused too, so the guardian's 403 proves nothing about roles", r.path)
 		}
 	}
+	// The desired state is on the allowlist, but its "input" carries the child's installed apps, the
+	// minutes per app and every rule — what /devices/:id/apps and /usage refuse a guardian. A guardian
+	// gets the state and nothing it was computed from; an admin still gets both.
+	var forGuardian, forAdmin map[string]json.RawMessage
+	h.call(http.MethodGet, d+"/desired-state", guardian.Token, nil).expect(http.StatusOK).decode(&forGuardian)
+	h.call(http.MethodGet, d+"/desired-state", admin.Token, nil).expect(http.StatusOK).decode(&forAdmin)
+	if _, ok := forGuardian["input"]; ok {
+		t.Error("a guardian's desired state carries the input: installed apps and per-app minutes by another route")
+	}
+	if _, ok := forGuardian["desired"]; !ok {
+		t.Error("a guardian's desired state has no desired state")
+	}
+	if _, ok := forAdmin["input"]; !ok {
+		t.Error("an admin's desired state lost its input")
+	}
+
 	// The phone still exists and the child still has a limit: nothing above landed.
 	var pol struct {
 		DailyLimitMinutes int `json:"daily_limit_minutes"`
