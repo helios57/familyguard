@@ -16,10 +16,13 @@ package io.github.helios57.familyguard.enforce
 data class TodayReport(
     /** Counted screen time today, in whole minutes — the number the limit is compared against. */
     val usedMinutes: Int,
-    /** The limit in force today including [bonusMinutes], or 0 when there is no daily limit. */
+    /** The limit in force today including [bonusMinutes]; 0 with a [dailyLimitMinutes] is no time left. */
     val limitMinutes: Int,
+    /** Today's adjustment: + extra, − taken away (FR-3.11, FR-21). */
     val bonusMinutes: Int,
-    /** QUOTA or BEDTIME while that pauses every app that is not always free, else "". */
+    /** The plain daily limit, 0 for none — the one number that says whether there is a limit at all. */
+    val dailyLimitMinutes: Int,
+    /** PAUSED, QUOTA or BEDTIME while that pauses every app that is not always free, else "". */
     val suspendReason: String,
     /** When [suspendReason] ends, RFC 3339, or "". */
     val nextChangeAt: String,
@@ -42,7 +45,7 @@ data class TodayReport(
     enum class Rule { ALWAYS_FREE, FREE_PREINSTALLED, OWN_LIMIT, COUNTS, BLOCKED_BY_PARENT }
 
     /** The server's reason names (httpapi.BlockedByRule and friends). */
-    enum class Block { QUOTA, BEDTIME, APP_LIMIT, BLOCKED, PENDING }
+    enum class Block { PAUSED, QUOTA, BEDTIME, APP_LIMIT, BLOCKED, PENDING }
 
     companion object {
         fun of(
@@ -86,6 +89,7 @@ data class TodayReport(
                 usedMinutes = state.usedMinutes,
                 limitMinutes = state.quotaMinutes,
                 bonusMinutes = state.bonusMinutes,
+                dailyLimitMinutes = state.dailyLimitMinutes,
                 suspendReason = state.suspendReason,
                 nextChangeAt = if (state.suspendReason.isEmpty()) "" else state.nextChangeAt,
                 apps = lines,
@@ -106,6 +110,7 @@ data class TodayReport(
             pkg in pending -> Block.PENDING
             pkg !in suspended -> null
             ownLimit > 0 && usedMinutes >= ownLimit -> Block.APP_LIMIT
+            suspendReason == EnforcementEngine.REASON_PAUSED -> Block.PAUSED
             suspendReason == EnforcementEngine.REASON_QUOTA -> Block.QUOTA
             suspendReason == EnforcementEngine.REASON_BEDTIME -> Block.BEDTIME
             else -> Block.BLOCKED

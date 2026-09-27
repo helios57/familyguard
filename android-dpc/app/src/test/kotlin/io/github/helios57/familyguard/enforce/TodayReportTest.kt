@@ -24,11 +24,12 @@ class TodayReportTest {
         used: Int,
         byPackage: Map<String, Int>,
         bonus: Int = 0,
+        paused: Boolean = false,
     ) = Input(
         settings = Settings(
             dailyLimitMinutes = limit, timezone = "Europe/Zurich", allowChildInstalls = installs,
             allowedPackages = allowed, blockedPackages = blocked, limitedPackages = own,
-            bonusMinutes = bonus, bonusDay = if (bonus > 0) "2026-09-23" else "",
+            bonusMinutes = bonus, bonusDay = if (bonus != 0) "2026-09-23" else "", paused = paused,
         ),
         installed = installed,
         usedMinutesToday = used,
@@ -101,6 +102,39 @@ class TodayReportTest {
         assertEquals(TodayReport.Block.BLOCKED, r.apps.single { it.packageName == "com.example.game" }.blocked)
         val fresh = r.apps.single { it.packageName == "com.example.new" }
         assertEquals("a pending app is listed even with no use yet", TodayReport.Block.PENDING, fresh.blocked)
+    }
+
+    @Test
+    fun `a pause names itself, and takes always-free apps but not the messengers`() {
+        val r = report(input(
+            allowed = listOf("com.example.video"), used = 5, paused = true,
+            byPackage = mapOf("com.example.game" to 3, "com.example.video" to 1, "com.whatsapp" to 1),
+        ))
+
+        assertEquals(EnforcementEngine.REASON_PAUSED, r.suspendReason)
+        assertEquals(TodayReport.Block.PAUSED, r.apps.single { it.packageName == "com.example.game" }.blocked)
+        assertEquals(TodayReport.Block.PAUSED, r.apps.single { it.packageName == "com.example.video" }.blocked)
+        assertNull("WhatsApp is always usable (FR-5.9), paused or not",
+            r.apps.single { it.packageName == "com.whatsapp" }.blocked)
+    }
+
+    @Test
+    fun `time taken away lowers the limit the phone shows and keeps the plain limit beside it`() {
+        val r = report(input(used = 40, byPackage = mapOf("com.example.game" to 40), bonus = -15))
+
+        assertEquals(45, r.limitMinutes)
+        assertEquals(-15, r.bonusMinutes)
+        assertEquals(60, r.dailyLimitMinutes)
+        assertEquals("", r.suspendReason)
+    }
+
+    @Test
+    fun `a day taken to zero is a limit reached, never no limit`() {
+        val r = report(input(used = 0, byPackage = mapOf("com.example.game" to 0), bonus = -60))
+
+        assertEquals(0, r.limitMinutes)
+        assertEquals("the plain limit is what says a limit exists", 60, r.dailyLimitMinutes)
+        assertEquals(EnforcementEngine.REASON_QUOTA, r.suspendReason)
     }
 
     @Test

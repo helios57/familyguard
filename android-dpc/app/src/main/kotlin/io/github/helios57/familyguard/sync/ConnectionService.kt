@@ -1548,6 +1548,7 @@ class ConnectionService : Service() {
      * phone is in, and points at FamilyGuard for the per-app reasons.
      */
     private fun whyPaused(state: DesiredState): String = when (state.suspendReason) {
+        EnforcementEngine.REASON_PAUSED -> getString(R.string.why_paused)
         EnforcementEngine.REASON_QUOTA -> getString(R.string.why_quota, state.usedMinutes, state.quotaMinutes)
         EnforcementEngine.REASON_BEDTIME -> getString(R.string.why_bedtime, localClock(state.nextChangeAt))
         else -> getString(R.string.why_app)
@@ -1567,6 +1568,7 @@ class ConnectionService : Service() {
     private fun pausedNotice(state: DesiredState) {
         val manager = getSystemService(NotificationManager::class.java) ?: return
         val title = when (state.suspendReason) {
+            EnforcementEngine.REASON_PAUSED -> getString(R.string.limits_title_paused)
             EnforcementEngine.REASON_QUOTA -> getString(R.string.limits_title_quota)
             EnforcementEngine.REASON_BEDTIME -> getString(R.string.limits_title_bedtime)
             else -> {

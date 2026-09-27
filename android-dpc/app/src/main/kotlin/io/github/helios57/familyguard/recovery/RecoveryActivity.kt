@@ -419,13 +419,17 @@ class RecoveryActivity : AppCompatActivity() {
         }
         todayGroup.visibility = View.VISIBLE
         todaySummary.text = when {
-            report.limitMinutes <= 0 -> getString(R.string.today_used_nolimit, report.usedMinutes)
+            report.dailyLimitMinutes <= 0 -> getString(R.string.today_used_nolimit, report.usedMinutes)
+            report.bonusMinutes < 0 -> getString(
+                R.string.today_used_reduced, report.usedMinutes, report.limitMinutes, -report.bonusMinutes,
+            )
             report.bonusMinutes > 0 -> getString(
                 R.string.today_used_bonus, report.usedMinutes, report.limitMinutes, report.bonusMinutes,
             )
             else -> getString(R.string.today_used, report.usedMinutes, report.limitMinutes)
         }
         val why = when (report.suspendReason) {
+            EnforcementEngine.REASON_PAUSED -> getString(R.string.block_paused)
             EnforcementEngine.REASON_QUOTA -> getString(R.string.block_quota)
             EnforcementEngine.REASON_BEDTIME -> getString(R.string.block_bedtime)
             else -> null
@@ -479,6 +483,7 @@ class RecoveryActivity : AppCompatActivity() {
     }
 
     private fun blockText(block: TodayReport.Block): String? = when (block) {
+        TodayReport.Block.PAUSED -> getString(R.string.block_paused)
         TodayReport.Block.QUOTA -> getString(R.string.block_quota)
         TodayReport.Block.BEDTIME -> getString(R.string.block_bedtime)
         TodayReport.Block.APP_LIMIT -> getString(R.string.block_app_limit)
