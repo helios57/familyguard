@@ -311,11 +311,10 @@ func TestTheBlocklistIsReachableByAPIKeyAndGuardedByRole(t *testing.T) {
 	}).expect(http.StatusCreated)
 	guardian := h.signIn(guardianIdentity)
 
-	// A guardian sees the list — it explains why an app is missing from a phone they are watching.
-	if len(h.blocklist(guardian.Token)) == 0 {
-		t.Error("a guardian cannot read the blocklist, so a hidden app has no explanation")
-	}
-	// They do not change it. One entry moves every phone in the family.
+	// A guardian neither reads nor changes it (FR-20.1): the guardian window lists no apps, and one
+	// entry moves every phone in the family.
+	h.call(http.MethodGet, "/family/blocked-packages", guardian.Token, nil).
+		expectError(http.StatusForbidden, "forbidden")
 	h.call(http.MethodPut, "/family/blocked-packages", guardian.Token,
 		map[string]any{"package_name": "com.example.nope"}).expect(http.StatusForbidden)
 	h.call(http.MethodDelete, "/family/blocked-packages?package_name=com.facebook.katana",

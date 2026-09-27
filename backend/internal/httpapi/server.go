@@ -72,9 +72,12 @@ type Server struct {
 	resolver *enforce.Resolver
 	catalog  *catalog.Catalog
 	hub      *Hub
-	debug    *debugRelay
-	log      *slog.Logger
-	now      func() time.Time
+	// parentRouteRoles is who may call each parent route, recorded by parentRoutes as Router()
+	// registers them (FR-20.1). Read by the tests; the check itself is installed per route.
+	parentRouteRoles map[routeKey]roleSet
+	debug            *debugRelay
+	log              *slog.Logger
+	now              func() time.Time
 
 	httpClient *http.Client
 
@@ -213,70 +216,71 @@ func (s *Server) Router() (*gin.Engine, error) {
 	// Parent surface. The per-parent budget is installed AFTER requireParent, because the key it
 	// buckets by is the identity that middleware resolves — and RateLimitBy refuses outright rather
 	// than falling back to a shared bucket if the two are ever wired the other way round.
-	p := v1.Group("", s.requireParent(), RateLimitBy(parents, parentKey))
-	p.GET("/me", s.me)
-	p.GET("/family", s.getFamily)
+	s.parentRouteRoles = map[routeKey]roleSet{}
+	p := parentRoutes{s: s, group: v1.Group("", s.requireParent(), RateLimitBy(parents, parentKey))}
+	p.GET("/me", everyone, s.me)
+	p.GET("/family", everyone, s.getFamily)
 	// Which DPC this deployment hosts (FR-15.6). Deployment state, not family state, which is why
 	// it is not folded into /family: it answers "what would a phone get if it updated now", and the
 	// console needs it to tell a phone that is behind from one that is current.
-	p.GET("/dpc", s.hostedDPC)
-	// FR-18. Readable by any parent; changed only by an admin, because one entry moves every phone
-	// in the family at once.
-	p.GET("/family/blocked-packages", s.listFamilyBlocklist)
-	p.PUT("/family/blocked-packages", s.requireRole(store.RolePrimaryAdmin, store.RoleAdmin), s.putFamilyBlocklist)
-	p.DELETE("/family/blocked-packages", s.requireRole(store.RolePrimaryAdmin, store.RoleAdmin), s.deleteFamilyBlocklist)
-	p.GET("/parents", s.listParents)
+	p.GET("/dpc", admins, s.hostedDPC)
+	// FR-18. Changed only by an admin, because one entry moves every phone in the family at once.
+	// Reading it moved from every parent to admins in FR-20: the guardian window lists no apps.
+	p.GET("/family/blocked-packages", admins, s.listFamilyBlocklist)
+	p.PUT("/family/blocked-packages", admins, s.putFamilyBlocklist)
+	p.DELETE("/family/blocked-packages", admins, s.deleteFamilyBlocklist)
+	p.GET("/parents", admins, s.listParents)
 	// requireInteractiveParent, here and on /api-keys below: these are the routes that hand out or
 	// take away a credential, and an API key that can mint one outlives its own revocation.
-	p.POST("/parents", s.requireInteractiveParent(), s.requireRole(store.RolePrimaryAdmin), s.createParent)
-	p.DELETE("/parents/:id", s.requireInteractiveParent(), s.requireRole(store.RolePrimaryAdmin), s.deleteParent)
+	p.POST("/parents", primaryOnly, s.requireInteractiveParent(), s.createParent)
+	p.DELETE("/parents/:id", primaryOnly, s.requireInteractiveParent(), s.deleteParent)
 
-	p.GET("/children", s.listChildren)
-	p.POST("/children", s.createChild)
-	p.PATCH("/children/:id", s.updateChild)
-	p.DELETE("/children/:id", s.deleteChild)
-	p.GET("/children/:id/policy", s.getPolicy)
+	p.GET("/children", everyone, s.listChildren)
+	p.POST("/children", admins, s.createChild)
+	p.PATCH("/children/:id", admins, s.updateChild)
+	p.DELETE("/children/:id", admins, s.deleteChild)
+	p.GET("/children/:id/policy", admins, s.getPolicy)
 	// Extra screen time for today only (FR-3.11).
-	p.POST("/children/:id/bonus", s.grantBonus)
-	p.PATCH("/children/:id/policy", s.patchPolicy)
-	p.GET("/children/:id/app-rules", s.listAppRules)
-	p.PUT("/children/:id/app-rules", s.putAppRule)
-	p.DELETE("/children/:id/app-rules", s.deleteAppRule)
-	p.GET("/children/:id/blocked-domains", s.listBlockedDomains)
-	p.POST("/children/:id/blocked-domains", s.addBlockedDomain)
-	p.DELETE("/children/:id/blocked-domains", s.removeBlockedDomain)
-	p.POST("/children/:id/devices", s.createDevice)
+	p.POST("/children/:id/bonus", everyone, s.grantBonus)
+	p.PATCH("/children/:id/policy", admins, s.patchPolicy)
+	p.GET("/children/:id/app-rules", admins, s.listAppRules)
+	p.PUT("/children/:id/app-rules", admins, s.putAppRule)
+	p.DELETE("/children/:id/app-rules", admins, s.deleteAppRule)
+	p.GET("/children/:id/blocked-domains", admins, s.listBlockedDomains)
+	p.POST("/children/:id/blocked-domains", admins, s.addBlockedDomain)
+	p.DELETE("/children/:id/blocked-domains", admins, s.removeBlockedDomain)
+	p.POST("/children/:id/devices", admins, s.createDevice)
 
-	p.GET("/devices", s.listDevices)
-	p.GET("/devices/:id", s.getDevice)
-	p.PATCH("/devices/:id", s.renameDevice)
-	p.DELETE("/devices/:id", s.deleteDevice)
+	p.GET("/devices", everyone, s.listDevices)
+	p.GET("/devices/:id", admins, s.getDevice)
+	p.PATCH("/devices/:id", admins, s.renameDevice)
+	p.DELETE("/devices/:id", admins, s.deleteDevice)
 	// Minting an enrollment credential is a state change, so it is a POST. There is deliberately no
 	// GET that returns a QR: the plaintext token is not stored, so a read could only ever return a
 	// QR that does not work.
-	p.POST("/devices/:id/provisioning", s.provisioningPayload)
-	p.GET("/devices/:id/recovery-code", s.recoveryCode)
-	p.GET("/devices/:id/recovery-events", s.listRecoveryEvents)
-	p.GET("/devices/:id/apps", s.listDeviceApps)
-	p.DELETE("/devices/:id/apps/:package", s.forgetDeviceApp)
-	p.GET("/devices/:id/usage", s.deviceUsage)
-	p.GET("/devices/:id/usage/timeline", s.deviceUsageTimeline)
-	p.GET("/devices/:id/locations", s.deviceLocations)
-	p.GET("/devices/:id/desired-state", s.deviceDesiredState)
-	p.GET("/devices/:id/commands", s.listCommands)
-	p.POST("/devices/:id/commands", s.createCommand)
+	p.POST("/devices/:id/provisioning", admins, s.provisioningPayload)
+	p.GET("/devices/:id/recovery-code", admins, s.recoveryCode)
+	p.GET("/devices/:id/recovery-events", admins, s.listRecoveryEvents)
+	p.GET("/devices/:id/apps", admins, s.listDeviceApps)
+	p.DELETE("/devices/:id/apps/:package", admins, s.forgetDeviceApp)
+	p.GET("/devices/:id/usage", admins, s.deviceUsage)
+	p.GET("/devices/:id/usage/timeline", admins, s.deviceUsageTimeline)
+	p.GET("/devices/:id/locations", admins, s.deviceLocations)
+	p.GET("/devices/:id/desired-state", everyone, s.deviceDesiredState)
+	p.GET("/devices/:id/commands", admins, s.listCommands)
+	p.POST("/devices/:id/commands", admins, s.createCommand)
 	// Remote adb (FR-19). A GET that becomes a raw stream: see debugrelay.go.
-	p.GET("/devices/:id/debug", s.openDebugStream)
+	p.GET("/devices/:id/debug", admins, s.openDebugStream)
 	// The application catalog (FR-16). Uploading is an admin action: a package that lands here can
 	// be declared for a child and will install itself on their phone without anyone tapping
 	// anything, which is a larger authority than editing a bedtime.
-	p.GET("/apps", s.listApps)
-	p.POST("/apps", s.requireRole(store.RolePrimaryAdmin, store.RoleAdmin), s.uploadApp)
-	p.POST("/apps/scan", s.requireRole(store.RolePrimaryAdmin, store.RoleAdmin), s.scanApps)
-	p.DELETE("/apps/:id", s.requireRole(store.RolePrimaryAdmin, store.RoleAdmin), s.deleteApp)
-	p.GET("/children/:id/managed-apps", s.listManagedApps)
-	p.PUT("/children/:id/managed-apps/:package", s.declareManagedApp)
-	p.DELETE("/children/:id/managed-apps/:package", s.withdrawManagedApp)
+	p.GET("/apps", admins, s.listApps)
+	p.POST("/apps", admins, s.uploadApp)
+	p.POST("/apps/scan", admins, s.scanApps)
+	p.DELETE("/apps/:id", admins, s.deleteApp)
+	p.GET("/children/:id/managed-apps", admins, s.listManagedApps)
+	p.PUT("/children/:id/managed-apps/:package", admins, s.declareManagedApp)
+	p.DELETE("/children/:id/managed-apps/:package", admins, s.withdrawManagedApp)
 
 	// API keys (FR-17). Minting one hands out this family's whole parent surface, so it is
 	// PRIMARY_ADMIN only — the same bar as adding a parent, which is what it amounts to.
@@ -284,17 +288,16 @@ func (s *Server) Router() (*gin.Engine, error) {
 	// Listing stays key-reachable: reading which credentials exist is not one of them, and an MCP
 	// server that can answer "what keys does this family have" is useful. Everything that changes
 	// the set is console-only.
-	k := p.Group("/api-keys", s.requireRole(store.RolePrimaryAdmin))
-	k.GET("", s.listAPIKeys)
-	k.POST("", s.requireInteractiveParent(), s.createAPIKey)
-	k.POST("/:id/revoke", s.requireInteractiveParent(), s.revokeAPIKey)
-	k.DELETE("/:id", s.requireInteractiveParent(), s.deleteAPIKey)
+	p.GET("/api-keys", primaryOnly, s.listAPIKeys)
+	p.POST("/api-keys", primaryOnly, s.requireInteractiveParent(), s.createAPIKey)
+	p.POST("/api-keys/:id/revoke", primaryOnly, s.requireInteractiveParent(), s.revokeAPIKey)
+	p.DELETE("/api-keys/:id", primaryOnly, s.requireInteractiveParent(), s.deleteAPIKey)
 
-	p.GET("/audit", s.listAudit)
+	p.GET("/audit", admins, s.listAudit)
 	// The console reads this stream with fetch() rather than EventSource, because EventSource
 	// cannot carry an Authorization header — and the alternatives are a cookie (which brings CSRF
 	// with it) or a token in the query string (which lands in every access log in the path).
-	p.GET("/events", s.parentEvents)
+	p.GET("/events", everyone, s.parentEvents)
 
 	// Device surface. Every route here authenticates with the device token issued at enrollment.
 	d := v1.Group("/device", s.requireDevice(), RateLimitBy(devices, deviceKey))
