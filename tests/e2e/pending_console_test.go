@@ -116,7 +116,8 @@ func TestTheConsoleShowsTheApprovalQueueAndCategorisesFromIt(t *testing.T) {
 	b.waitFor("document.querySelectorAll('#view .card').length > 0", 15*time.Second, "the home view")
 	var home card
 	b.eval(deviceCardJS, &home)
-	if !strings.Contains(home.Text, "42 min of 1 h 0 min") {
+	// "1 h", not "1 h 0 min": a round hour says no minutes.
+	if !strings.Contains(home.Text, "42 min of 1 h") || strings.Contains(home.Text, "1 h 0 min") {
 		t.Errorf("the home card does not report the screen time the phone filed.\ncard: %s", home.Text)
 	}
 	if !strings.Contains(home.Text, "app(s) are paused waiting for your decision") {

@@ -504,8 +504,11 @@ func TestTheConsoleDrawsWhatRanWhen(t *testing.T) {
 	}
 
 	// The chart is one image to a screen reader, and its label is the sentence a parent would be
-	// told: how long, which day, whose hours. 7220 seconds of sittings round to 2 h 0 min.
-	for _, must := range []string{"2 h 0 min", day, loc.String()} {
+	// told: how long, which day, whose hours. 7220 seconds of sittings round to 2 h.
+	if strings.Contains(drawn.Aria, "2 h 0 min") {
+		t.Errorf("a round hour is said with its zero minutes: %q", drawn.Aria)
+	}
+	for _, must := range []string{"2 h", day, loc.String()} {
 		if !strings.Contains(drawn.Aria, must) {
 			t.Errorf("the chart's label does not carry %q: %q", must, drawn.Aria)
 		}

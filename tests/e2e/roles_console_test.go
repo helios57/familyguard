@@ -141,7 +141,7 @@ func TestAGuardianSeesTheGuardianViewAndCanGiveTime(t *testing.T) {
 	var status string
 	b.eval(`Array.from(document.querySelectorAll('#view .guardian-card')).find((c) => c.textContent.includes('Mira'))
 	  .querySelector('h2 + p').textContent`, &status)
-	if !strings.Contains(status, "Heute 0 min von 1 h 0 min") {
+	if !strings.HasSuffix(status, "Heute 0 min von 1 h") {
 		t.Errorf("Mira's status line does not show today's time against her 60-minute limit: %q (card %q)", status, mira)
 	}
 	// Review focus 4.

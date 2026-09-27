@@ -15,12 +15,13 @@ import (
 )
 
 // Why an app cannot be used right now (FR-3.10), as the console and the phone both say it. The
-// three the engine already names keep their names; the other three are the per-app causes the
+// three the engine already names keep their names; the other four are the per-app causes the
 // engine has no single field for.
 const (
 	BlockedByRule   = "BLOCKED"   // a parent's BLOCK rule, the family blocklist or the YouTube switch
 	BlockedPending  = "PENDING"   // installed while free installation is off, waiting for a parent
 	BlockedAppLimit = "APP_LIMIT" // this app's own daily allowance is spent
+	BlockedEarned   = "EARNED"    // a bonus app, and no earned time is left (FR-22)
 	BlockedQuota    = policy.ReasonQuota
 	BlockedBedtime  = policy.ReasonBedtime
 	notBlocked      = ""
@@ -242,6 +243,12 @@ func blockedReason(ds *policy.DesiredState, pkg string, ownLimit int, usedMs int
 		return notBlocked
 	case ownLimit > 0 && int(usedMs/60000) >= ownLimit:
 		return BlockedAppLimit
+	case ds.SuspendReason == policy.ReasonPaused:
+		return ds.SuspendReason
+	// Before bedtime and the quota: a bonus app is paused for want of earned time at any hour,
+	// and with gold left it would not be paused for those reasons at all.
+	case slices.Contains(ds.BonusPackages, pkg) && ds.EarnedMinutesLeft <= 0:
+		return BlockedEarned
 	case ds.SuspendReason != policy.ReasonNone:
 		return ds.SuspendReason
 	default:

@@ -241,7 +241,17 @@ const fmtSize = (bytes) => {
 const fmtMinutes = (m) => {
   if (!m) return '0 min';
   const h = Math.floor(m / 60);
-  return h ? h + ' h ' + (m % 60) + ' min' : m + ' min';
+  // "1 h", not "1 h 0 min": a round hour is the common case — it is what most limits are.
+  return h ? h + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '') : m + ' min';
+};
+
+/* `2026-10-03` as the guardian window says a day: "Sa 3.10.". Parsed as a calendar date, never
+   through Date's ISO parser, which reads a bare date as UTC midnight and names the day before
+   everywhere west of Greenwich. */
+const fmtDayDe = (iso) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  const at = new Date(y, m - 1, d);
+  return ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][at.getDay()] + ' ' + d + '.' + m + '.';
 };
 
 /* One sitting's length. Seconds below a minute rather than "0 min": this is a single interval with
@@ -1089,16 +1099,124 @@ async function showRecovery(dev) {
 /* ---- rules -------------------------------------------------------------- */
 
 async function loadRules() {
-  const [policy, domains, devices] = await Promise.all([
+  const [policy, domains, devices, plan] = await Promise.all([
     api('/children/' + state.childId + '/policy'),
     api('/children/' + state.childId + '/blocked-domains'),
     api('/devices?child_id=' + encodeURIComponent(state.childId)),
+    api('/children/' + state.childId + '/plan'),
   ]);
+  const groups = plan.groups || [];
+  // The draft survives a re-read while it holds unsaved edits: a heartbeat arriving between two
+  // fields must not throw away the group a parent is halfway through writing.
+  const draft = state.planDraft;
+  if (!draft || draft.childId !== state.childId || !draft.dirty) {
+    state.planDraft = { childId: state.childId, dirty: false, groups: clonePlan(groups) };
+  }
   return {
     policy,
     domains: domains.domains || [],
     enrolled: (devices.devices || []).some((d) => d.enrolled),
   };
+}
+
+/* ---- the daily plan (FR-22) ---------------------------------------------- */
+
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+const clonePlan = (groups) => groups.map((g) => ({ ...g, tasks: (g.tasks || []).map((t) => ({ ...t })) }));
+
+const newPlanTask = () => ({ title: '', note: '' });
+const newPlanGroup = () => ({
+  title: '', weekdays: 127, starts_at: '07:00', ends_at: '20:00', earned_minutes: 30, tasks: [newPlanTask()],
+});
+
+/* The plan editor: groups of tasks, each group with its days, its window and the minutes it earns.
+ *
+ * Edited as a draft and saved as ONE document, because that is how the server takes it: a PUT that
+ * keeps the ids of what it already knows, so an edited group keeps its history (who confirmed what,
+ * which day earned what) and a new one starts fresh. Typing changes the draft and nothing else —
+ * re-rendering on every keystroke would move the caret — and only adding or removing a row redraws. */
+function planCard() {
+  const draft = state.planDraft;
+  const changed = () => { draft.dirty = true; };
+  const restructure = (fn) => { fn(); changed(); redraw(); };
+
+  const field = (obj, key, attrs, parse) => el('input', {
+    ...attrs, value: obj[key] === undefined || obj[key] === null ? '' : String(obj[key]),
+    oninput: (e) => { obj[key] = parse ? parse(e.target.value) : e.target.value; changed(); },
+  });
+
+  const group = (g, gi) => {
+    const days = el('div', { class: 'plan-days', role: 'group', 'aria-label': 'Days' },
+      WEEKDAYS.map((name, bit) => el('button', {
+        class: 'btn', type: 'button', text: name, 'data-day': String(bit),
+        'aria-pressed': String((g.weekdays & (1 << bit)) !== 0),
+        onclick: (e) => {
+          g.weekdays ^= (1 << bit);
+          e.target.setAttribute('aria-pressed', String((g.weekdays & (1 << bit)) !== 0));
+          changed();
+        },
+      })));
+    const tasks = g.tasks.map((t, ti) => el('div', { class: 'plan-task field-row' },
+      field(t, 'title', { type: 'text', 'data-field': 'task-title', placeholder: 'Task', 'aria-label': 'Task' }),
+      field(t, 'note', { type: 'text', 'data-field': 'task-note', placeholder: 'Note', 'aria-label': 'Note' }),
+      el('button', {
+        class: 'btn btn-quiet', type: 'button', text: '\u00d7', 'data-plan': 'remove-task',
+        'aria-label': 'Remove this task', disabled: g.tasks.length === 1,
+        onclick: () => restructure(() => g.tasks.splice(ti, 1)),
+      })));
+    return el('div', { class: 'plan-group stack' },
+      el('div', {}, el('label', { text: 'Group' }),
+        field(g, 'title', { type: 'text', 'data-field': 'title', placeholder: 'e.g. Morning', 'aria-label': 'Group title' })),
+      days,
+      el('div', { class: 'field-row plan-times' },
+        el('div', {}, el('label', { text: 'From' }), field(g, 'starts_at', { type: 'time', 'data-field': 'starts_at', 'aria-label': 'From' })),
+        el('div', {}, el('label', { text: 'To' }), field(g, 'ends_at', { type: 'time', 'data-field': 'ends_at', 'aria-label': 'To' })),
+        el('div', {}, el('label', { text: 'Earns (min)' }),
+          field(g, 'earned_minutes', { type: 'number', min: '0', max: '1440', inputmode: 'numeric', 'data-field': 'earned_minutes', 'aria-label': 'Minutes earned' }, Number))),
+      el('div', { class: 'stack' }, tasks),
+      el('div', { class: 'row' },
+        el('button', {
+          class: 'btn', type: 'button', text: '+ Task', 'data-plan': 'add-task',
+          onclick: () => restructure(() => g.tasks.push(newPlanTask())),
+        }),
+        el('button', {
+          class: 'btn btn-quiet btn-danger', type: 'button', text: 'Remove group', 'data-plan': 'remove-group',
+          onclick: () => restructure(() => draft.groups.splice(gi, 1)),
+        })));
+  };
+
+  const save = async () => {
+    // Only what the server keeps: an id when there is one, so a new row is new and an old row is
+    // the same row.
+    const body = {
+      groups: draft.groups.map((g) => ({
+        ...(g.id ? { id: g.id } : {}),
+        title: g.title, weekdays: g.weekdays, starts_at: g.starts_at, ends_at: g.ends_at,
+        earned_minutes: Number(g.earned_minutes) || 0,
+        tasks: g.tasks.map((t) => ({ ...(t.id ? { id: t.id } : {}), title: t.title, note: t.note || '' })),
+      })),
+    };
+    const saved = await act('Daily plan saved', () =>
+      api('/children/' + state.childId + '/plan', { method: 'PUT', body }));
+    // A refused plan stays as typed, so the parent can fix what the server named.
+    if (!saved) return;
+    state.planDraft = { childId: state.childId, dirty: false, groups: clonePlan(saved.groups || []) };
+    redraw();
+  };
+
+  return el('div', { class: 'card full plan-card' },
+    el('div', { class: 'card-head' }, el('h2', { text: 'Daily plan' })),
+    el('p', { class: 'muted', text: 'Tasks the child ticks off on the phone as done. When you or a guardian have confirmed every task of a group, it earns its minutes of Bonuszeit — used after the daily limit, at bedtime, and on bonus apps. Earned time lasts 7 days.' }),
+    draft.groups.length
+      ? el('div', { class: 'stack' }, draft.groups.map(group))
+      : el('p', { class: 'muted', text: 'No plan yet. Add a group \u2014 for example "Morning", 07:00\u201308:00, with "Brush teeth" and "Make the bed".' }),
+    el('div', { class: 'row' },
+      el('button', {
+        class: 'btn', type: 'button', text: '+ Group', 'data-plan': 'add-group',
+        onclick: () => restructure(() => draft.groups.push(newPlanGroup())),
+      }),
+      el('button', { class: 'btn btn-primary', type: 'button', text: 'Save plan', 'data-plan': 'save', onclick: save })));
 }
 
 function renderRules(data) {
@@ -1236,7 +1354,7 @@ function renderRules(data) {
         : 'Without a list there is nothing to filter, so the switch above does nothing until one is set. Any AdGuard- or hosts-style list works.' })),
     el('p', { class: 'muted', text: 'The phone routes its own traffic through FamilyGuard to do this, and blocks by name only — it never reads the contents of a connection. Some games that pay themselves with adverts stop at the point where the advert would play; that is the trade.' }));
 
-  const cards = [rules, bedtime, domains, adfilter];
+  const cards = [rules, bedtime, planCard(), domains, adfilter];
   // Rules are a property of the child and are saved whether or not a phone exists to carry them, so
   // this screen stays fully usable — it just says so, rather than letting a parent set a bedtime and
   // wonder why nothing happened.
@@ -1677,6 +1795,12 @@ const CATEGORIES = [
     key: 'BLOCK', action: 'BLOCK', label: 'Always blocked', done: 'Blocked',
     hint: 'Suspended and hidden on the phone.',
   },
+  // FR-22. Last because it is the one answer that depends on something else being set up: without
+  // a daily plan nobody earns anything, and a bonus app then never opens.
+  {
+    key: 'BONUS', action: 'BONUS', label: 'Bonus app', done: 'A bonus app — runs on earned time',
+    hint: 'Opens only while there is earned time (Bonuszeit) — then even at bedtime or past the daily limit.',
+  },
 ];
 
 /* Where "Own limit" starts when it is first chosen. A number had to be picked, and starting at zero
@@ -1837,6 +1961,8 @@ function renderApps(data) {
       ? el('small', { class: 'muted', text: 'Not on the phone any more.' })
       : !rule && data.free.has(app.package_name)
         ? el('small', { class: 'muted', text: 'Always free (preinstalled) — pick an answer to change it.' })
+      : rule && rule.action === 'BONUS'
+        ? el('small', { class: 'muted', text: 'Bonus app: runs only on earned time, from the daily plan.' })
       : app.hidden
         ? el('small', { class: 'muted', text: 'Hidden on the phone right now.' })
         : app.suspended
@@ -2097,6 +2223,7 @@ const BLOCKED_TEXT = {
   APP_LIMIT: 'Paused — its own limit is used up',
   BLOCKED: 'Blocked',
   PENDING: 'Waiting for your approval',
+  EARNED: 'Paused — no earned time left',
 };
 
 /**
@@ -2160,8 +2287,8 @@ function bonusButtons(dev) {
 
 /* The guardian window (FR-20, FR-21.3, spec §6). One card per profile, in German, because the people
    this page is for are the family's non-admins: today's time, why apps are paused, Sperren /
-   Entsperren, and −15 · +15 · +30. An admin has it too, as the first tab. Phase 3 adds the tasks
-   waiting for confirmation above the cards.
+   Entsperren, and −15 · +15 · +30. An admin has it too, as the first tab. FR-22 adds the tasks
+   waiting for confirmation above the cards, today's tasks on each card, and the Bonuszeit.
 
    The children are re-read on every load rather than taken from boot: whether a profile is paused
    is part of that listing, and a card drawn from the boot-time copy would say "frei" about a phone
@@ -2172,10 +2299,90 @@ async function loadGuardian() {
   return Promise.all(children.map(async (child) => {
     const devices = ((await api('/devices?child_id=' + encodeURIComponent(child.id))).devices || [])
       .filter((d) => d.enrolled);
-    const states = await Promise.all(devices.map((d) =>
-      api('/devices/' + d.id + '/desired-state').then((r) => (r && r.desired) || null).catch(() => null)));
-    return { child, devices: devices.map((dev, i) => ({ dev, desired: states[i] })) };
+    const [states, today] = await Promise.all([
+      Promise.all(devices.map((d) =>
+        api('/devices/' + d.id + '/desired-state').then((r) => (r && r.desired) || null).catch(() => null))),
+      // Tolerated as missing: a card that cannot show the tasks still has to show the time.
+      api('/children/' + child.id + '/today').catch(() => null),
+    ]);
+    return { child, today, devices: devices.map((dev, i) => ({ dev, desired: states[i] })) };
   }));
+}
+
+/* One decision on one task of today: Bestätigen, Nicht erledigt, or Rückgängig. */
+function decideTask(child, task, decision, label) {
+  return el('button', {
+    class: 'btn' + (decision === 'confirm' ? ' btn-primary' : decision === 'reject' ? ' btn-danger' : ' btn-quiet'),
+    type: 'button', text: label, 'data-task': task.id, 'data-decision': decision,
+    'aria-label': label + ': ' + task.title,
+    onclick: () => act(label, async () => {
+      await api('/children/' + child.id + '/tasks/' + task.id + '/decision', { method: 'POST', body: { decision } });
+      refresh();
+    }),
+  });
+}
+
+/* "Wartet auf dich": what a child reported as done and nobody has answered yet, across every
+   profile, above the cards. Drawn only when something waits — an empty queue on every visit is how
+   a full one stops being read. */
+function waitingCard(profiles) {
+  const rows = [];
+  for (const { child, today } of profiles) {
+    for (const g of (today && today.groups) || []) {
+      for (const t of g.tasks) {
+        if (t.state !== 'REPORTED') continue;
+        rows.push(el('li', {},
+          el('span', { class: 'label' },
+            el('b', { text: t.title }),
+            el('small', { text: child.name + ' \u00b7 ' + g.title + (t.note ? ' \u00b7 ' + t.note : '') })),
+          el('div', { class: 'row' },
+            decideTask(child, t, 'confirm', 'Best\u00e4tigen'),
+            decideTask(child, t, 'reject', 'Nicht erledigt'))));
+      }
+    }
+  }
+  if (!rows.length) return null;
+  return el('div', { class: 'card full waiting-card' },
+    el('div', { class: 'card-head' },
+      el('h2', { text: 'Wartet auf dich' }),
+      el('span', { class: 'badge', text: String(rows.length) })),
+    el('ul', { class: 'list' }, rows));
+}
+
+const TASK_STATE = { OPEN: 'offen', REPORTED: 'gemeldet', CONFIRMED: 'best\u00e4tigt', REJECTED: 'nicht erledigt' };
+
+/* Today's groups on a profile's card. Every task that is not confirmed can be confirmed from here —
+   a child who forgot to tap "Fertig" still did the task — and a confirmed one can be taken back. */
+function guardianTasks(child, today) {
+  if (!today || !today.groups.length) return null;
+  return el('div', { class: 'stack guardian-tasks' }, today.groups.map((g) => el('div', { class: 'stack' },
+    el('div', { class: 'row' },
+      el('b', { text: g.title }),
+      el('span', { class: 'muted', text: g.starts_at + '\u2013' + g.ends_at
+        + (g.credited_minutes > 0 ? ' \u00b7 +' + fmtMinutes(g.credited_minutes) + ' verdient' : ' \u00b7 +' + fmtMinutes(g.earned_minutes)) })),
+    el('ul', { class: 'list' }, g.tasks.map((t) => el('li', {},
+      el('span', { class: 'label' },
+        el('span', { text: t.title }),
+        el('small', { text: TASK_STATE[t.state] + (t.note ? ' \u00b7 ' + t.note : '') })),
+      t.state === 'CONFIRMED'
+        ? decideTask(child, t, 'undo', 'R\u00fcckg\u00e4ngig')
+        : decideTask(child, t, 'confirm', 'Best\u00e4tigen')))))));
+}
+
+/* The gold line: Bonuszeit left today, and what expires next. A negative balance is a debt the next
+   earned minutes settle, and it is said as one rather than drawn as zero. */
+function guardianEarned(today) {
+  if (!today) return null;
+  const e = today.earned || {};
+  if (!today.groups.length && !e.available_minutes && !e.spent_minutes) return null;
+  const left = e.left_minutes || 0;
+  const next = (e.credits || []).find((c) => c.minutes > 0);
+  return el('p', { class: 'earned' + (left < 0 ? ' debt' : ''),
+    text: left < 0
+      ? 'Bonuszeit: \u2212' + fmtMinutes(-left) + ' (wird mit der n\u00e4chsten verrechnet)'
+      : 'Bonuszeit: ' + fmtMinutes(left)
+        + (e.spent_minutes > 0 ? ' (heute ' + fmtMinutes(e.spent_minutes) + ' gebraucht)' : '')
+        + (next && left > 0 ? ' \u00b7 ' + fmtMinutes(next.minutes) + ' davon bis ' + fmtDayDe(next.expires_on) : '') });
 }
 
 function renderGuardian(profiles) {
@@ -2183,10 +2390,14 @@ function renderGuardian(profiles) {
     return [el('div', { class: 'card full' }, el('h2', { text: 'Noch kein Profil' }),
       el('p', { class: 'muted', text: 'Ein Admin richtet die Profile ein.' }))];
   }
-  return profiles.map(({ child, devices }) => {
+  return [waitingCard(profiles)].concat(profiles.map(({ child, today, devices }) => {
     const card = el('div', { class: 'card full guardian-card' }, el('h2', { text: child.name }));
+    const earned = guardianEarned(today);
+    if (earned) card.append(earned);
+    const tasks = guardianTasks(child, today);
     if (!devices.length) {
       card.append(el('p', { class: 'muted', text: 'Noch kein Handy eingerichtet.' }));
+      if (tasks) card.append(tasks);
       card.append(guardianPauseButton(child));
       return card;
     }
@@ -2210,10 +2421,11 @@ function renderGuardian(profiles) {
       card.append(el('p', { class: 'guardian-paused',
         text: 'Gesperrt \u2014 Anrufen und Nachrichten gehen weiter.' }));
     }
+    if (tasks) card.append(tasks);
     card.append(guardianPauseButton(child));
     if (hasLimit) card.append(guardianTimeButtons(child));
     return card;
-  });
+  }));
 }
 
 /* "Heute 40 min von 45 min (15 min weniger)": the day against the limit in force, with today's
@@ -2337,6 +2549,7 @@ function appStatusText(a, screen) {
     : a.rule === 'ALLOW' ? 'Always free'
     : !a.rule && a.free_by_default ? 'Always free (preinstalled)'
       : a.rule === 'BLOCK' ? 'Blocked by you'
+        : a.rule === 'BONUS' ? 'Bonus app, runs only on earned time'
         : (a.limit_minutes || 0) > 0 ? 'Own limit ' + fmtMinutes(a.limit_minutes) + ' a day, and counts toward the daily limit'
           : 'Counts toward the daily limit';
   const now = screen && screen.is_today && BLOCKED_TEXT[a.blocked] ? ' · now: ' + BLOCKED_TEXT[a.blocked] : '';

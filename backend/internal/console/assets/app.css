@@ -30,6 +30,9 @@
   --ok: #1c7f4b;
   --warn: #a86400;
   --danger: #b3261e;
+  /* Bonuszeit (FR-22): gold on the phone and here, so a child and a parent learn one colour for
+     earned time. Dark enough to read as text: 5.5:1 on a card, 5.1:1 on the page (dark: 10.2:1). */
+  --gold: #8a6100;
   --radius: 14px;
   --tap: 44px;
   --gap: 12px;
@@ -50,6 +53,7 @@
     --ok: #56d199;
     --warn: #f0b355;
     --danger: #ff8a80;
+    --gold: #f2c14e;
   }
 }
 
@@ -588,7 +592,7 @@ input[type="checkbox"] { width: auto; min-height: auto; }
 .applist .seg,
 .applist .app-choice { width: 100%; }
 
-/* The category control is five buttons where it used to be three (FR-5.8), so the labels get less
+/* The category control is six buttons where it used to be three (FR-5.8, FR-22), so the labels get less
    room each. They are shortened rather than truncated: a segmented control that clips its own
    options is one whose choices a parent has to guess at, and the full sentence for each lives in
    the button's title. */
@@ -825,3 +829,31 @@ input[type="checkbox"] { width: auto; min-height: auto; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ---- the daily plan (FR-22) ----------------------------------------------- */
+
+/* One group per block, divided by a rule rather than nested cards: a card inside a card on a 360 px
+   phone spends a quarter of the width on borders and padding. */
+.plan-group { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.plan-group:first-child { padding-top: 0; }
+/* Seven 44 px day buttons need 316 px and a card on a 360 px phone has 304, so a phone gets two rows
+   of four; from 480 px they fit on one. A row of 43 px buttons would pass by eye and miss thumbs. */
+.plan-days { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.plan-days .btn { padding: 10px 4px; font-size: 0.9rem; }
+.plan-days .btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+@media (min-width: 480px) { .plan-days { grid-template-columns: repeat(7, 1fr); } }
+/* From and To side by side; a time field has a native minimum width, and three to a row pushed the
+   third past the edge of a phone. */
+.plan-times > div:last-child { grid-column: 1 / -1; }
+/* Task and note share the row; the remove control keeps a full tap target at the end of it. */
+.plan-task { grid-template-columns: 3fr 2fr auto; align-items: center; }
+.plan-task .btn { min-width: var(--tap); padding: 0; }
+
+/* Bonuszeit, and the queue of reported tasks. */
+.earned { color: var(--gold); font-weight: 600; margin: 0; }
+.earned.debt { color: var(--danger); }
+.guardian-tasks .list li { padding: 6px 0; }
+/* The task on one line, its state under it — as the other lists put a name over its detail. */
+.guardian-tasks .label > span { display: block; }
+.waiting-card .list li { flex-wrap: wrap; }
+.waiting-card .list li .label { flex: 1 1 12rem; }
