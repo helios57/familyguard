@@ -18,6 +18,12 @@ data class EarnedContext(
     val paused: Boolean,
     /** What is left of today's budget, in ms; [Long.MAX_VALUE] with no daily limit. */
     val budgetLeftMs: Long,
+    /**
+     * Whether earned time is being spent at all: there is some left, and the phone enforces. False
+     * in watch-only mode and with none left — then nothing is charged, because nothing could pay,
+     * and a charge would only become a debt against minutes the child has not yet earned.
+     */
+    val spending: Boolean = true,
 )
 
 /**
@@ -35,7 +41,7 @@ object EarnedAttribution {
 
     fun attribute(window: Map<String, Long>, ctx: EarnedContext): Map<String, Long> {
         // Paused, nothing that costs earned time can run: what runs is exempt.
-        if (ctx.paused) return emptyMap()
+        if (ctx.paused || !ctx.spending) return emptyMap()
         val gold = LinkedHashMap<String, Long>()
         val governed = LinkedHashMap<String, Long>()
         var counted = 0L
@@ -87,6 +93,7 @@ object EarnedAttribution {
                 state.earnedActive == EnforcementEngine.REASON_BEDTIME,
             paused = state.suspendReason == EnforcementEngine.REASON_PAUSED,
             budgetLeftMs = budgetLeft,
+            spending = !input.settings.trackingOnly && state.earnedMinutesLeft > 0,
         )
     }
 }

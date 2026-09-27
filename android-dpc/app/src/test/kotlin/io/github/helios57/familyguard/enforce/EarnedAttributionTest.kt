@@ -114,6 +114,29 @@ class EarnedAttributionTest {
         assertTrue(engineContext(Settings(timezone = "Europe/Zurich", paused = true)).paused)
     }
 
+    /**
+     * Measured on a family phone on 2026-09-27: in watch-only mode, with no plan and no earned time
+     * at all, the phone charged its use past the daily limit as earned time. Nothing was enforced and
+     * nothing could pay, so it became a debt that would silently have eaten the next minutes the
+     * child earned. Earned time is charged only while the engine says there is some.
+     */
+    @Test
+    fun `with no earned time to spend, time past the budget is not charged as a debt`() {
+        val window = mapOf(GAME to 5 * min)
+        val none = engineContext(Settings(timezone = "Europe/Zurich", dailyLimitMinutes = 60), used = 90)
+        assertEquals(emptyMap<String, Long>(), EarnedAttribution.attribute(window, none))
+        // Control: the same window with earned time to spend is paid from it.
+        val some = engineContext(Settings(timezone = "Europe/Zurich", dailyLimitMinutes = 60, earnedAvailableMinutes = 30), used = 90)
+        assertEquals(mapOf(GAME to 5 * min), EarnedAttribution.attribute(window, some))
+    }
+
+    @Test
+    fun `in watch-only mode nothing is earned time, because nothing is enforced`() {
+        val watch = engineContext(Settings(timezone = "Europe/Zurich", trackingOnly = true, dailyLimitMinutes = 60,
+            earnedAvailableMinutes = 30, bonusPackages = listOf(MOVIES)), used = 90)
+        assertEquals(emptyMap<String, Long>(), EarnedAttribution.attribute(mapOf(GAME to 5 * min, MOVIES to 5 * min), watch))
+    }
+
     private companion object {
         const val DAY = "2026-09-28"
         const val GAME = "com.example.game"
