@@ -7528,3 +7528,19 @@ one green that found an uncovered case (13).**
 
 Read-only check before the change: the live family has one parent, a `PRIMARY_ADMIN`, so restricting
 `GUARDIAN` took access from nobody.
+
+**The final review found one more leak, fixed before release (4eb4b77).** The desired state is on the
+guardian allowlist, but the endpoint also returned `input` — the child's installed apps, the minutes
+per app and every rule — which `/devices/:id/apps` and `/usage` refuse a guardian. The allowlist was
+routes; the leak was a field. A guardian now gets `desired` only, an admin both; the matrix test went
+red on it first and asserts the admin keeps it.
+
+Deployed 2026-09-27 as 0.6.18. The control plane runs image
+`sha256:5b162641…d447` (one pod, `/readyz` 200); `/dpc.apk` is byte-identical to the signed
+`familyguard-0.6.18-versionCode-27.apk` (`b6236881…ff79`, signer `b62cda94…8e10`). Read back live with
+the owner's API key: the key is `PRIMARY_ADMIN`, the family still has exactly that one parent,
+`PATCH /parents/:id` answers `403 api_key_forbidden` (for an unknown id as well, so the route exists
+and refuses keys), and the served `app.js` carries People & rights and the guardian view while an
+impossible string counts 0. `UPDATE_APP` was queued for the family phone and not yet taken: the phone
+was asleep (FR-19.8). Nothing in this phase changes the phone's behaviour; the new build is a version
+bump there.
