@@ -77,6 +77,8 @@ data class PolicyResponse(
     @SerialName("input") val input: Input = Input(),
     /** FR-22: the day as the plan sees it — the Heute screen's tasks and earned time. */
     @SerialName("today") val today: io.github.helios57.familyguard.plan.DayPlan? = null,
+    /** FR-23: the alarm rule, kept so the phone rings with no connection. */
+    @SerialName("alarm") val alarm: io.github.helios57.familyguard.alarm.AlarmSchedule? = null,
 )
 
 @Serializable

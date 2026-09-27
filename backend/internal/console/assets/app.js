@@ -766,6 +766,9 @@ function deviceCard(dev, desired) {
     // Settings and a second day of waiting to find out. Order the remedies; do not hide one.
     st.exact_alarms === false
       && el('span', { class: 'badge warn', text: 'alarms not exact' }),
+    // FR-23.4: the alarm clock still rings, but as a notification rather than over the lock screen.
+    st.alarm_full_screen === false
+      && el('span', { class: 'badge warn', text: 'alarm: notification only', title: 'Android does not let FamilyGuard show the alarm over the lock screen on this phone. It still rings, with Stop and Snooze in the notification.' }),
     // FR-6.10. Three states, and the third is why this is not a boolean: `true` is a tunnel the
     // phone has confirmed is up, `false` is one it says is down, and `undefined` is a phone that
     // has not reported — an older DPC, or a Play build, which carries no filter at all to report
@@ -1099,11 +1102,12 @@ async function showRecovery(dev) {
 /* ---- rules -------------------------------------------------------------- */
 
 async function loadRules() {
-  const [policy, domains, devices, plan] = await Promise.all([
+  const [policy, domains, devices, plan, alarm] = await Promise.all([
     api('/children/' + state.childId + '/policy'),
     api('/children/' + state.childId + '/blocked-domains'),
     api('/devices?child_id=' + encodeURIComponent(state.childId)),
     api('/children/' + state.childId + '/plan'),
+    api('/children/' + state.childId + '/alarm'),
   ]);
   const groups = plan.groups || [];
   // The draft survives a re-read while it holds unsaved edits: a heartbeat arriving between two
@@ -1112,11 +1116,109 @@ async function loadRules() {
   if (!draft || draft.childId !== state.childId || !draft.dirty) {
     state.planDraft = { childId: state.childId, dirty: false, groups: clonePlan(groups) };
   }
+  // Same rule as the plan: an alarm week with unsaved edits survives a background re-read.
+  const week = state.alarmDraft;
+  if (!week || week.childId !== state.childId || !week.dirty) {
+    state.alarmDraft = { childId: state.childId, dirty: false, weekdays: (alarm.weekdays || []).slice() };
+  }
   return {
     policy,
     domains: domains.domains || [],
     enrolled: (devices.devices || []).some((d) => d.enrolled),
+    alarm,
   };
+}
+
+/* ---- the alarm clock (FR-23.6) -------------------------------------------- */
+
+/* `YYYY-MM-DD` plus days in the profile's timezone. Intl gives the date parts in that zone; the
+   arithmetic is then done on the calendar date in UTC, where a day is always a day. */
+function dayInZone(timezone, plusDays) {
+  let parts;
+  try {
+    parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone || undefined, year: 'numeric', month: '2-digit', day: '2-digit' })
+      .format(new Date());
+  } catch (e) {
+    parts = new Date().toISOString().slice(0, 10);
+  }
+  return shiftDay(parts, plusDays);
+}
+
+/* The week, Monday first: a switch and a time per day, saved together. Below it one date can be
+   changed — "no alarm" or another time — and the changes already set are listed with Remove. */
+function alarmCard(data) {
+  const draft = state.alarmDraft;
+  const tz = data.policy.timezone;
+  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const rows = days.map((name, i) => {
+    const time = el('input', {
+      type: 'time', value: draft.weekdays[i] || '07:00', 'data-alarm': 'time', 'aria-label': name + ' alarm time',
+      disabled: !draft.weekdays[i],
+      oninput: (e) => { draft.weekdays[i] = e.target.value; draft.dirty = true; },
+    });
+    const on = el('input', {
+      type: 'checkbox', checked: !!draft.weekdays[i], 'data-alarm': 'on', 'aria-label': name + ' alarm on',
+      onchange: (e) => {
+        draft.weekdays[i] = e.target.checked ? (time.value || '07:00') : '';
+        time.disabled = !e.target.checked;
+        draft.dirty = true;
+      },
+    });
+    return el('div', { class: 'alarm-day', 'data-day': String(i) },
+      el('label', { class: 'alarm-on' }, on, el('span', { text: name })), time);
+  });
+  const saveWeek = async () => {
+    const saved = await act('Alarm saved', () =>
+      api('/children/' + state.childId + '/alarm', { method: 'PUT', body: { weekdays: draft.weekdays } }));
+    if (!saved) return;
+    state.alarmDraft = { childId: state.childId, dirty: false, weekdays: saved.weekdays.slice() };
+    state.data.alarm = saved;
+    redraw();
+  };
+
+  const tomorrow = dayInZone(tz, 1);
+  const dayInput = el('input', { type: 'date', value: tomorrow, min: dayInZone(tz, 0), max: dayInZone(tz, 60), 'data-alarm': 'day', 'aria-label': 'Date' });
+  const dayTime = el('input', { type: 'time', value: '07:00', 'data-alarm': 'day-time', 'aria-label': 'Alarm time on that date' });
+  const setDay = async (time) => {
+    const day = dayInput.value;
+    if (!day) return;
+    const ok = await tried(time ? 'Alarm on ' + day + ' at ' + time : 'No alarm on ' + day, () =>
+      api('/children/' + state.childId + '/alarm/days/' + day, { method: 'PUT', body: { time } }));
+    if (ok) refresh();
+  };
+  const changes = (data.alarm.overrides || []).map((o) => el('li', {},
+    el('span', { class: 'label' }, el('b', { text: fmtDate(o.day) }),
+      el('small', { text: o.time ? 'rings at ' + o.time : 'no alarm' })),
+    el('button', {
+      class: 'btn btn-quiet', type: 'button', text: 'Remove', 'data-alarm': 'day-clear', 'data-date': o.day,
+      'aria-label': 'Return ' + o.day + ' to the week',
+      onclick: async () => {
+        const ok = await tried('Back to the week on ' + o.day, () =>
+          api('/children/' + state.childId + '/alarm/days/' + o.day, { method: 'DELETE' }));
+        if (ok) refresh();
+      },
+    })));
+
+  return el('div', { class: 'card full alarm-card' },
+    el('div', { class: 'card-head' }, el('h2', { text: 'Alarm clock' })),
+    el('p', { class: 'muted', text: 'Rings on the phone at these times, with no connection needed. The child can stop it or snooze it for five minutes, but not change it. Times are in ' + (tz || 'the profile\u2019s time zone') + '.' }),
+    el('div', { class: 'alarm-week' }, rows),
+    el('button', { class: 'btn btn-primary', type: 'button', text: 'Save alarm', 'data-alarm': 'save', onclick: saveWeek }),
+    el('h3', { text: 'One date' }),
+    el('div', { class: 'field-row' }, dayInput, dayTime),
+    el('div', { class: 'row' },
+      el('button', { class: 'btn', type: 'button', text: 'Ring at this time', 'data-alarm': 'day-set', onclick: () => setDay(dayTime.value) }),
+      el('button', { class: 'btn', type: 'button', text: 'No alarm that day', 'data-alarm': 'day-off', onclick: () => setDay(null) })),
+    changes.length
+      ? el('ul', { class: 'list alarm-changes' }, changes)
+      : el('p', { class: 'muted alarm-changes', text: 'No date changes \u2014 every day follows the week.' }));
+}
+
+/* "Mon 28.9." for a YYYY-MM-DD, read as a calendar date and never through Date's ISO parser. */
+function fmtDate(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const at = new Date(y, m - 1, d);
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][at.getDay()] + ' ' + d + '.' + m + '.';
 }
 
 /* ---- the daily plan (FR-22) ---------------------------------------------- */
@@ -1354,7 +1456,7 @@ function renderRules(data) {
         : 'Without a list there is nothing to filter, so the switch above does nothing until one is set. Any AdGuard- or hosts-style list works.' })),
     el('p', { class: 'muted', text: 'The phone routes its own traffic through FamilyGuard to do this, and blocks by name only — it never reads the contents of a connection. Some games that pay themselves with adverts stop at the point where the advert would play; that is the trade.' }));
 
-  const cards = [rules, bedtime, planCard(), domains, adfilter];
+  const cards = [rules, bedtime, planCard(), alarmCard(data), domains, adfilter];
   // Rules are a property of the child and are saved whether or not a phone exists to carry them, so
   // this screen stays fully usable — it just says so, rather than letting a parent set a bedtime and
   // wonder why nothing happened.

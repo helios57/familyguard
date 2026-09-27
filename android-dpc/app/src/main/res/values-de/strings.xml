@@ -51,4 +51,13 @@
     <string name="earned_debt">Bonuszeit: %1$d Min. im Minus</string>
     <string name="block_earned">Nur mit Bonuszeit</string>
     <string name="rule_bonus">Bonus-App — läuft nur mit Bonuszeit</string>
+    <!-- FR-23: der Wecker. -->
+    <string name="alarm_channel">Wecker</string>
+    <string name="alarm_title">Wecker</string>
+    <string name="alarm_text">Zeit zum Aufstehen.</string>
+    <string name="alarm_stop">Stopp</string>
+    <string name="alarm_snooze">Schlummern 5 Min.</string>
+    <string name="alarm_next_today">Wecker: heute %1$s</string>
+    <string name="alarm_next_tomorrow">Wecker: morgen %1$s</string>
+    <string name="alarm_next_day">Wecker: %1$s %2$s</string>
 </resources>

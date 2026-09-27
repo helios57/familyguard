@@ -207,4 +207,13 @@
     <string name="earned_debt">Earned time: %1$d min overdrawn</string>
     <string name="block_earned">Only with earned time</string>
     <string name="rule_bonus">Bonus app — runs only on earned time</string>
+    <!-- FR-23: the alarm clock. -->
+    <string name="alarm_channel">Alarm clock</string>
+    <string name="alarm_title">Alarm</string>
+    <string name="alarm_text">Time to get up.</string>
+    <string name="alarm_stop">Stop</string>
+    <string name="alarm_snooze">Snooze 5 min</string>
+    <string name="alarm_next_today">Alarm: today %1$s</string>
+    <string name="alarm_next_tomorrow">Alarm: tomorrow %1$s</string>
+    <string name="alarm_next_day">Alarm: %1$s %2$s</string>
 </resources>

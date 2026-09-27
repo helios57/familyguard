@@ -219,6 +219,17 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 	byParent("TASK_UNDONE", "child", child.ID)
 	byParent("EARNED_TIME_WITHDRAWN", "child", child.ID)
 
+	// ---- the alarm clock (FR-23) ----
+	h.call(http.MethodPut, "/children/"+child.ID+"/alarm", parent.Token,
+		map[string]any{"weekdays": []string{"06:30", "06:30", "06:30", "06:30", "06:30", "", ""}}).expect(http.StatusOK)
+	byParent("ALARM_UPDATED", "child", child.ID)
+	h.call(http.MethodPut, "/children/"+child.ID+"/alarm/days/"+zurichDay(1), parent.Token,
+		map[string]any{"time": nil}).expect(http.StatusOK)
+	byParent("ALARM_DAY_SET", "child", child.ID)
+	h.call(http.MethodDelete, "/children/"+child.ID+"/alarm/days/"+zurichDay(1), parent.Token, nil).
+		expect(http.StatusNoContent)
+	byParent("ALARM_DAY_CLEARED", "child", child.ID)
+
 	// ---- commands: issued by a parent, acknowledged by the phone ----
 	//
 	// Two of them, because the device-side action name is *computed* — `"COMMAND_"+cmd.State` — so

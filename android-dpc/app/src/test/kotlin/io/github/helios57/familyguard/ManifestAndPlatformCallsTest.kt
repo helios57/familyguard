@@ -632,7 +632,8 @@ class ManifestAndPlatformCallsTest {
                 "the one-tap route to the background-activity switch",
             // The siren's vibration (FR-9). A lost phone is usually a silenced phone, so this is the
             // half of "make it findable" that survives a muted ringer.
-            "android.permission.VIBRATE" to "the find-my-phone siren",
+            "android.permission.VIBRATE" to "the find-my-phone siren, and the alarm clock (FR-23.4)",
+            "android.permission.USE_FULL_SCREEN_INTENT" to "the alarm clock over the lock screen (FR-23.4)",
             // "Locate now" (FR-9), granted to itself as device owner. COARSE is declared alongside
             // FINE because Android 12 answers a FINE-only request with COARSE when the user picks
             // approximate location, and an app that never declared COARSE then gets nothing at all.

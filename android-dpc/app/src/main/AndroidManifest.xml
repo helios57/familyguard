@@ -141,6 +141,13 @@
       room, which is not where a phone goes missing.
     -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!--
+      FR-23: the alarm clock takes over the lock screen when it rings. On Android 14 and later this is
+      a special access the platform may withhold from an app that is not an alarm or calling app; the
+      phone reads NotificationManager.canUseFullScreenIntent() and reports it, and without it the alarm
+      still rings, as a high-priority notification with the sound.
+    -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <!--
       "Locate now" (FR-9). Both are declared because from Android 12 a request for FINE alone is
@@ -388,6 +395,39 @@
             </intent-filter>
         </receiver>
 
+        <!--
+          FR-23, the alarm clock. None exported: the fire receiver is reached through this app's own
+          PendingIntent, the time receiver by protected system broadcasts only, the service and the
+          screen by this app. The screen reads nothing from its Intent.
+        -->
+        <receiver
+            android:name=".alarm.AlarmFireReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".alarm.TimeChangeReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name=".alarm.AlarmRingService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="The child's alarm clock, set by a parent: plays the alarm tone and shows
+                    the alarm over the lock screen until it is stopped or snoozed." />
+        </service>
+        <activity
+            android:name=".alarm.AlarmActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.FamilyGuard" />
     </application>
 
 </manifest>

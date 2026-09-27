@@ -151,7 +151,7 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 		        COALESCE(s.app_version_name, ''), COALESCE(s.app_version_code, 0), s.usage_access,
 		        COALESCE(s.update_error, ''), s.update_error_at, s.power_exempt, s.exact_alarms,
 		        s.ad_filter_rules, s.ad_filter_fetched_at, s.ad_filter_running,
-		        COALESCE(s.ad_filter_reason, '')
+		        COALESCE(s.ad_filter_reason, ''), s.alarm_full_screen
 		   FROM devices d
 		   LEFT JOIN device_state s ON s.device_id = d.id
 		  WHERE ($1::uuid IS NULL OR d.child_id = $1)
@@ -173,7 +173,7 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 			&d.State.UpdateError, &d.State.UpdateErrorAt,
 			&d.State.PowerExempt, &d.State.ExactAlarms,
 			&d.State.AdFilterRules, &d.State.AdFilterFetchedAt, &d.State.AdFilterRunning,
-			&d.State.AdFilterReason); err != nil {
+			&d.State.AdFilterReason, &d.State.AlarmFullScreen); err != nil {
 			return nil, err
 		}
 		d.State.DeviceID = d.ID
@@ -230,10 +230,10 @@ func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceSt
 		                           app_version_name, app_version_code, usage_access, update_error,
 		                           power_exempt, exact_alarms,
 		                           ad_filter_rules, ad_filter_fetched_at, ad_filter_running,
-		                           ad_filter_reason,
+		                           ad_filter_reason, alarm_full_screen,
 		                           update_error_at, last_seen_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, ''), $11, $12, $13, $14, $15,
-		         COALESCE($16, ''),
+		         COALESCE($16, ''), $17,
 		         CASE WHEN COALESCE($10, '') = '' THEN NULL ELSE NOW() END, NOW(), NOW())
 		 ON CONFLICT (device_id) DO UPDATE SET
 		     battery_level  = COALESCE(EXCLUDED.battery_level, device_state.battery_level),
@@ -258,6 +258,8 @@ func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceSt
 		     -- the diagnosis rather than the symptom.
 		     power_exempt   = COALESCE(EXCLUDED.power_exempt, device_state.power_exempt),
 		     exact_alarms   = COALESCE(EXCLUDED.exact_alarms, device_state.exact_alarms),
+		     -- FR-23.4, the same rule: an older build's silence must not clear a measured false.
+		     alarm_full_screen = COALESCE(EXCLUDED.alarm_full_screen, device_state.alarm_full_screen),
 		     -- Same COALESCE rule again. A zero here is a real measurement — a phone whose filter
 		     -- is on and whose list compiled to nothing — and it must survive an older build's
 		     -- heartbeat, because it is the one number that separates "the filter is on" from
@@ -289,7 +291,8 @@ func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceSt
 		deviceID, st.BatteryLevel, st.Charging, st.ScreenOn, st.Connectivity, st.PolicyVersion,
 		st.AppVersionName, st.AppVersionCode, st.UsageAccess, st.ReportedUpdateError,
 		st.PowerExempt, st.ExactAlarms,
-		st.AdFilterRules, st.AdFilterFetchedAt, st.AdFilterRunning, st.ReportedAdFilterReason)
+		st.AdFilterRules, st.AdFilterFetchedAt, st.AdFilterRunning, st.ReportedAdFilterReason,
+		st.AlarmFullScreen)
 	return err
 }
 
@@ -313,12 +316,13 @@ func (s *Store) GetDeviceState(ctx context.Context, deviceID uuid.UUID, offlineA
 		`SELECT device_id, battery_level, charging, screen_on, connectivity, policy_version, last_seen_at,
 		        app_version_name, app_version_code, usage_access, update_error, update_error_at,
 		        power_exempt, exact_alarms, ad_filter_rules, ad_filter_fetched_at, ad_filter_running,
-		        COALESCE(ad_filter_reason, '')
+		        COALESCE(ad_filter_reason, ''), alarm_full_screen
 		   FROM device_state WHERE device_id = $1`, deviceID).
 		Scan(&st.DeviceID, &st.BatteryLevel, &st.Charging, &st.ScreenOn, &st.Connectivity,
 			&st.PolicyVersion, &st.LastSeenAt, &st.AppVersionName, &st.AppVersionCode,
 			&st.UsageAccess, &st.UpdateError, &st.UpdateErrorAt, &st.PowerExempt, &st.ExactAlarms,
-			&st.AdFilterRules, &st.AdFilterFetchedAt, &st.AdFilterRunning, &st.AdFilterReason)
+			&st.AdFilterRules, &st.AdFilterFetchedAt, &st.AdFilterRunning, &st.AdFilterReason,
+			&st.AlarmFullScreen)
 	if err != nil {
 		return nil, mapErr(err)
 	}

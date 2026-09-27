@@ -45,6 +45,15 @@
                 android:text="@string/today_heading"
                 android:textAppearance="?attr/textAppearanceHeadlineSmall" />
 
+            <!-- FR-23.5: the next alarm, first thing under the heading. -->
+            <TextView
+                android:id="@+id/today_alarm"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textAppearance="?attr/textAppearanceTitleMedium"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/today_summary"
                 android:layout_width="match_parent"

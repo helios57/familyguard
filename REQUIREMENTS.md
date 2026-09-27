@@ -688,7 +688,9 @@ bedtime, then the daily budget.
 - FR-22.5 **Spending** is attributed on the phone, per measured window, as it is measured: a minute of
   a bonus app, a minute inside bedtime, and a minute after the daily budget is spent are paid in
   earned time; always-free, preinstalled-free, critical and uncounted apps never are. A minute paid
-  in earned time does not also count against the budget.
+  in earned time does not also count against the budget. Nothing is charged while there is no earned
+  time left or the profile is in watch-only mode: nothing could pay, and a charge would only become a
+  debt against minutes not yet earned (measured on a family phone in watch-only mode, 2026-09-27).
 - FR-22.6 **Bonus apps** are the fifth answer on the Apps tab (rule `BONUS`): suspended whenever no
   earned time is left, whatever the hour — the console says *Paused — no earned time left* (reason
   `EARNED`) — and usable while there is some, even in bedtime or past the limit.
@@ -700,6 +702,36 @@ bedtime, then the daily budget.
 A profile has an alarm time per weekday, a one-off override for the next day and an option to stay
 silent in holidays. It rings on the phone with no connection, through Doze, as a full-screen alarm the
 child can stop or snooze but not reschedule.
+
+- FR-23.1 **The week** (`GET|PUT /children/:id/alarm`, admins): seven entries, Monday first, each
+  `HH:MM` or `""` for a day with no alarm. Audited as `ALARM_UPDATED`. The phone is sent the rule and
+  the profile's timezone beside its policy (`alarm`), never an instant, and computes the next ring
+  itself — so it rings offline and across a change of timezone or daylight saving.
+- FR-23.2 **A change for one date** (`PUT|DELETE /children/:id/alarm/days/:day`, admins): a time, or
+  `null` for no alarm that day, from today up to 60 days ahead in the profile's calendar; a past day,
+  a later one and an impossible date are refused. One change per day; removing it returns the day to
+  the week. Audited as `ALARM_DAY_SET` / `ALARM_DAY_CLEARED`. The phone is sent the changes from today
+  on.
+- FR-23.3 **Booking.** The phone computes the next ring from the rule — a date change before the
+  week; a time a spring-forward day skips rings when the clock resumes, one a fall-back day repeats
+  rings once — and books it with `AlarmManager.setAlarmClock`, the alarm the platform delivers on time
+  in Doze and shows in the status bar and on the lock screen. It re-books after a new rule, a ring, a
+  snooze, a stop, a reboot, an update of the app and a change of time or timezone. The rule and the
+  ring state live in credential-encrypted storage, so a phone restarted overnight and not yet
+  unlocked books nothing until it is unlocked.
+- FR-23.4 **Ringing.** The alarm tone on the alarm stream, looping, with vibration, for at most ten
+  minutes; the alarm stream is raised to at least half while it rings and restored after when its
+  level could be read. A full-screen alarm over the lock screen offers *Stopp* and *Schlummern 5 Min.*;
+  where the platform withholds the full-screen intent the same controls come as a high-priority
+  notification, and the sound is the same. Nothing on the phone changes the schedule.
+- FR-23.5 **The Heute screen** says the next alarm first: *Wecker: heute 06:30*, *morgen 06:30*, or
+  the weekday.
+- FR-23.6 The console's Rules tab has an *Alarm clock* card (the week; one date set to a time or to no
+  alarm; the date changes listed with *Remove*), and a device card says *alarm: notification only*
+  when the phone reports that it may not take over the lock screen (`alarm_full_screen: false`).
+  `fgctl alarm <child> [--set file.json]`, `fgctl alarm-day <child> <date|today|tomorrow>
+  <HH:MM|off|clear>` — today and tomorrow in the profile's timezone — and the MCP tools `get_alarm`,
+  `set_alarm` and `set_alarm_day` do the same.
 
 ### FR-24 Agenda (phase 5)
 A profile has recurring and single agenda entries, any of them optional, and the family has holidays

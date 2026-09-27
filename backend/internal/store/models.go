@@ -175,6 +175,11 @@ type DeviceState struct {
 	PowerExempt *bool `json:"power_exempt,omitempty"`
 	ExactAlarms *bool `json:"exact_alarms,omitempty"`
 
+	// AlarmFullScreen is whether the phone may show the alarm clock over the lock screen (FR-23.4).
+	// Android 14 and later can withhold it from an app that is not an alarm or calling app; the alarm
+	// then rings as a notification. Nil is a phone that has not said.
+	AlarmFullScreen *bool `json:"alarm_full_screen,omitempty"`
+
 	// AdFilterRules, AdFilterFetchedAt and AdFilterRunning are what the PHONE says about its ad
 	// filter (FR-6.6), which is a different question from Policy.AdFilter — that one says a parent
 	// turned the switch on.

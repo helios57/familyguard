@@ -582,6 +582,7 @@ class ConnectionService : Service() {
             localEarnedMinutes = { input -> reports.earnedMinutesToday(input) },
             onEnforced = { input, state -> reports.enforced(input, state) },
             dayPlans = io.github.helios57.familyguard.plan.EncryptedDayPlanStore(this),
+            onAlarm = { io.github.helios57.familyguard.alarm.AlarmClock.update(this, it) },
         )
         journal = recoveryJournal
         // Published before the first sync, so an alarm that fires during it waits on `syncLock`

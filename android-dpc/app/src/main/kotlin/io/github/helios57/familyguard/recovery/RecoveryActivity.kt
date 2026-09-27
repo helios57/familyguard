@@ -98,6 +98,7 @@ class RecoveryActivity : AppCompatActivity() {
     private lateinit var todayApps: LinearLayout
     // FR-22: earned time, the day's tasks, and what happened to the last "Fertig".
     private lateinit var todayEarned: TextView
+    private lateinit var todayAlarm: TextView
     private lateinit var todayPlan: LinearLayout
     private lateinit var todayPlanStatus: TextView
 
@@ -130,6 +131,7 @@ class RecoveryActivity : AppCompatActivity() {
         todayWhy = findViewById(R.id.today_why)
         todayApps = findViewById(R.id.today_apps)
         todayEarned = findViewById(R.id.today_earned)
+        todayAlarm = findViewById(R.id.today_alarm)
         todayPlan = findViewById(R.id.today_plan)
         todayPlanStatus = findViewById(R.id.today_plan_status)
 
@@ -423,9 +425,37 @@ class RecoveryActivity : AppCompatActivity() {
                 runCatching { TodayReportReader.read(this@RecoveryActivity) }.getOrNull() to
                     runCatching { EncryptedDayPlanStore(this@RecoveryActivity).load() }.getOrNull()
             }
+            val alarm = withContext(Dispatchers.IO) {
+                runCatching {
+                    val store = io.github.helios57.familyguard.alarm.EncryptedAlarmStore(this@RecoveryActivity)
+                    val schedule = store.schedule() ?: return@runCatching null
+                    val now = java.time.Instant.now()
+                    io.github.helios57.familyguard.alarm.AlarmBooking.next(schedule, now, store.state())
+                        ?.let { io.github.helios57.familyguard.alarm.AlarmLine.of(schedule, it, now) }
+                }.getOrNull()
+            }
             renderToday(report)
+            renderAlarm(alarm)
             renderPlan(plan, report)
         }
+    }
+
+    /** FR-23.5: the next alarm, as the child reads it — today, tomorrow, or the weekday. */
+    private fun renderAlarm(line: io.github.helios57.familyguard.alarm.AlarmLine?) {
+        if (line == null) {
+            todayAlarm.visibility = View.GONE
+            return
+        }
+        todayAlarm.text = when (line.day) {
+            io.github.helios57.familyguard.alarm.AlarmLine.Day.TODAY -> getString(R.string.alarm_next_today, line.time)
+            io.github.helios57.familyguard.alarm.AlarmLine.Day.TOMORROW -> getString(R.string.alarm_next_tomorrow, line.time)
+            io.github.helios57.familyguard.alarm.AlarmLine.Day.LATER -> getString(
+                R.string.alarm_next_day,
+                line.weekday.getDisplayName(java.time.format.TextStyle.SHORT, resources.configuration.locales[0]),
+                line.time,
+            )
+        }
+        todayAlarm.visibility = View.VISIBLE
     }
 
     /**

@@ -129,6 +129,9 @@ class Synchronizer(
 
     /** Where the day's plan the server sent is kept for the Heute screen (FR-22). */
     private val dayPlans: io.github.helios57.familyguard.plan.DayPlanStore? = null,
+
+    /** Given the alarm rule the server sent, to keep and to book the next ring from (FR-23.3). */
+    private val onAlarm: (io.github.helios57.familyguard.alarm.AlarmSchedule) -> Unit = {},
 ) {
 
     /** Per package, the larger of the two. See [localUsedMinutesByPackage] for why it is a max. */
@@ -154,6 +157,7 @@ class Synchronizer(
             // re-applying costs a few platform calls and never a wrong state.
             cache.save(response.input)
             response.today?.let { dayPlans?.save(it) }
+            response.alarm?.let(onAlarm)
             // Stamped here — on receipt — and nowhere else. Not in `applyFrom`, which also runs for
             // a cached policy and would then report a phone that has not seen the server in a week
             // as having reached it a minute ago; and not after the apply, because a policy that

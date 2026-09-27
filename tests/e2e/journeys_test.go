@@ -70,6 +70,8 @@ type deviceStateDTO struct {
 	// as UsageAccess, and separate from each other because they are separate switches.
 	PowerExempt *bool `json:"power_exempt"`
 	ExactAlarms *bool `json:"exact_alarms"`
+	// FR-23.4: whether the phone may show the alarm over the lock screen.
+	AlarmFullScreen *bool `json:"alarm_full_screen"`
 
 	// Why the last self-update did not install anything, in the platform's own words (FR-15.7).
 	// Empty is "nothing to report", which is also what an older DPC that cannot report sends.

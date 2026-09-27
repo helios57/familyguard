@@ -26,5 +26,7 @@ class BootReceiver : BroadcastReceiver() {
         // credential is stored and the extras are irrelevant — or never did, in which case the
         // enrollment token in the QR was single-use and is long spent.
         ConnectionService.start(context, null)
+        // FR-23.3: the platform forgets every booked alarm at a reboot.
+        io.github.helios57.familyguard.alarm.AlarmClock.rebook(context)
     }
 }

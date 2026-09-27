@@ -142,6 +142,8 @@ type heartbeatRequest struct {
 	// above it: a phone that has not been updated must not be able to clear a finding.
 	PowerExempt *bool `json:"power_exempt"`
 	ExactAlarms *bool `json:"exact_alarms"`
+	// AlarmFullScreen is FR-23.4's report: whether the alarm may take over the lock screen.
+	AlarmFullScreen *bool `json:"alarm_full_screen"`
 
 	// AdFilterRules, AdFilterFetchedAt and AdFilterRunning are what the phone measured about its
 	// own ad filter (FR-6.6) — how many rules it has compiled, when it fetched them, and whether
@@ -265,11 +267,12 @@ func (s *Server) heartbeat(c *gin.Context) {
 		Connectivity:  req.Connectivity,
 		PolicyVersion: req.PolicyVersion,
 
-		AppVersionName: strings.TrimSpace(req.AppVersionName),
-		AppVersionCode: req.AppVersionCode,
-		UsageAccess:    req.UsageAccess,
-		PowerExempt:    req.PowerExempt,
-		ExactAlarms:    req.ExactAlarms,
+		AppVersionName:  strings.TrimSpace(req.AppVersionName),
+		AppVersionCode:  req.AppVersionCode,
+		UsageAccess:     req.UsageAccess,
+		PowerExempt:     req.PowerExempt,
+		ExactAlarms:     req.ExactAlarms,
+		AlarmFullScreen: req.AlarmFullScreen,
 
 		AdFilterRules:     clampRuleCount(req.AdFilterRules),
 		AdFilterFetchedAt: parseReportedTime(req.AdFilterFetchedAt),
@@ -327,7 +330,13 @@ func (s *Server) devicePolicy(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"desired": state, "input": input, "today": today})
+	// FR-23: the alarm rule, so the phone rings with no connection.
+	alarm, err := s.deviceAlarm(c.Request.Context(), dev.ChildID)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"desired": state, "input": input, "today": today, "alarm": alarm})
 }
 
 // deviceCommands hands over the queued commands and records that it did.

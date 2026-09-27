@@ -251,6 +251,11 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.PUT("/children/:id/plan", admins, s.putPlan)
 	p.GET("/children/:id/today", everyone, s.getToday)
 	p.POST("/children/:id/tasks/:task/decision", everyone, s.decideTask)
+	// FR-23: the alarm clock. Admins only — the guardian window does not show it.
+	p.GET("/children/:id/alarm", admins, s.getAlarm)
+	p.PUT("/children/:id/alarm", admins, s.putAlarm)
+	p.PUT("/children/:id/alarm/days/:day", admins, s.putAlarmDay)
+	p.DELETE("/children/:id/alarm/days/:day", admins, s.deleteAlarmDay)
 	p.PATCH("/children/:id/policy", admins, s.patchPolicy)
 	p.GET("/children/:id/app-rules", admins, s.listAppRules)
 	p.PUT("/children/:id/app-rules", admins, s.putAppRule)

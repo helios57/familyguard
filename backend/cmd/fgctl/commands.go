@@ -50,6 +50,8 @@ func commands() []command {
 		{"confirm", "<child-id> <task-id>", "confirm a task for today; the group's last one earns its minutes", true, cmdDecide},
 		{"reject", "<child-id> <task-id>", "a reported task was not done", true, cmdDecide},
 		{"undo", "<child-id> <task-id>", "take a decision back; a group no longer complete loses its minutes", true, cmdDecide},
+		{"alarm", "<child-id> [--set file.json]", "the alarm clock's week; --set replaces it with the document --json prints", true, cmdAlarm},
+		{"alarm-day", "<child-id> <YYYY-MM-DD|today|tomorrow> <HH:MM|off|clear>", "change the alarm for one date, or return it to the week", true, cmdAlarmDay},
 		{"commands", "<device-id> [--limit n]", "the command queue and its timings", true, cmdCommands},
 		{"send", "<device-id> <TYPE>", "queue any command in the server's set", true, cmdSend},
 		{"apps", "", "the APKs this deployment hosts", true, cmdApps},

@@ -7738,3 +7738,90 @@ fully managed phone silently rejects an install that did not come from the Play 
 device-owner session included (§17.12). It stays on 0.6.19 until *Scan apps with Play Protect* is
 switched off on that handset; a 0.6.19 phone ignores the plan's new keys, so the plan reaches it only
 after the update.
+
+## Phase 37 — Alarm clock (FR-23)
+
+Phase 4 of the daily-plan design (`docs/superpowers/specs/2026-09-27-daily-plan-design.md` §7, §8;
+plan `docs/superpowers/plans/2026-09-27-phase4-alarm.md`). The owner, 2026-09-27: *"Finish all planned
+phases."*
+
+**The phone holds the rule, not an instant.** The server stores a week (seven `HH:MM` or off) and
+changes for single dates, and sends both with the profile's timezone beside the policy. The phone
+computes the next ring itself (`NextAlarm`), so it rings with no connection and across a change of
+timezone or daylight saving, and books it with `AlarmManager.setAlarmClock` — the alarm Doze delivers
+on time — re-booking after a new rule, a ring, a snooze, a stop, a reboot, an update and a change of
+time or zone. It rings as a foreground service on the alarm stream with a full-screen alarm over the
+lock screen (*Stopp*, *Schlummern 5 Min.*), and reports whether the platform lets it take over the
+screen (`alarm_full_screen`), which the console shows as *alarm: notification only* when it does not.
+
+1. **Server**: migration 0020 (`alarm_times`, `alarm_overrides`, `device_state.alarm_full_screen`),
+   `GET|PUT /children/:id/alarm`, `PUT|DELETE /children/:id/alarm/days/:day` (today to 60 days ahead),
+   the `alarm` block in `GET /device/policy`, audit `ALARM_UPDATED`, `ALARM_DAY_SET`, `ALARM_DAY_CLEARED`.
+2. **Phone**: `NextAlarm`, `AlarmBooking`, `AlarmVolume` (a floor of half the alarm stream while it
+   rings, restored after), `EncryptedAlarmStore`, `AlarmClock`, `AlarmFireReceiver`,
+   `TimeChangeReceiver`, `AlarmRingService`, `AlarmActivity`; the Heute screen's *Wecker: morgen 06:30*.
+3. **Console**: the *Alarm clock* card on the Rules tab; the device card's badge.
+4. **fgctl/MCP**: `alarm [--set]`, `alarm-day <date|today|tomorrow> <HH:MM|off|clear>`; `get_alarm`,
+   `set_alarm`, `set_alarm_day`.
+
+**Two defects found in production on the way, both from 0.6.20 meeting a real phone:**
+
+- **A part-minute of earned time took a profile down (hotfix 0.6.21).** `SUM(bigint)` is `NUMERIC` in
+  PostgreSQL and `NUMERIC / 60000` keeps the fraction, which pgx refuses to scan into an `int`. The
+  first family phone on 0.6.20 reported earned milliseconds, and every read of its balance answered
+  500 — the guardian window lost the phone's state and its time buttons (*"I can't give her
+  additional time"*) and the phone's own policy fetch failed, so it took no changes (*"it did not
+  sync"*). Every earned-time test had reported whole minutes. `UsageHistory` had the same division
+  since it was written: `fgctl usage` and MCP `get_usage` answered 500 for every real phone, and the
+  console never calls it. Both divide as integers now; the test reports 2 min 4.05 s and 75 min 4.05 s.
+- **Watch-only use became a Bonuszeit debt.** The same phone was in watch-only mode with no plan, and
+  the phone still charged its use past the daily limit as earned time — a debt that would have eaten
+  the next minutes the child earned. Earned time is now charged only while there is some and the phone
+  enforces (FR-22.5).
+
+### 37.1 — tests
+
+- Kotlin unit: `NextAlarmTest` (12: weekday, the next day once passed, Friday's own time, a date change
+  to a time and to off, a silent day made to ring, none, unreadable time or zone, the spring gap, the
+  autumn repeat, the Heute line), `AlarmBookingTest` (6: snooze first, a rung ring not booked twice, a
+  stale snooze dropped, nothing to book, the volume floor), `SynchronizerTest` (+1, the rule handed on),
+  `EarnedAttributionTest` (+2, watch-only and no gold charge nothing). Suite: 899.
+- e2e: the week and its checks, a date change today and at day 60, day −1, day 61 and 2026-02-30
+  refused, one change per day, DELETE, the device block, the audit rows; a guardian refused all four
+  routes; the heartbeat's `alarm_full_screen` (absent, false, kept through an older heartbeat, true);
+  earned time and screen time in part-minutes.
+- Chrome at 360 px: the Alarm card saves Monday–Friday and *no alarm tomorrow*, lists and removes it,
+  read back from the server; the device badge appears and goes; layout guard; screenshots in both
+  themes.
+- fgctl and MCP against the real binary, *tomorrow* resolved in the profile's zone.
+- Real Android (`tests/android/alarm.sh`, `familyguard37`, API 37): a date change two minutes ahead is
+  booked with the platform and shown on the Heute screen; with Wi-Fi and data off, the screen off, the
+  device unplugged and forced into Doze, it rang **2–3 s after its minute** (the poll's granularity) —
+  the ring service running and an `USAGE_ALARM` player `started` in `dumpsys audio` — full screen on
+  top; *Stop* ended both and the next ring was booked.
+
+### 37.2 — calibration
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| 1 | `httpapi/alarm.go` | a date change's time dropped | **RED**: *want … 06:00 and … off* |
+| 2 | `httpapi/alarm.go` | 61 days allowed | **RED**: *a change for … answered 200, want 400* |
+| 3 | `httpapi/alarm.go` | the phone sent no date changes | **RED** — first attempt left `today` unused, a build error (invalid), retaken as a value |
+| 4 | `store/alarm.go` | weekday index shifted by one | **RED**: *the stored week is …* |
+| 5 | `AlarmSchedule.kt` (stubs) | every function answering nothing | **RED**: 13 of 17 |
+| 6 | `AlarmLine` | tomorrow said as a later day | **RED**: *expected TOMORROW* |
+| 7 | `Synchronizer.kt` | the alarm rule not handed on | **RED**: *expected 06:30 but was null* |
+| 8 | `EarnedAttribution.kt` (before the fix) | charging with no gold / in watch-only | **RED**: both new tests |
+| 9–11 | `app.js` | a day's time not kept; *no alarm* sends a time; the listed change mis-said | **RED**, each on its line |
+| 12 | `app.js` | the badge never drawn | **RED**: *waited 15s for the device card* |
+| 13 | `httpapi/deviceapi.go` | the heartbeat field dropped | **RED**: *the server holds <nil>* |
+| 14 | `fgctl/alarm.go` | *tomorrow* resolved as today | **RED**: *after alarm-day the changes are …* |
+| 15 | `fgctl/mcp.go` | MCP *off* sends a time | **RED**: *the day has no change* |
+| 16 | `AlarmRingService.kt`, on the device | the tone on the media stream | **RED**: *service running=true, alarm-usage player started=false* |
+| 17 | `AlarmClock.kt`, on the device | `setAndAllowWhileIdle` instead of `setAlarmClock` | **RED**: *service running=false* — forced Doze held the ordinary alarm past 45 s |
+| 18 | `store/plan.go`, `store/telemetry.go` (before the fix) | the NUMERIC division | **RED**: the production 500, then `/usage` after the first fix alone |
+
+Every probe a value change, restored with `cp` and verified with `cmp`. One device run went red on the
+Heute line rather than on its probe — the screen was read before it had re-read the store — so it
+measured nothing; the test now reopens the screen from Home, and the probe was retaken. This phase:
+**19 probes, 18 red, 1 invalid first attempt retaken.** Cumulative: **216 probes.**

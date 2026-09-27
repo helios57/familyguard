@@ -440,6 +440,8 @@ class PackageReplacedReceiver : BroadcastReceiver() {
         if (intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         Log.i(TAG, "this app was replaced; restarting the connection")
         ConnectionService.start(context, null)
+        // FR-23.3: an update cancels the alarms the old version booked.
+        io.github.helios57.familyguard.alarm.AlarmClock.rebook(context)
     }
 
     private companion object {

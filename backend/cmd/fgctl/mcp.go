@@ -154,6 +154,17 @@ type decideArgs struct {
 	Decision string `json:"decision" jsonschema:"confirm, reject or undo"`
 }
 
+type alarmArgs struct {
+	ChildID  string   `json:"child_id" jsonschema:"the child's UUID, as returned by list_children"`
+	Weekdays []string `json:"weekdays" jsonschema:"seven entries, Monday first, each HH:MM or an empty string for a day with no alarm"`
+}
+
+type alarmDayArgs struct {
+	ChildID string `json:"child_id" jsonschema:"the child's UUID, as returned by list_children"`
+	Day     string `json:"day" jsonschema:"YYYY-MM-DD in the child's timezone, today up to 60 days ahead, or today / tomorrow"`
+	Time    string `json:"time" jsonschema:"HH:MM to ring at, off for no alarm that day, or clear to return the day to the week"`
+}
+
 type auditArgs struct {
 	Limit int `json:"limit,omitempty" jsonschema:"how many entries, 1-500, default 100"`
 }
@@ -292,6 +303,57 @@ func registerTools(server *mcp.Server, client *fgclient.Client) {
 				return nil, err
 			}
 			return out, nil
+		})
+
+	add(server, client, "get_alarm",
+		"A child's alarm clock (FR-23): seven weekdays, Monday first, each HH:MM or empty for no alarm, "+
+			"and the date changes from today on (time null = no alarm that day).",
+		func(ctx context.Context, c *fgclient.Client, in childArgs) (any, error) {
+			var alarm store.Alarm
+			if err := c.Get(ctx, "/api/v1/children/"+in.ChildID+"/alarm", &alarm); err != nil {
+				return nil, err
+			}
+			return alarm, nil
+		})
+
+	add(server, client, "set_alarm",
+		"Replace a child's alarm week. The phone rings at these times with no connection needed; the "+
+			"child can stop or snooze it but not change it.",
+		func(ctx context.Context, c *fgclient.Client, in alarmArgs) (any, error) {
+			var alarm store.Alarm
+			if err := c.Do(ctx, "PUT", "/api/v1/children/"+in.ChildID+"/alarm", map[string]any{"weekdays": in.Weekdays}, &alarm); err != nil {
+				return nil, err
+			}
+			return alarm, nil
+		})
+
+	add(server, client, "set_alarm_day",
+		"Change the alarm for one date: a time, off for no alarm, or clear to follow the week again.",
+		func(ctx context.Context, c *fgclient.Client, in alarmDayArgs) (any, error) {
+			day, err := resolveProfileDay(ctx, c, in.ChildID, in.Day)
+			if err != nil {
+				return nil, err
+			}
+			path := "/api/v1/children/" + in.ChildID + "/alarm/days/" + day
+			switch {
+			case in.Time == "clear":
+				if err := c.Do(ctx, "DELETE", path, nil, nil); err != nil {
+					return nil, err
+				}
+				return map[string]any{"day": day, "cleared": true}, nil
+			case in.Time == "off" || clockText.MatchString(in.Time):
+				body := map[string]any{"time": nil}
+				if in.Time != "off" {
+					body["time"] = in.Time
+				}
+				var out store.AlarmDay
+				if err := c.Do(ctx, "PUT", path, body, &out); err != nil {
+					return nil, err
+				}
+				return out, nil
+			default:
+				return nil, fmt.Errorf("time is HH:MM, off or clear, not %q", in.Time)
+			}
 		})
 
 	add(server, client, "list_commands",

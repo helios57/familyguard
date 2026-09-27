@@ -62,6 +62,7 @@ class SynchronizerTest {
         localUsedMinutesByPackage: (Input) -> Map<String, Int> = { emptyMap() },
         localEarnedMinutes: (Input) -> Int = { 0 },
         onEnforced: (Input, DesiredState) -> Unit = { _, _ -> },
+        onAlarm: (io.github.helios57.familyguard.alarm.AlarmSchedule) -> Unit = {},
     ) = Synchronizer(
         api,
         cache,
@@ -73,6 +74,7 @@ class SynchronizerTest {
         localUsedMinutesByPackage = localUsedMinutesByPackage,
         localEarnedMinutes = localEarnedMinutes,
         onEnforced = onEnforced,
+        onAlarm = onAlarm,
     )
 
     // ---- the happy path ---------------------------------------------------------------------
@@ -107,6 +109,23 @@ class SynchronizerTest {
     // ---- offline ----------------------------------------------------------------------------
 
     /** FR-9. No network, and the phone keeps enforcing the last thing the parent set. */
+    /** FR-23.3: the alarm rule the server sends reaches the booker, so the phone can ring offline. */
+    @Test
+    fun `the alarm rule the server sends is handed on to be booked`() {
+        server.answerWith { request ->
+            if (request.path.endsWith("/heartbeat")) {
+                HttpResponse(200, body = """{"policy_version":99,"pending_commands":2}""")
+            } else {
+                HttpResponse(200, body = policyBody().dropLast(1) +
+                    ""","alarm":{"timezone":"Europe/Zurich","weekdays":["06:30","","","","","",""],"overrides":[]}}""")
+            }
+        }
+        var handed: io.github.helios57.familyguard.alarm.AlarmSchedule? = null
+        synchronizer(onAlarm = { handed = it }).sync() as SyncResult.Applied
+        assertEquals("06:30", handed?.weekdays?.first())
+        assertEquals("Europe/Zurich", handed?.timezone)
+    }
+
     @Test
     fun `a fetch that fails falls back to the cached policy`() {
         cache.stored = inputAt("2026-08-17T09:00:00+02:00", version = 4)
