@@ -148,6 +148,36 @@ func (s *Store) DeleteParent(ctx context.Context, id uuid.UUID) error {
 	})
 }
 
+// UpdateParentRole changes a parent's role and returns the one it replaced. Demoting the last
+// PRIMARY_ADMIN is refused inside the same transaction, as DeleteParent refuses removing one. Every
+// primary admin row is locked first, so two primary admins demoting each other at the same moment
+// are serialised and the second sees the first's result.
+func (s *Store) UpdateParentRole(ctx context.Context, id uuid.UUID, role string) (string, error) {
+	var previous string
+	err := s.tx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT id FROM parents WHERE role = $1 FOR UPDATE`, RolePrimaryAdmin); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `SELECT role FROM parents WHERE id = $1 FOR UPDATE`, id).Scan(&previous); err != nil {
+			return mapErr(err)
+		}
+		if previous == RolePrimaryAdmin && role != RolePrimaryAdmin {
+			var remaining int
+			if err := tx.QueryRow(ctx,
+				`SELECT count(*) FROM parents WHERE role = $1 AND id <> $2`, RolePrimaryAdmin, id).
+				Scan(&remaining); err != nil {
+				return err
+			}
+			if remaining == 0 {
+				return fmt.Errorf("%w: cannot demote the last primary admin", ErrConflict)
+			}
+		}
+		_, err := tx.Exec(ctx, `UPDATE parents SET role = $2 WHERE id = $1`, id, role)
+		return err
+	})
+	return previous, err
+}
+
 // RecordParentLogin stamps the login and stores the Google subject.
 //
 // It deliberately records nothing for Factory Reset Protection. FRP takes a Google *account id*,

@@ -233,6 +233,7 @@ func (s *Server) Router() (*gin.Engine, error) {
 	// requireInteractiveParent, here and on /api-keys below: these are the routes that hand out or
 	// take away a credential, and an API key that can mint one outlives its own revocation.
 	p.POST("/parents", primaryOnly, s.requireInteractiveParent(), s.createParent)
+	p.PATCH("/parents/:id", primaryOnly, s.requireInteractiveParent(), s.updateParentRole)
 	p.DELETE("/parents/:id", primaryOnly, s.requireInteractiveParent(), s.deleteParent)
 
 	p.GET("/children", everyone, s.listChildren)

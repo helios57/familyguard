@@ -12,8 +12,8 @@ package e2e
 // thing standing between a missing call and a silent hole is a test.
 //
 // `TestRecoveryAndAudit` in journeys_test.go already checks that ten action NAMES appear. This is
-// the other three quarters of the requirement: all twenty-one actions, each bound to the actor and
-// the object it was taken against, and a ratchet that notices a twenty-second.
+// the other three quarters of the requirement: every action, each bound to the actor and
+// the object it was taken against, and a ratchet that notices a new one.
 //
 // Three assertions, and none of them is sufficient alone:
 //
@@ -102,6 +102,10 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 		map[string]any{"email": "third@family.test", "role": "GUARDIAN"}).
 		expect(http.StatusCreated).decode(&added)
 	byParent("PARENT_ADDED", "parent", added.ID)
+
+	h.call(http.MethodPatch, "/parents/"+added.ID, parent.Token, map[string]any{"role": "ADMIN"}).
+		expect(http.StatusOK)
+	byParent("PARENT_ROLE_CHANGED", "parent", added.ID)
 
 	h.call(http.MethodDelete, "/parents/"+added.ID, parent.Token, nil).expect(http.StatusNoContent)
 	byParent("PARENT_REMOVED", "parent", added.ID)
@@ -340,6 +344,8 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 		value  any
 	}{
 		{"PARENT_ADDED", "email", "third@family.test"},
+		{"PARENT_ROLE_CHANGED", "from", "GUARDIAN"},
+		{"PARENT_ROLE_CHANGED", "to", "ADMIN"},
 		{"CHILD_ADDED", "name", "Mira"},
 		{"CHILD_UPDATED", "name", "Mira R."},
 		{"DEVICE_RENAMED", "name", "Mira's Pixel"},

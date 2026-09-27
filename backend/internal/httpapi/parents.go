@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -48,9 +49,7 @@ func (s *Server) createParent(c *gin.Context) {
 		failWith(c, http.StatusBadRequest, "invalid_input", "that is not an email address")
 		return
 	}
-	switch req.Role {
-	case store.RolePrimaryAdmin, store.RoleAdmin, store.RoleGuardian:
-	default:
+	if !validRole(req.Role) {
 		failWith(c, http.StatusBadRequest, "invalid_input", "role must be PRIMARY_ADMIN, ADMIN or GUARDIAN")
 		return
 	}
@@ -69,6 +68,61 @@ func (s *Server) createParent(c *gin.Context) {
 		"email": parent.Email, "role": parent.Role,
 	})
 	c.JSON(http.StatusCreated, parent)
+}
+
+// validRole is the one list of roles a request may name.
+func validRole(role string) bool {
+	switch role {
+	case store.RolePrimaryAdmin, store.RoleAdmin, store.RoleGuardian:
+		return true
+	}
+	return false
+}
+
+type updateParentRequest struct {
+	Role string `json:"role"`
+}
+
+// updateParentRole changes who a parent is (FR-20.2). Console-only and primary-admin only, like
+// adding one: a role is an authority, and one that a key could grant would outlive the key.
+func (s *Server) updateParentRole(c *gin.Context) {
+	id, ok := uuidParam(c, "id")
+	if !ok {
+		return
+	}
+	var req updateParentRequest
+	if !bindJSON(c, &req) {
+		return
+	}
+	if !validRole(req.Role) {
+		failWith(c, http.StatusBadRequest, "invalid_input", "role must be PRIMARY_ADMIN, ADMIN or GUARDIAN")
+		return
+	}
+	// Refused for the same reason deleteParent refuses removing yourself: the one person who could
+	// undo it is the person who just lost the right to.
+	if p := parentOf(c); p != nil && p.ID == id {
+		failWith(c, http.StatusConflict, "conflict", "you cannot change your own role")
+		return
+	}
+	previous, err := s.store.UpdateParentRole(c.Request.Context(), id, req.Role)
+	if errors.Is(err, store.ErrConflict) {
+		// The generic conflict text ("that record already exists") would be false here.
+		failWith(c, http.StatusConflict, "conflict", "the family must keep at least one primary admin")
+		return
+	}
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	s.auditParent(c, "PARENT_ROLE_CHANGED", "parent", id.String(), map[string]any{
+		"from": previous, "to": req.Role,
+	})
+	parent, err := s.store.ParentByID(c.Request.Context(), id)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, parent)
 }
 
 func (s *Server) deleteParent(c *gin.Context) {
