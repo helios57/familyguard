@@ -7622,3 +7622,12 @@ red, one deliberate green, one green that corrected a comment, one that found an
 that was an invalid probe (19).**
 
 ### 35.3 — live
+
+Deployed 2026-09-27 as 0.6.19. The control plane runs image `sha256:d8e7dc14…4236` (one pod,
+`/readyz` 200 — 503 for the first seconds of the new pod, which the rollout check now waits out);
+`/dpc.apk` is byte-identical to the signed `familyguard-0.6.19-versionCode-28.apk` (`a36f59eb…ca3d`,
+signer `b62cda94…8e10`). Read back live with the owner's key: the children listing carries
+`paused: false` (so migration 0018 ran), and the served `app.js` carries the pause's second tap while an
+impossible string counts 0. The family phone was last seen ten hours earlier at 3 % battery, still on
+0.6.17: `UPDATE_APP` is queued and lands when it is charged and awake. Until then it ignores
+`settings.paused` (unknown keys are ignored), so a pause reaches it only after the update.
