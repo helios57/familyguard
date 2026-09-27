@@ -189,6 +189,15 @@ func TestTheAppsTabMarksABonusApp(t *testing.T) {
 	b.eval(`document.querySelector('.tab[data-tab="apps"]').click()`, nil)
 	b.waitFor(`Array.from(document.querySelectorAll('#view li')).some((li) => li.textContent.includes('`+pkgMovies+`') && li.querySelector('.seg'))`,
 		15*time.Second, "the app's row")
+	// The browser's own answer to the PUT is held back, so the server holds the rule before the page
+	// has redrawn — the order CI's slower browser produced three times in a row, and the one a test
+	// that read the row right after the server agreed could not survive.
+	b.eval(`(() => {
+	  const real = window.fetch;
+	  window.fetch = (url, opts) => (opts && opts.method === 'PUT')
+	    ? real(url, opts).then((r) => new Promise((ok) => setTimeout(() => ok(r), 800)))
+	    : real(url, opts);
+	})()`, nil)
 	b.eval(clickCategory(pkgMovies, "Bonus app"), nil)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
@@ -213,11 +222,10 @@ func TestTheAppsTabMarksABonusApp(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	var text string
-	b.eval(`Array.from(document.querySelectorAll('#view li')).find((li) => li.textContent.includes('`+pkgMovies+`')).textContent`, &text)
-	if !strings.Contains(text, "earned time") {
-		t.Errorf("the row of a bonus app does not say it runs on earned time: %q", text)
-	}
+	// The row redraws when the page has its answer, which can be after the server holds the rule:
+	// waited for, not read once.
+	row := `Array.from(document.querySelectorAll('#view li')).find((li) => li.textContent.includes('` + pkgMovies + `'))`
+	b.waitFor(`(`+row+` || {}).textContent?.includes('earned time')`, 10*time.Second, "the bonus app's row to say it runs on earned time")
 }
 
 // A bonus app with no earned time left is paused whatever the hour, and both the server's day view
