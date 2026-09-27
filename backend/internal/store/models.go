@@ -89,6 +89,9 @@ const (
 	ActionAllow = "ALLOW"
 	ActionBlock = "BLOCK"
 	ActionLimit = "LIMIT"
+	// ActionBonus marks an app that runs only on earned time (FR-22): paused whenever the profile has
+	// none left, usable with it even in bedtime.
+	ActionBonus = "BONUS"
 )
 
 type Family struct {

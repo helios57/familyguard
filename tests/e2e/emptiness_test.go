@@ -314,6 +314,8 @@ func allCollections(childID, deviceID string) []collection {
 		// that has never been switched on has no sittings, and the console iterates the list.
 		{"/devices/" + deviceID + "/usage/timeline", "sessions", "UsageSessionsBetween", stageCreated},
 		{"/children/" + childID + "/managed-apps", "managed_apps", "ManagedPackages", stageCreated},
+		// The daily plan (FR-22): a new profile has none, and the console's editor iterates it.
+		{"/children/" + childID + "/plan", "groups", "GetPlan", stageCreated},
 		{"/device/commands", "commands", "PendingCommands", stageEnrolled},
 	}
 }
@@ -335,6 +337,11 @@ func collectionsAt(s stage, childID, deviceID string) []collection {
 // never reaches a client at all. Each is here with the reason it cannot be driven by the table
 // above, so the ratchet can tell "covered elsewhere" from "nobody noticed this one".
 var collectionsCoveredElsewhere = map[string]string{
+	"ReplacePlan": "returns GetPlan's answer after the write, so it is the same collection; " +
+		"plan_test drives it and reads the groups back",
+	"EarnedCredits": "never serialised as itself: it feeds earned.Compute, whose credits reach a " +
+		"client as today's earned.credits, which earned.Compute makes never nil (Remaining slice " +
+		"initialised) and plan_test reads as [] on a fresh profile",
 	"HomePackages": "never served as a list of its own: it is unioned into the uncounted list the " +
 		"phone receives inside /device/policy (input.uncounted_packages), which always holds System UI " +
 		"and so is never empty — screen_time_test asserts that field on the wire; the store function " +

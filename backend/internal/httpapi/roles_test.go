@@ -61,14 +61,16 @@ func TestEveryParentRouteDeclaresWhoMayCallIt(t *testing.T) {
 // guardianAllowlist is the whole of what a GUARDIAN may call in phase 1 (spec §2): read the
 // profiles and today's state, give time today, and receive the live-update stream.
 var guardianAllowlist = map[routeKey]bool{
-	{http.MethodGet, "/api/v1/me"}:                        true,
-	{http.MethodGet, "/api/v1/family"}:                    true,
-	{http.MethodGet, "/api/v1/children"}:                  true,
-	{http.MethodPost, "/api/v1/children/:id/bonus"}:       true,
-	{http.MethodPost, "/api/v1/children/:id/pause"}:       true,
-	{http.MethodGet, "/api/v1/devices"}:                   true,
-	{http.MethodGet, "/api/v1/devices/:id/desired-state"}: true,
-	{http.MethodGet, "/api/v1/events"}:                    true,
+	{http.MethodGet, "/api/v1/me"}:                                 true,
+	{http.MethodGet, "/api/v1/family"}:                             true,
+	{http.MethodGet, "/api/v1/children"}:                           true,
+	{http.MethodPost, "/api/v1/children/:id/bonus"}:                true,
+	{http.MethodPost, "/api/v1/children/:id/pause"}:                true,
+	{http.MethodGet, "/api/v1/children/:id/today"}:                 true,
+	{http.MethodPost, "/api/v1/children/:id/tasks/:task/decision"}: true,
+	{http.MethodGet, "/api/v1/devices"}:                            true,
+	{http.MethodGet, "/api/v1/devices/:id/desired-state"}:          true,
+	{http.MethodGet, "/api/v1/events"}:                             true,
 }
 
 func TestAGuardianMayCallExactlyTheGuardianAllowlist(t *testing.T) {

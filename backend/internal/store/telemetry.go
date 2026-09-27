@@ -15,7 +15,7 @@ import (
 // cumulative for the day, so a reboot or a counter reset must never be able to lower a total the
 // server already saw — that would hand the child a way to earn screen time back by rebooting
 // (FR-3.2).
-func (s *Store) RecordUsage(ctx context.Context, deviceID uuid.UUID, day string, samples map[string]int64) error {
+func (s *Store) RecordUsage(ctx context.Context, deviceID uuid.UUID, day string, samples, earned map[string]int64) error {
 	if len(samples) == 0 {
 		return nil
 	}
@@ -24,18 +24,41 @@ func (s *Store) RecordUsage(ctx context.Context, deviceID uuid.UUID, day string,
 			if ms < 0 {
 				continue
 			}
+			// FR-22: the earned part of a package's day, cumulative and merged like the total. It can
+			// never exceed the total it is a part of, whatever a device sends.
+			gold := min(max(earned[pkg], 0), ms)
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO usage_samples (device_id, day, package_name, foreground_ms)
-				 VALUES ($1, $2::date, $3, $4)
+				`INSERT INTO usage_samples (device_id, day, package_name, foreground_ms, earned_ms)
+				 VALUES ($1, $2::date, $3, $4, $5)
 				 ON CONFLICT (device_id, day, package_name) DO UPDATE
 				   SET foreground_ms = GREATEST(usage_samples.foreground_ms, EXCLUDED.foreground_ms),
+				       earned_ms     = LEAST(GREATEST(usage_samples.earned_ms, EXCLUDED.earned_ms),
+				                             GREATEST(usage_samples.foreground_ms, EXCLUDED.foreground_ms)),
 				       updated_at    = NOW()`,
-				deviceID, day, pkg, ms); err != nil {
+				deviceID, day, pkg, ms, gold); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+// UsageSplitForDay is one device's counted day split the way the phone splits it (FR-22): the
+// minutes that were use against the budget, and the minutes paid from earned time — both floored
+// from milliseconds exactly as EarnedAccount.split floors them, so the two sides agree to the minute.
+func (s *Store) UsageSplitForDay(ctx context.Context, deviceID uuid.UUID, day string, uncounted []string) (budget, earned int, err error) {
+	if uncounted == nil {
+		uncounted = []string{}
+	}
+	var total, gold int64
+	err = s.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(foreground_ms), 0), COALESCE(SUM(earned_ms), 0) FROM usage_samples
+		  WHERE device_id = $1 AND day = $2::date AND NOT (package_name = ANY($3))`,
+		deviceID, day, uncounted).Scan(&total, &gold)
+	if err != nil {
+		return 0, 0, err
+	}
+	return int(max(total-gold, 0) / 60000), int(gold / 60000), nil
 }
 
 // UsageForDay returns the per-package totals a device reported for one day.

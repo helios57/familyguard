@@ -196,6 +196,29 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 		expect(http.StatusNoContent)
 	byParent("APP_REMOVED_FROM_LIST", "device", device.ID)
 
+	// ---- the daily plan and earned time (FR-22) ----
+	plan := h.putPlan(parent.Token, child.ID, []planGroupDTO{allDay("Tag", 20, "Katze füttern", "Klavier")})
+	byParent("PLAN_UPDATED", "child", child.ID)
+	cat, piano := plan[0].Tasks[0].ID, plan[0].Tasks[1].ID
+	// The child's "Fertig" is the PHONE's act, about the child.
+	h.call(http.MethodPost, "/device/tasks/"+cat+"/report", enrolled.DeviceToken, nil).expect(http.StatusOK)
+	expected = append(expected, want{
+		Action: "TASK_REPORTED", ActorType: "DEVICE", ActorID: device.ID, TargetType: "child", TargetID: child.ID,
+	})
+	decide := func(task, decision string) {
+		h.call(http.MethodPost, "/children/"+child.ID+"/tasks/"+task+"/decision", parent.Token,
+			map[string]any{"decision": decision}).expect(http.StatusOK)
+	}
+	decide(cat, "reject")
+	byParent("TASK_REJECTED", "child", child.ID)
+	decide(cat, "confirm")
+	byParent("TASK_CONFIRMED", "child", child.ID)
+	decide(piano, "confirm")
+	byParent("EARNED_TIME_CREDITED", "child", child.ID)
+	decide(piano, "undo")
+	byParent("TASK_UNDONE", "child", child.ID)
+	byParent("EARNED_TIME_WITHDRAWN", "child", child.ID)
+
 	// ---- commands: issued by a parent, acknowledged by the phone ----
 	//
 	// Two of them, because the device-side action name is *computed* — `"COMMAND_"+cmd.State` — so

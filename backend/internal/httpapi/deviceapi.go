@@ -320,7 +320,14 @@ func (s *Server) devicePolicy(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"desired": state, "input": input})
+	// FR-22: the day as the plan sees it rides with the policy, so the phone's Heute screen shows
+	// the tasks it may report and the earned time without a second request.
+	today, err := s.today(c.Request.Context(), dev.ChildID)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"desired": state, "input": input, "today": today})
 }
 
 // deviceCommands hands over the queued commands and records that it did.
@@ -402,6 +409,9 @@ type usageRequest struct {
 	// which is the only party that knows the policy's zone and whose clock a child cannot change.
 	Day     string           `json:"day"`
 	Samples map[string]int64 `json:"samples"`
+	// Earned is, of Samples, the part of each package's day the phone paid from earned time (FR-22),
+	// cumulative like it.
+	Earned map[string]int64 `json:"earned"`
 	// Sessions is what ran WHEN (FR-3.7), and it rides the same request as the day totals on
 	// purpose: they are two views of one measurement the phone already made, and a second endpoint
 	// would give them two different clocks, two retry states and two ways to disagree.
@@ -468,7 +478,7 @@ func (s *Server) deviceUsageReport(c *gin.Context) {
 		return
 	}
 
-	if err := s.store.RecordUsage(c.Request.Context(), dev.ID, day, req.Samples); err != nil {
+	if err := s.store.RecordUsage(c.Request.Context(), dev.ID, day, req.Samples, req.Earned); err != nil {
 		s.fail(c, err)
 		return
 	}

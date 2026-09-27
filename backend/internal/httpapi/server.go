@@ -245,6 +245,12 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.POST("/children/:id/bonus", everyone, s.grantBonus)
 	// FR-21: pause a profile's phones, from the guardian window among others.
 	p.POST("/children/:id/pause", everyone, s.pauseChild)
+	// FR-22: the daily plan (admins edit it), today's tasks and the decisions on them (the guardian
+	// window's work).
+	p.GET("/children/:id/plan", admins, s.getPlan)
+	p.PUT("/children/:id/plan", admins, s.putPlan)
+	p.GET("/children/:id/today", everyone, s.getToday)
+	p.POST("/children/:id/tasks/:task/decision", everyone, s.decideTask)
 	p.PATCH("/children/:id/policy", admins, s.patchPolicy)
 	p.GET("/children/:id/app-rules", admins, s.listAppRules)
 	p.PUT("/children/:id/app-rules", admins, s.putAppRule)
@@ -306,6 +312,8 @@ func (s *Server) Router() (*gin.Engine, error) {
 	d := v1.Group("/device", s.requireDevice(), RateLimitBy(devices, deviceKey))
 	d.POST("/heartbeat", s.heartbeat)
 	d.GET("/policy", s.devicePolicy)
+	// FR-22: the child's "Fertig".
+	d.POST("/tasks/:task/report", s.deviceReportTask)
 	// Fetching commands is what records their delivery. The stream only says "there is something to
 	// fetch", so a wake-up that never arrives costs latency and never a fabricated delivery (NFR-3).
 	d.GET("/commands", s.deviceCommands)

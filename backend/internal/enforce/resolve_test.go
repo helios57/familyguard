@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/helios57/familyguard/backend/internal/earned"
 	"github.com/helios57/familyguard/backend/internal/policy"
 	"github.com/helios57/familyguard/backend/internal/store"
 )
@@ -39,6 +40,26 @@ type fakeSource struct {
 	home           []string
 	bonus          map[string]int // day -> minutes
 	uncountedAsked []string       // what the resolver asked the store to leave out
+	// FR-22.
+	earnedToday map[string]int // day -> minutes this device paid from earned time
+	credits     []earned.Credit
+	spentByDay  map[string]int
+	sinceAsked  string
+}
+
+func (f *fakeSource) EarnedCredits(_ context.Context, _ uuid.UUID, since string) ([]earned.Credit, error) {
+	f.sinceAsked = since
+	if err := f.fail["credits"]; err != nil {
+		return nil, err
+	}
+	return f.credits, nil
+}
+
+func (f *fakeSource) EarnedSpentByDay(_ context.Context, _ uuid.UUID, since string) (map[string]int, error) {
+	if err := f.fail["spent"]; err != nil {
+		return nil, err
+	}
+	return f.spentByDay, nil
 }
 
 func (f *fakeSource) HomePackages(context.Context, uuid.UUID) ([]string, error) {
@@ -110,13 +131,14 @@ func (f *fakeSource) UsageMinutesByPackageForDay(_ context.Context, _ uuid.UUID,
 	return f.usageByPackage[day], nil
 }
 
-func (f *fakeSource) UsageMinutesCountedForDay(_ context.Context, _ uuid.UUID, day string, uncounted []string) (int, error) {
+// UsageSplitForDay answers the counted minutes in `usage`, of which `earnedToday` were earned time.
+func (f *fakeSource) UsageSplitForDay(_ context.Context, _ uuid.UUID, day string, uncounted []string) (int, int, error) {
 	f.usageDay = day
 	f.uncountedAsked = uncounted
 	if err := f.fail["usage"]; err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return f.usage[day], nil
+	return f.usage[day] - f.earnedToday[day], f.earnedToday[day], nil
 }
 
 // testBaseURL stands for the deployment's public origin. Written with a trailing slash on purpose:
@@ -175,6 +197,38 @@ func TestQuotaIsReadForTheLocalDay(t *testing.T) {
 	// resolver that used either day.
 	if f.usage["2026-07-15"] == f.usage["2026-07-16"] {
 		t.Fatal("fixture cannot discriminate: both days hold the same usage")
+	}
+}
+
+// FR-22: what the resolver hands the engine for earned time — the bonus apps from the rules, the
+// balance from the credits and every phone's spending, and this device's own day split into budget
+// minutes and earned minutes, so a minute paid in gold is not also a budget minute.
+func TestEarnedTimeReachesTheEngine(t *testing.T) {
+	f := baseSource()
+	f.policy.DailyLimitMinutes = 60
+	f.rules = append(f.rules, store.AppRule{PackageName: "com.example.movies", Action: store.ActionBonus})
+	f.usage["2026-07-16"] = 70 // counted today on this device
+	f.earnedToday = map[string]int{"2026-07-16": 15}
+	f.credits = []earned.Credit{{Day: "2026-07-14", Minutes: 30}, {Day: "2026-07-16", Minutes: 20}}
+	f.spentByDay = map[string]int{"2026-07-15": 10}
+
+	at := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	got, in := resolve(t, f, at)
+
+	if want := []string{"com.example.movies"}; !slices.Equal(in.Settings.BonusPackages, want) {
+		t.Errorf("bonus packages %v, want %v", in.Settings.BonusPackages, want)
+	}
+	if in.Settings.EarnedAvailableMinutes != 40 {
+		t.Errorf("available %d, want 40 (30 + 20 earned, 10 spent yesterday)", in.Settings.EarnedAvailableMinutes)
+	}
+	if in.UsedMinutesToday != 55 || in.EarnedSpentMinutesToday != 15 {
+		t.Errorf("used %d / earned %d, want 55 budget minutes and 15 earned", in.UsedMinutesToday, in.EarnedSpentMinutesToday)
+	}
+	if got.EarnedMinutesLeft != 25 {
+		t.Errorf("left %d, want 25", got.EarnedMinutesLeft)
+	}
+	if f.sinceAsked != "2026-07-02" {
+		t.Errorf("credits read since %q, want 2026-07-02 — two validity periods back", f.sinceAsked)
 	}
 }
 

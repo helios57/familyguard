@@ -179,6 +179,7 @@ func TestAGuardianIsRefusedEverythingOutsideTheGuardianWindow(t *testing.T) {
 		{http.MethodGet, "/devices?child_id=" + child.ID, nil, http.StatusOK},
 		{http.MethodGet, d + "/desired-state", nil, http.StatusOK},
 		{http.MethodPost, c + "/bonus", map[string]any{"minutes": 15}, http.StatusOK},
+		{http.MethodGet, c + "/today", nil, http.StatusOK},
 	}
 	for _, a := range allowed {
 		if r := h.call(a.method, a.path, guardian.Token, a.body); r.Status != a.status {
@@ -204,6 +205,8 @@ func TestAGuardianIsRefusedEverythingOutsideTheGuardianWindow(t *testing.T) {
 		{http.MethodGet, c + "/policy", nil},
 		{http.MethodPatch, c + "/policy", map[string]any{"daily_limit_minutes": 600}},
 		{http.MethodGet, c + "/app-rules", nil},
+		{http.MethodGet, c + "/plan", nil},
+		{http.MethodPut, c + "/plan", map[string]any{"groups": []any{}}},
 		{http.MethodPut, c + "/app-rules", map[string]any{"package_name": "com.example.x", "action": "ALLOW"}},
 		{http.MethodDelete, c + "/app-rules?package_name=com.example.x", nil},
 		{http.MethodGet, c + "/blocked-domains", nil},

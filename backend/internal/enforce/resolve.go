@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/helios57/familyguard/backend/internal/earned"
 	"github.com/helios57/familyguard/backend/internal/policy"
 	"github.com/helios57/familyguard/backend/internal/store"
 )
@@ -41,7 +42,9 @@ type Source interface {
 	ListAppRules(ctx context.Context, childID uuid.UUID) ([]store.AppRule, error)
 	ListBlockedDomains(ctx context.Context, childID uuid.UUID) ([]string, error)
 	ListInstalledApps(ctx context.Context, deviceID uuid.UUID, includeSystem bool) ([]store.InstalledApp, error)
-	UsageMinutesCountedForDay(ctx context.Context, deviceID uuid.UUID, day string, uncounted []string) (int, error)
+	UsageSplitForDay(ctx context.Context, deviceID uuid.UUID, day string, uncounted []string) (budget, earned int, err error)
+	EarnedCredits(ctx context.Context, childID uuid.UUID, since string) ([]earned.Credit, error)
+	EarnedSpentByDay(ctx context.Context, childID uuid.UUID, since string) (map[string]int, error)
 	HomePackages(ctx context.Context, deviceID uuid.UUID) ([]string, error)
 	BonusMinutes(ctx context.Context, childID uuid.UUID, day string) (int, error)
 	UsageMinutesByPackageForDay(ctx context.Context, deviceID uuid.UUID, day string) (map[string]int, error)
@@ -163,9 +166,14 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 		return nil, nil, fmt.Errorf("home packages: %w", err)
 	}
 	uncounted := store.SortedUnique(home, policy.PlatformUncountedPackages, r.ownPackages)
-	used, err := r.src.UsageMinutesCountedForDay(ctx, deviceID, day, uncounted)
+	// FR-22: a minute the phone paid from earned time is not also a budget minute.
+	used, earnedToday, err := r.src.UsageSplitForDay(ctx, deviceID, day, uncounted)
 	if err != nil {
 		return nil, nil, fmt.Errorf("usage: %w", err)
+	}
+	balance, err := r.Balance(ctx, dev.ChildID, day)
+	if err != nil {
+		return nil, nil, err
 	}
 	bonus, err := r.src.BonusMinutes(ctx, dev.ChildID, day)
 	if err != nil {
@@ -200,7 +208,7 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 		return nil, nil, fmt.Errorf("family blocklist: %w", err)
 	}
 
-	blocked, allowed, limited := splitRules(rules)
+	blocked, allowed, limited, bonusApps := splitRules(rules)
 	in := policy.Input{
 		Settings: policy.Settings{
 			TrackingOnly:          pol.TrackingOnly,
@@ -227,14 +235,18 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 			// FR-5.10: sent with every policy, so the phone learns a change to the list on its next
 			// sync rather than with its next update.
 			CountedSystemPackages: store.SortedUnique(policy.DefaultCountedSystemPackages),
-			BlockedDomains:        domains,
-			ManagedApps:           r.managedApps(managed),
+			// FR-22: the apps that run only on earned time, and the balance at the start of today.
+			BonusPackages:          bonusApps,
+			EarnedAvailableMinutes: balance.AvailableToday,
+			BlockedDomains:         domains,
+			ManagedApps:            r.managedApps(managed),
 		},
-		Installed:            installedApps(apps),
-		UsedMinutesToday:     used,
-		UsedMinutesByPackage: usedByPackage,
-		UncountedPackages:    uncounted,
-		ParentLock:           dev.Locked,
+		Installed:               installedApps(apps),
+		UsedMinutesToday:        used,
+		EarnedSpentMinutesToday: earnedToday,
+		UsedMinutesByPackage:    usedByPackage,
+		UncountedPackages:       uncounted,
+		ParentLock:              dev.Locked,
 		// The device's own resolved packages (its actual dialer, launcher and IMEs) *plus* the
 		// family's always-usable list, unioned here rather than left to the engine.
 		//
@@ -284,10 +296,12 @@ func DayKey(pol *store.Policy, at time.Time) (string, error) {
 // approval it has already been given.
 //
 // ListAppRules orders by package name, so all three come out sorted without sorting them.
-func splitRules(rules []store.AppRule) (blocked, allowed []string, limited []policy.AppLimit) {
-	blocked, allowed, limited = []string{}, []string{}, []policy.AppLimit{}
+func splitRules(rules []store.AppRule) (blocked, allowed []string, limited []policy.AppLimit, bonus []string) {
+	blocked, allowed, limited, bonus = []string{}, []string{}, []policy.AppLimit{}, []string{}
 	for _, r := range rules {
 		switch r.Action {
+		case store.ActionBonus:
+			bonus = append(bonus, r.PackageName)
 		case store.ActionBlock:
 			blocked = append(blocked, r.PackageName)
 		case store.ActionAllow:
@@ -296,7 +310,26 @@ func splitRules(rules []store.AppRule) (blocked, allowed []string, limited []pol
 			limited = append(limited, policy.AppLimit{PackageName: r.PackageName, Minutes: r.LimitMinutes})
 		}
 	}
-	return blocked, allowed, limited
+	return blocked, allowed, limited, bonus
+}
+
+// Balance is a profile's earned-time balance at the start of day (FR-22), from its credits and its
+// phones' reported spending over the look-back the balance needs.
+func (r *Resolver) Balance(ctx context.Context, childID uuid.UUID, day string) (earned.Balance, error) {
+	start, err := time.Parse(time.DateOnly, day)
+	if err != nil {
+		return earned.Balance{}, fmt.Errorf("%w: day %q", policy.ErrInvalidInput, day)
+	}
+	since := start.AddDate(0, 0, -2*earned.ValidDays).Format(time.DateOnly)
+	credits, err := r.src.EarnedCredits(ctx, childID, since)
+	if err != nil {
+		return earned.Balance{}, fmt.Errorf("earned credits: %w", err)
+	}
+	spent, err := r.src.EarnedSpentByDay(ctx, childID, since)
+	if err != nil {
+		return earned.Balance{}, fmt.Errorf("earned spending: %w", err)
+	}
+	return earned.Compute(credits, spent, day), nil
 }
 
 // installedApps maps the inventory the device reported onto the engine's view of it.

@@ -414,8 +414,9 @@ func (s *Server) putAppRule(c *gin.Context) {
 		failWith(c, http.StatusBadRequest, "invalid_input", "package_name is required")
 		return
 	}
-	if req.Action != store.ActionAllow && req.Action != store.ActionBlock && req.Action != store.ActionLimit {
-		failWith(c, http.StatusBadRequest, "invalid_input", "action must be ALLOW, LIMIT or BLOCK")
+	if req.Action != store.ActionAllow && req.Action != store.ActionBlock && req.Action != store.ActionLimit &&
+		req.Action != store.ActionBonus {
+		failWith(c, http.StatusBadRequest, "invalid_input", "action must be ALLOW, LIMIT, BLOCK or BONUS")
 		return
 	}
 	// Refused rather than clamped. A per-app cap on an app that is always free, or on one that is

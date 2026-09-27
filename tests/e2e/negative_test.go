@@ -704,7 +704,7 @@ func TestMalformedRequestsAreRefusedWithAReason(t *testing.T) {
 		{what: "an app rule with an invented action", method: http.MethodPut,
 			path: "/children/" + child + "/app-rules", token: parent,
 			body: map[string]any{"package_name": pkgGame, "action": "MAYBE"}, status: http.StatusBadRequest,
-			code: "invalid_input", says: []string{"action must be ALLOW, LIMIT or BLOCK"}},
+			code: "invalid_input", says: []string{"action must be ALLOW, LIMIT, BLOCK or BONUS"}},
 		// A per-app allowance on an answer that cannot carry one (FR-5.8). Refused rather than
 		// clamped to zero: storing a number that never binds is how a console comes to display a
 		// limit nobody is enforcing.
