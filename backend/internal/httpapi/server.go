@@ -256,6 +256,12 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.PUT("/children/:id/alarm", admins, s.putAlarm)
 	p.PUT("/children/:id/alarm/days/:day", admins, s.putAlarmDay)
 	p.DELETE("/children/:id/alarm/days/:day", admins, s.deleteAlarmDay)
+	// FR-24: the agenda and the family's holidays. Admins only.
+	p.GET("/children/:id/agenda", admins, s.getAgenda)
+	p.PUT("/children/:id/agenda", admins, s.putAgenda)
+	p.GET("/children/:id/agenda/days", admins, s.getAgendaDays)
+	p.GET("/family/holidays", admins, s.getHolidays)
+	p.PUT("/family/holidays", admins, s.putHolidays)
 	p.PATCH("/children/:id/policy", admins, s.patchPolicy)
 	p.GET("/children/:id/app-rules", admins, s.listAppRules)
 	p.PUT("/children/:id/app-rules", admins, s.putAppRule)

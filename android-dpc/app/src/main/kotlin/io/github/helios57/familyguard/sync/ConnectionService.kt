@@ -583,6 +583,7 @@ class ConnectionService : Service() {
             onEnforced = { input, state -> reports.enforced(input, state) },
             dayPlans = io.github.helios57.familyguard.plan.EncryptedDayPlanStore(this),
             onAlarm = { io.github.helios57.familyguard.alarm.AlarmClock.update(this, it) },
+            onAgenda = { io.github.helios57.familyguard.agenda.EncryptedAgendaStore(this).save(it) },
         )
         journal = recoveryJournal
         // Published before the first sync, so an alarm that fires during it waits on `syncLock`
@@ -1453,6 +1454,8 @@ class ConnectionService : Service() {
             // restriction reported as a measured one is a fabricated finding.
             powerExempt = AlarmManagerPlatform.powerExemptAllowed(this),
             exactAlarms = AlarmManagerPlatform.exactAlarmsAllowed(this),
+            // FR-23.4, read each time for the same reason: a special access a person can revoke.
+            alarmFullScreen = io.github.helios57.familyguard.alarm.AlarmRingService.fullScreenAllowed(this),
             // "" is a phone with nothing to report and clears whatever the server was showing;
             // text is the last self-update that did not end with a new build running (FR-15.7).
             // Read here rather than pushed from the updater because the heartbeat is the only

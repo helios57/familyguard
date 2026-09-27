@@ -230,6 +230,14 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 		expect(http.StatusNoContent)
 	byParent("ALARM_DAY_CLEARED", "child", child.ID)
 
+	// ---- the agenda and the holidays (FR-24) ----
+	h.putAgenda(parent.Token, child.ID, []agendaEntryDTO{{Kind: "RECURRING", Title: "Schule", Weekdays: 31, StartsAt: "08:00", EndsAt: "12:00"}})
+	byParent("AGENDA_UPDATED", "child", child.ID)
+	h.call(http.MethodPut, "/family/holidays", parent.Token, map[string]any{"holidays": []holidayDTO{
+		{Title: "Herbstferien", StartsOn: "2026-10-06", EndsOn: "2026-10-08"},
+	}}).expect(http.StatusOK)
+	byParent("HOLIDAYS_UPDATED", "family", "")
+
 	// ---- commands: issued by a parent, acknowledged by the phone ----
 	//
 	// Two of them, because the device-side action name is *computed* — `"COMMAND_"+cmd.State` — so

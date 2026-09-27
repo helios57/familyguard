@@ -22,6 +22,8 @@ const maxAlarmDaysAhead = 60
 
 type alarmWeekRequest struct {
 	Weekdays []string `json:"weekdays"`
+	// SkipHolidays is FR-24.4's "not during holidays"; absent leaves it as it is.
+	SkipHolidays *bool `json:"skip_holidays"`
 }
 
 type alarmDayRequest struct {
@@ -99,7 +101,15 @@ func (s *Server) putAlarm(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
-	s.auditParent(c, "ALARM_UPDATED", "child", childID.String(), map[string]any{"days_on": on})
+	detail := map[string]any{"days_on": on}
+	if req.SkipHolidays != nil {
+		if err := s.store.SetAlarmSkipsHolidays(ctx, childID, *req.SkipHolidays); err != nil {
+			s.fail(c, err)
+			return
+		}
+		detail["skip_holidays"] = *req.SkipHolidays
+	}
+	s.auditParent(c, "ALARM_UPDATED", "child", childID.String(), detail)
 	s.notifyChild(c, childID, "policy")
 	today, ok := s.alarmToday(c, pol)
 	if !ok {
@@ -205,6 +215,8 @@ func (s *Server) deleteAlarmDay(c *gin.Context) {
 type deviceAlarm struct {
 	Timezone string `json:"timezone"`
 	store.Alarm
+	// Holidays are the family's holidays that have not ended, for "not during holidays" (FR-24.4).
+	Holidays []store.Holiday `json:"holidays"`
 }
 
 func (s *Server) deviceAlarm(ctx context.Context, childID uuid.UUID) (*deviceAlarm, error) {
@@ -220,5 +232,15 @@ func (s *Server) deviceAlarm(ctx context.Context, childID uuid.UUID) (*deviceAla
 	if err != nil {
 		return nil, err
 	}
-	return &deviceAlarm{Timezone: pol.Timezone, Alarm: *alarm}, nil
+	all, err := s.store.ListHolidays(ctx)
+	if err != nil {
+		return nil, err
+	}
+	coming := []store.Holiday{}
+	for _, h := range all {
+		if h.EndsOn >= today {
+			coming = append(coming, h)
+		}
+	}
+	return &deviceAlarm{Timezone: pol.Timezone, Alarm: *alarm, Holidays: coming}, nil
 }

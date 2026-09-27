@@ -79,6 +79,8 @@ data class PolicyResponse(
     @SerialName("today") val today: io.github.helios57.familyguard.plan.DayPlan? = null,
     /** FR-23: the alarm rule, kept so the phone rings with no connection. */
     @SerialName("alarm") val alarm: io.github.helios57.familyguard.alarm.AlarmSchedule? = null,
+    /** FR-24.3: today and tomorrow of the agenda, kept for the Heute screen offline. */
+    @SerialName("agenda") val agenda: io.github.helios57.familyguard.agenda.AgendaBlock? = null,
 )
 
 @Serializable
@@ -123,6 +125,8 @@ data class HeartbeatRequest(
      */
     @SerialName("power_exempt") val powerExempt: Boolean? = null,
     @SerialName("exact_alarms") val exactAlarms: Boolean? = null,
+    /** FR-23.4: whether the alarm may take over the lock screen. Null is "not reported". */
+    @SerialName("alarm_full_screen") val alarmFullScreen: Boolean? = null,
     /**
      * What the ad filter is actually doing on this phone (FR-6.6): how many rules it has compiled,
      * when it last fetched them, and whether the tunnel is up.

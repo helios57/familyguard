@@ -132,6 +132,9 @@ class Synchronizer(
 
     /** Given the alarm rule the server sent, to keep and to book the next ring from (FR-23.3). */
     private val onAlarm: (io.github.helios57.familyguard.alarm.AlarmSchedule) -> Unit = {},
+
+    /** Given the agenda's today and tomorrow, to keep for the Heute screen (FR-24.5). */
+    private val onAgenda: (io.github.helios57.familyguard.agenda.AgendaBlock) -> Unit = {},
 ) {
 
     /** Per package, the larger of the two. See [localUsedMinutesByPackage] for why it is a max. */
@@ -158,6 +161,7 @@ class Synchronizer(
             cache.save(response.input)
             response.today?.let { dayPlans?.save(it) }
             response.alarm?.let(onAlarm)
+            response.agenda?.let(onAgenda)
             // Stamped here — on receipt — and nowhere else. Not in `applyFrom`, which also runs for
             // a cached policy and would then report a phone that has not seen the server in a week
             // as having reached it a minute ago; and not after the apply, because a policy that
@@ -303,6 +307,7 @@ class Synchronizer(
                 updateError = t.updateError,
                 powerExempt = t.powerExempt,
                 exactAlarms = t.exactAlarms,
+                alarmFullScreen = t.alarmFullScreen,
                 adFilterRules = t.adFilterRules,
                 adFilterFetchedAt = t.adFilterFetchedAt,
                 adFilterRunning = t.adFilterRunning,
@@ -375,6 +380,8 @@ data class DeviceTelemetry(
      */
     val powerExempt: Boolean? = null,
     val exactAlarms: Boolean? = null,
+    /** FR-23.4: whether the alarm may take over the lock screen; null below Android 14 or unread. */
+    val alarmFullScreen: Boolean? = null,
     /**
      * What the ad filter is doing on this phone (FR-6.6). Null when this build does not report it.
      *

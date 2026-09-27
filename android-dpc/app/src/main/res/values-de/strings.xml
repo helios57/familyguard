@@ -60,4 +60,10 @@
     <string name="alarm_next_today">Wecker: heute %1$s</string>
     <string name="alarm_next_tomorrow">Wecker: morgen %1$s</string>
     <string name="alarm_next_day">Wecker: %1$s %2$s</string>
+    <!-- FR-24: die Termine auf dem Heute-Bildschirm. -->
+    <string name="agenda_now">Jetzt: %1$s bis %2$s</string>
+    <string name="agenda_next">Danach: %1$s %2$s</string>
+    <string name="agenda_tomorrow">Morgen: %1$s</string>
+    <string name="agenda_holiday">Ferien: %1$s</string>
+    <string name="agenda_optional">(freiwillig)</string>
 </resources>

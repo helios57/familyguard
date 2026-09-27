@@ -867,3 +867,16 @@ input[type="checkbox"] { width: auto; min-height: auto; }
 .alarm-card h3 { margin: 18px 0 8px; font-size: 1rem; }
 .alarm-card .row { flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .alarm-changes { margin-top: 12px; }
+
+/* ---- the agenda and holidays (FR-24) ----------------------------------------- */
+
+.agenda-entry select { width: 100%; min-height: var(--tap); }
+.agenda-week { display: grid; gap: 10px; }
+.agenda-day .list li { padding: 4px 0; min-height: 0; }
+.agenda-day p { margin: 4px 0 0; }
+.holidays-card .row, .agenda-card .row { flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+/* Two date fields do not fit side by side on a phone: a date input has a native minimum width, and
+   the pair measured 399 px in a 360 px viewport. They stack below 480 px. */
+@media (max-width: 479px) { .holiday .field-row { grid-template-columns: 1fr; } }
+/* The time and title on one line, the place under it — never run together ("SchuleSchulhaus"). */
+.agenda-day .label > span { display: block; }

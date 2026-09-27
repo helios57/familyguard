@@ -104,4 +104,27 @@ class NextAlarmTest {
         assertEquals(AlarmLine(AlarmLine.Day.LATER, "07:00", java.time.DayOfWeek.FRIDAY),
             AlarmLine.of(s, at("2026-10-02T07:00"), at("2026-09-28T07:00")))
     }
+
+    @Test
+    fun `not during holidays skips a holiday's dates, but a date changed on its own still rings`() {
+        val holiday = AlarmHoliday(startsOn = "2026-10-05", endsOn = "2026-10-09")
+        val skip = schedule().copy(skipHolidays = true, holidays = listOf(holiday))
+        // Friday 2026-10-02 evening: the whole next week is a holiday, so the next ring is 12 Oct.
+        assertEquals(at("2026-10-12T06:30"), NextAlarm.next(skip, at("2026-10-02T20:00")))
+        // Without the flag the holiday changes nothing.
+        assertEquals(at("2026-10-05T06:30"), NextAlarm.next(schedule().copy(holidays = listOf(holiday)), at("2026-10-02T20:00")))
+        // A change set for a date inside the holiday is explicit, and rings.
+        val changed = skip.copy(overrides = listOf(AlarmDayChange("2026-10-07", "09:00")))
+        assertEquals(at("2026-10-07T09:00"), NextAlarm.next(changed, at("2026-10-02T20:00")))
+    }
+
+    @Test
+    fun `the holidays and the flag parse from the server's alarm block`() {
+        val parsed = json.decodeFromString(AlarmSchedule.serializer(), """
+            {"timezone":"Europe/Zurich","weekdays":["06:30","","","","","",""],"overrides":[],"skip_holidays":true,
+             "holidays":[{"id":"h","title":"Herbstferien","starts_on":"2026-10-05","ends_on":"2026-10-09"}]}
+        """.trimIndent())
+        assertEquals(true, parsed.skipHolidays)
+        assertEquals("2026-10-09", parsed.holidays.single().endsOn)
+    }
 }

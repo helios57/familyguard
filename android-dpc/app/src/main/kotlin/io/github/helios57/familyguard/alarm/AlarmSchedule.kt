@@ -27,6 +27,16 @@ data class AlarmSchedule(
     @SerialName("timezone") val timezone: String = "",
     @SerialName("weekdays") val weekdays: List<String> = List(7) { "" },
     @SerialName("overrides") val overrides: List<AlarmDayChange> = emptyList(),
+    /** FR-24.4: "not during holidays" — no ring on a date inside [holidays] unless changed on its own. */
+    @SerialName("skip_holidays") val skipHolidays: Boolean = false,
+    @SerialName("holidays") val holidays: List<AlarmHoliday> = emptyList(),
+)
+
+/** A family holiday as the alarm needs it: its first and last day, both included. */
+@Serializable
+data class AlarmHoliday(
+    @SerialName("starts_on") val startsOn: String = "",
+    @SerialName("ends_on") val endsOn: String = "",
 )
 
 /** A change for one calendar day: a time, or `null` for no alarm that day. */
@@ -69,7 +79,11 @@ object NextAlarm {
         for (offset in 0..HORIZON_DAYS) {
             val date = today.plusDays(offset)
             val key = date.toString()
-            val time = if (changes.containsKey(key)) changes[key] else schedule.weekdays.getOrNull(date.dayOfWeek.value - 1)
+            val time = when {
+                changes.containsKey(key) -> changes[key]
+                schedule.skipHolidays && schedule.holidays.any { it.startsOn <= key && key <= it.endsOn } -> null
+                else -> schedule.weekdays.getOrNull(date.dayOfWeek.value - 1)
+            }
             val local = parse(time) ?: continue
             val ring = ZonedDateTime.ofLocal(date.atTime(local), zone, null).toInstant()
             if (ring.isAfter(now)) return ring

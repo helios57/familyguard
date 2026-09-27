@@ -489,6 +489,7 @@ async function refresh() {
     const data = await view.load();
     if (mine !== refreshToken) return;   // a newer refresh already won
     state.data = data;
+    state.dataView = state.view;
     // Filtered, because a section with nothing to say returns null — the approval queue when
     // nothing is waiting — and `replaceChildren(null)` appends the TEXT "null" to the page.
     // `el` already drops empty children; this is the one mount point that did not.
@@ -514,6 +515,10 @@ async function refresh() {
  */
 function redraw() {
   if (!state.data) { refresh(); return; }
+  // A write that answers after the parent moved to another tab must not draw that tab from the data
+  // of the one they left: it threw in renderFamily, fed the Rules data. The new tab's own load is
+  // already on its way and draws it; a stale redraw has nothing to add.
+  if (state.dataView !== state.view) return;
   const view = VIEWS[state.view];
   document.getElementById('view').replaceChildren(
     ...view.render(state.data).filter((n) => n !== null && n !== undefined && n !== false));
@@ -1102,13 +1107,19 @@ async function showRecovery(dev) {
 /* ---- rules -------------------------------------------------------------- */
 
 async function loadRules() {
-  const [policy, domains, devices, plan, alarm] = await Promise.all([
+  const [policy, domains, devices, plan, alarm, agenda, agendaWeek] = await Promise.all([
     api('/children/' + state.childId + '/policy'),
     api('/children/' + state.childId + '/blocked-domains'),
     api('/devices?child_id=' + encodeURIComponent(state.childId)),
     api('/children/' + state.childId + '/plan'),
     api('/children/' + state.childId + '/alarm'),
+    api('/children/' + state.childId + '/agenda'),
+    api('/children/' + state.childId + '/agenda/days?days=7'),
   ]);
+  const entries = state.agendaDraft;
+  if (!entries || entries.childId !== state.childId || !entries.dirty) {
+    state.agendaDraft = { childId: state.childId, dirty: false, entries: (agenda.entries || []).map((e) => ({ ...e })) };
+  }
   const groups = plan.groups || [];
   // The draft survives a re-read while it holds unsaved edits: a heartbeat arriving between two
   // fields must not throw away the group a parent is halfway through writing.
@@ -1119,13 +1130,14 @@ async function loadRules() {
   // Same rule as the plan: an alarm week with unsaved edits survives a background re-read.
   const week = state.alarmDraft;
   if (!week || week.childId !== state.childId || !week.dirty) {
-    state.alarmDraft = { childId: state.childId, dirty: false, weekdays: (alarm.weekdays || []).slice() };
+    state.alarmDraft = { childId: state.childId, dirty: false, weekdays: (alarm.weekdays || []).slice(), skipHolidays: !!alarm.skip_holidays };
   }
   return {
     policy,
     domains: domains.domains || [],
     enrolled: (devices.devices || []).some((d) => d.enrolled),
     alarm,
+    week: agendaWeek.days || [],
   };
 }
 
@@ -1169,10 +1181,10 @@ function alarmCard(data) {
   });
   const saveWeek = async () => {
     const saved = await act('Alarm saved', () =>
-      api('/children/' + state.childId + '/alarm', { method: 'PUT', body: { weekdays: draft.weekdays } }));
+      api('/children/' + state.childId + '/alarm', { method: 'PUT', body: { weekdays: draft.weekdays, skip_holidays: draft.skipHolidays } }));
     if (!saved) return;
-    state.alarmDraft = { childId: state.childId, dirty: false, weekdays: saved.weekdays.slice() };
-    state.data.alarm = saved;
+    state.alarmDraft = { childId: state.childId, dirty: false, weekdays: saved.weekdays.slice(), skipHolidays: !!saved.skip_holidays };
+    if (state.dataView === 'rules') state.data.alarm = saved;
     redraw();
   };
 
@@ -1203,6 +1215,14 @@ function alarmCard(data) {
     el('div', { class: 'card-head' }, el('h2', { text: 'Alarm clock' })),
     el('p', { class: 'muted', text: 'Rings on the phone at these times, with no connection needed. The child can stop it or snooze it for five minutes, but not change it. Times are in ' + (tz || 'the profile\u2019s time zone') + '.' }),
     el('div', { class: 'alarm-week' }, rows),
+    // FR-24.4. With the week because it is saved with it, and it changes what the week means.
+    el('label', { class: 'switch' },
+      el('span', { class: 'switch-label' }, 'Not during holidays',
+        el('small', { text: 'No alarm on the family\u2019s holidays (Family tab). A date changed below still rings.' })),
+      el('input', {
+        type: 'checkbox', checked: !!draft.skipHolidays, 'data-alarm': 'skip-holidays',
+        onchange: (e) => { draft.skipHolidays = e.target.checked; draft.dirty = true; },
+      })),
     el('button', { class: 'btn btn-primary', type: 'button', text: 'Save alarm', 'data-alarm': 'save', onclick: saveWeek }),
     el('h3', { text: 'One date' }),
     el('div', { class: 'field-row' }, dayInput, dayTime),
@@ -1212,6 +1232,142 @@ function alarmCard(data) {
     changes.length
       ? el('ul', { class: 'list alarm-changes' }, changes)
       : el('p', { class: 'muted alarm-changes', text: 'No date changes \u2014 every day follows the week.' }));
+}
+
+/* ---- the agenda (FR-24.6) ---------------------------------------------------- */
+
+const newAgendaEntry = () => ({ kind: 'RECURRING', title: '', place: '', optional: false, weekdays: 31, day: '', starts_at: '08:00', ends_at: '12:00' });
+
+/* The agenda editor: repeating entries (school, training) and entries on one date, saved as one
+   document like the plan, and below it the week as the server expands it — which is what the phone
+   shows, holidays applied. */
+function agendaCard(data) {
+  const draft = state.agendaDraft;
+  const changed = () => { draft.dirty = true; };
+  const restructure = (fn) => { fn(); changed(); redraw(); };
+  const field = (obj, key, attrs) => el('input', {
+    ...attrs, value: obj[key] || '', 'data-field': key,
+    oninput: (e) => { obj[key] = e.target.value; changed(); },
+  });
+  const entry = (e, i) => {
+    const kind = el('select', {
+      'data-field': 'kind', 'aria-label': 'Repeats',
+      onchange: (ev) => restructure(() => {
+        e.kind = ev.target.value;
+        if (e.kind === 'SINGLE' && !e.day) e.day = dayInZone(data.policy.timezone, 1);
+      }),
+    },
+    el('option', { value: 'RECURRING', text: 'Every week', selected: e.kind === 'RECURRING' }),
+    el('option', { value: 'SINGLE', text: 'One date', selected: e.kind === 'SINGLE' }));
+    const when = e.kind === 'SINGLE'
+      ? field(e, 'day', { type: 'date', 'aria-label': 'Date' })
+      : el('div', { class: 'plan-days agenda-days', role: 'group', 'aria-label': 'Days' },
+        WEEKDAYS.map((name, bit) => el('button', {
+          class: 'btn', type: 'button', text: name, 'data-day': String(bit),
+          'aria-pressed': String((e.weekdays & (1 << bit)) !== 0),
+          onclick: (ev) => {
+            e.weekdays ^= (1 << bit);
+            ev.target.setAttribute('aria-pressed', String((e.weekdays & (1 << bit)) !== 0));
+            changed();
+          },
+        })));
+    return el('div', { class: 'agenda-entry plan-group stack' },
+      el('div', { class: 'field-row' },
+        field(e, 'title', { type: 'text', placeholder: 'e.g. School', 'aria-label': 'Title' }),
+        field(e, 'place', { type: 'text', placeholder: 'Place (optional)', 'aria-label': 'Place' })),
+      kind, when,
+      el('div', { class: 'field-row' },
+        el('div', {}, el('label', { text: 'From' }), field(e, 'starts_at', { type: 'time', 'aria-label': 'From' })),
+        el('div', {}, el('label', { text: 'To' }), field(e, 'ends_at', { type: 'time', 'aria-label': 'To' }))),
+      el('div', { class: 'row' },
+        el('label', { class: 'alarm-on' },
+          el('input', {
+            type: 'checkbox', checked: !!e.optional, 'data-field': 'optional',
+            onchange: (ev) => { e.optional = ev.target.checked; changed(); },
+          }),
+          el('span', { text: 'Optional' })),
+        el('button', {
+          class: 'btn btn-quiet btn-danger', type: 'button', text: 'Remove', 'data-agenda': 'remove',
+          onclick: () => restructure(() => draft.entries.splice(i, 1)),
+        })));
+  };
+  const save = async () => {
+    const body = {
+      entries: draft.entries.map((e) => ({
+        ...(e.id ? { id: e.id } : {}), kind: e.kind, title: e.title, place: e.place || '', optional: !!e.optional,
+        ...(e.kind === 'RECURRING' ? { weekdays: e.weekdays } : { day: e.day }),
+        starts_at: e.starts_at, ends_at: e.ends_at,
+      })),
+    };
+    const saved = await act('Agenda saved', () => api('/children/' + state.childId + '/agenda', { method: 'PUT', body }));
+    if (!saved) return;
+    state.agendaDraft = { childId: state.childId, dirty: false, entries: (saved.entries || []).map((e) => ({ ...e })) };
+    refresh();
+  };
+  const week = el('div', { class: 'agenda-week' }, data.week.map((d) => el('div', { class: 'agenda-day' },
+    el('b', { text: fmtDate(d.day) + (d.holiday ? ' \u00b7 ' + d.holiday : '') }),
+    d.items.length
+      ? el('ul', { class: 'list' }, d.items.map((it) => el('li', {},
+        el('span', { class: 'label' },
+          el('span', { text: it.starts_at + '\u2013' + it.ends_at + ' ' + it.title }),
+          el('small', { text: [it.place, it.optional ? 'optional' : ''].filter(Boolean).join(' \u00b7 ') })))))
+      : el('p', { class: 'muted', text: d.holiday ? 'Holiday \u2014 nothing repeating.' : 'Nothing.' }))));
+
+  return el('div', { class: 'card full agenda-card' },
+    el('div', { class: 'card-head' }, el('h2', { text: 'Agenda' })),
+    el('p', { class: 'muted', text: 'What is on: school, training, appointments. The phone shows what is on now, next, and tomorrow. Repeating entries pause on the family\u2019s holidays; entries on one date do not.' }),
+    draft.entries.length ? el('div', { class: 'stack' }, draft.entries.map(entry)) : null,
+    el('div', { class: 'row' },
+      el('button', { class: 'btn', type: 'button', text: '+ Entry', 'data-agenda': 'add', onclick: () => restructure(() => draft.entries.push(newAgendaEntry())) }),
+      el('button', { class: 'btn btn-primary', type: 'button', text: 'Save agenda', 'data-agenda': 'save', onclick: save })),
+    el('h3', { text: 'This week' }),
+    week);
+}
+
+/* ---- holidays (FR-24.6) ------------------------------------------------------ */
+
+function holidaysCard(data) {
+  if (!state.holidayDraft || !state.holidayDraft.dirty) {
+    state.holidayDraft = { dirty: false, holidays: (data.holidays || []).map((h) => ({ ...h })) };
+  }
+  const draft = state.holidayDraft;
+  const changed = () => { draft.dirty = true; };
+  const restructure = (fn) => { fn(); changed(); redraw(); };
+  const field = (obj, key, attrs) => el('input', {
+    ...attrs, value: obj[key] || '', 'data-field': key,
+    oninput: (e) => { obj[key] = e.target.value; changed(); },
+  });
+  const length = (h) => {
+    if (!h.starts_on || !h.ends_on) return '';
+    const [a, b] = [h.starts_on, h.ends_on].map((d) => Date.UTC(...d.split('-').map((n, i) => Number(n) - (i === 1 ? 1 : 0))));
+    const n = Math.round((b - a) / 86400000) + 1;
+    return n > 0 ? n + (n === 1 ? ' day' : ' days') : '';
+  };
+  const save = async () => {
+    const body = { holidays: draft.holidays.map((h) => ({ ...(h.id ? { id: h.id } : {}), title: h.title, starts_on: h.starts_on, ends_on: h.ends_on })) };
+    const saved = await act('Holidays saved', () => api('/family/holidays', { method: 'PUT', body }));
+    if (!saved) return;
+    state.holidayDraft = { dirty: false, holidays: (saved.holidays || []).map((h) => ({ ...h })) };
+    if (state.dataView === 'family') state.data.holidays = saved.holidays;
+    redraw();
+  };
+  return el('div', { class: 'card full holidays-card' },
+    el('div', { class: 'card-head' }, el('h2', { text: 'Holidays' })),
+    el('p', { class: 'muted', text: 'For the whole family. Repeating agenda entries pause on these days, and so does an alarm set to \u201cNot during holidays\u201d.' }),
+    draft.holidays.map((h, i) => el('div', { class: 'holiday plan-group stack' },
+      field(h, 'title', { type: 'text', placeholder: 'e.g. Autumn holidays', 'aria-label': 'Title' }),
+      el('div', { class: 'field-row' },
+        el('div', {}, el('label', { text: 'First day' }), field(h, 'starts_on', { type: 'date', 'aria-label': 'First day' })),
+        el('div', {}, el('label', { text: 'Last day' }), field(h, 'ends_on', { type: 'date', 'aria-label': 'Last day' }))),
+      el('div', { class: 'row' },
+        el('span', { class: 'muted', text: length(h) }),
+        el('button', {
+          class: 'btn btn-quiet btn-danger', type: 'button', text: 'Remove', 'data-holiday': 'remove',
+          onclick: () => restructure(() => draft.holidays.splice(i, 1)),
+        })))),
+    el('div', { class: 'row' },
+      el('button', { class: 'btn', type: 'button', text: '+ Holiday', 'data-holiday': 'add', onclick: () => restructure(() => draft.holidays.push({ title: '', starts_on: '', ends_on: '' })) }),
+      el('button', { class: 'btn btn-primary', type: 'button', text: 'Save holidays', 'data-holiday': 'save', onclick: save })));
 }
 
 /* "Mon 28.9." for a YYYY-MM-DD, read as a calendar date and never through Date's ISO parser. */
@@ -1325,7 +1481,8 @@ function renderRules(data) {
   const p = data.policy;
   const save = async (patch, label) => {
     await act(label, async () => {
-      state.data.policy = await api('/children/' + state.childId + '/policy', { method: 'PATCH', body: patch });
+      const updated = await api('/children/' + state.childId + '/policy', { method: 'PATCH', body: patch });
+      if (state.dataView === 'rules') state.data.policy = updated;
     });
     refresh();
   };
@@ -1456,7 +1613,7 @@ function renderRules(data) {
         : 'Without a list there is nothing to filter, so the switch above does nothing until one is set. Any AdGuard- or hosts-style list works.' })),
     el('p', { class: 'muted', text: 'The phone routes its own traffic through FamilyGuard to do this, and blocks by name only — it never reads the contents of a connection. Some games that pay themselves with adverts stop at the point where the advert would play; that is the trade.' }));
 
-  const cards = [rules, bedtime, planCard(), alarmCard(data), domains, adfilter];
+  const cards = [rules, bedtime, planCard(), alarmCard(data), agendaCard(data), domains, adfilter];
   // Rules are a property of the child and are saved whether or not a phone exists to carry them, so
   // this screen stays fully usable — it just says so, rather than letting a parent set a bedtime and
   // wonder why nothing happened.
@@ -2709,7 +2866,7 @@ function renderActivity(data) {
 
 async function loadFamily() {
   const isPrimary = state.parent && state.parent.role === 'PRIMARY_ADMIN';
-  const [parents, keys, cli] = await Promise.all([
+  const [parents, keys, cli, holidays] = await Promise.all([
     api('/parents'),
     // Only a primary admin may list keys, so anyone else gets a 403 rather than an empty list. The
     // catch keeps the whole screen from failing on a call the reader was never entitled to make.
@@ -2721,8 +2878,9 @@ async function loadFamily() {
     fetch('/fgctl', { headers: { 'Accept': 'application/json' } })
       .then((r) => (r.ok ? r.json() : { hosted: false }))
       .catch(() => ({ hosted: false })),
+    api('/family/holidays'),
   ]);
-  return { parents: parents.parents || [], keys: keys && (keys.api_keys || []), isPrimary, cli };
+  return { parents: parents.parents || [], keys: keys && (keys.api_keys || []), isPrimary, cli, holidays: holidays.holidays || [] };
 }
 
 /* ---- API keys (FR-17) ---------------------------------------------------- */
@@ -2973,7 +3131,7 @@ function renderFamily(data) {
     el('p', { class: 'muted', text: state.parent ? state.parent.email + ' · ' + state.parent.role.replaceAll('_', ' ').toLowerCase() : '' }),
     el('button', { class: 'btn btn-block', type: 'button', text: 'Sign out', onclick: () => signOut('Signed out.') }));
 
-  return [parents, children, apiKeysCard(data), cliCard(data.cli), you];
+  return [parents, children, holidaysCard(data), apiKeysCard(data), cliCard(data.cli), you];
 }
 
 /* ---- sheet -------------------------------------------------------------- */

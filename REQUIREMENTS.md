@@ -612,8 +612,8 @@ below is about who can open it, what it can reach, and who can see that it is op
 
 The five requirements below were agreed with the owner on 2026-09-27 and are designed in
 [`docs/superpowers/specs/2026-09-27-daily-plan-design.md`](docs/superpowers/specs/2026-09-27-daily-plan-design.md).
-FR-20 is built (phase 1, 0.6.18), FR-21 (phase 2, 0.6.19) and FR-22 (phase 3, 0.6.20). **FR-23 and FR-24 are not built
-yet**; each names the phase that builds it, and the phase fills in the detail when it lands.
+FR-20 is built (phase 1, 0.6.18), FR-21 (phase 2, 0.6.19), FR-22 (phase 3, 0.6.20), FR-23 (phase 4, 0.6.22) and FR-24
+(phase 5, 0.6.23).
 
 ### FR-20 Roles and rights (phase 1)
 Measured 2026-09-27: the role was checked on 7 of 48 parent routes, so a guardian could delete a
@@ -736,6 +736,34 @@ child can stop or snooze but not reschedule.
 ### FR-24 Agenda (phase 5)
 A profile has recurring and single agenda entries, any of them optional, and the family has holidays
 that suspend recurring entries. The phone shows today and tomorrow; the console shows a week.
+
+- FR-24.1 **The agenda** is one document per profile (`GET|PUT /children/:id/agenda`, admins): up to
+  50 entries, each *repeating* (`RECURRING`, weekdays Monday = 1 … Sunday = 64) or on *one date*
+  (`SINGLE`, a real date), with a title (≤ 80), an optional place (≤ 80), from–to on one day, and an
+  *optional* flag. An entry sent with its id is edited in place; one without is new; one left out is
+  retired, never deleted. Audited as `AGENDA_UPDATED`.
+- FR-24.2 **Holidays** are the family's (`GET|PUT /family/holidays`, admins): up to 50 ranges with a
+  title, first and last day included, at most 120 days long, kept by id like the agenda. Audited as
+  `HOLIDAYS_UPDATED`; every profile's phones re-read.
+- FR-24.3 **The days** (`GET /children/:id/agenda/days?from=&days=1…31`) are expanded on the server:
+  a repeating entry on its weekdays, a single entry on its date, in time order, with the holiday that
+  applies. A holiday suppresses the repeating entries only — a single entry on a holiday still
+  happens. The phone is sent today and tomorrow in the profile's calendar beside its policy
+  (`agenda`).
+- FR-24.4 **Not during holidays** is a flag on a profile's alarm (`skip_holidays` on
+  `PUT /children/:id/alarm`). The phone is sent the holidays that have not ended with the alarm rule,
+  and rings on no date inside one — unless that date was changed on its own, which always wins.
+- FR-24.5 **The Heute screen** shows the holiday, *Jetzt* (what is on now, until when), *Danach* (the
+  next item today) and *Morgen* (tomorrow's items, or its holiday), with the place and *(freiwillig)*
+  for optional entries. Days are chosen by date on the phone's clock in the profile's timezone, so a
+  phone offline past midnight shows the right day and no tomorrow it was not sent.
+- FR-24.6 The console's Rules tab has an *Agenda* card — entries every week or on one date, with
+  place, from–to and *Optional*, saved as one document, and *This week* below as the server expands
+  it — and the Alarm card a *Not during holidays* switch; the Family tab has *Holidays* (title, first
+  and last day, its length). `fgctl agenda <child> [--set file]`, `fgctl week <child> [--from] [--days]`,
+  `fgctl holidays [--set file]` (and `skip_holidays` in `fgctl alarm --set`), and the MCP tools
+  `get_agenda`, `set_agenda`, `get_week`, `get_holidays`, `set_holidays` and `set_alarm`'s
+  `skip_holidays` do the same.
 
 ---
 

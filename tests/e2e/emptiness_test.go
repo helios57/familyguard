@@ -316,6 +316,10 @@ func allCollections(childID, deviceID string) []collection {
 		{"/children/" + childID + "/managed-apps", "managed_apps", "ManagedPackages", stageCreated},
 		// The daily plan (FR-22): a new profile has none, and the console's editor iterates it.
 		{"/children/" + childID + "/plan", "groups", "GetPlan", stageCreated},
+		// The agenda and the holidays (FR-24): a new profile has no entries and a new family no
+		// holidays, and the console's editors iterate both.
+		{"/children/" + childID + "/agenda", "entries", "GetAgenda", stageCreated},
+		{"/family/holidays", "holidays", "ListHolidays", stageFresh},
 		{"/device/commands", "commands", "PendingCommands", stageEnrolled},
 	}
 }
@@ -339,6 +343,10 @@ func collectionsAt(s stage, childID, deviceID string) []collection {
 var collectionsCoveredElsewhere = map[string]string{
 	"ReplacePlan": "returns GetPlan's answer after the write, so it is the same collection; " +
 		"plan_test drives it and reads the groups back",
+	"ReplaceAgenda": "returns GetAgenda's answer after the write, so it is the same collection; " +
+		"agenda_test drives it and reads the entries back",
+	"ReplaceHolidays": "returns ListHolidays' answer after the write, so it is the same collection; " +
+		"agenda_test drives it and reads the holidays back",
 	"EarnedCredits": "never serialised as itself: it feeds earned.Compute, whose credits reach a " +
 		"client as today's earned.credits, which earned.Compute makes never nil (Remaining slice " +
 		"initialised) and plan_test reads as [] on a fresh profile",

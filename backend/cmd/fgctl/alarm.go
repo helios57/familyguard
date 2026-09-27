@@ -34,7 +34,8 @@ func cmdAlarm(ctx context.Context, env *environment, args []string) error {
 			return err
 		}
 		var doc struct {
-			Weekdays []string `json:"weekdays"`
+			Weekdays     []string `json:"weekdays"`
+			SkipHolidays *bool    `json:"skip_holidays,omitempty"`
 		}
 		dec := json.NewDecoder(bytes.NewReader(raw))
 		dec.DisallowUnknownFields()
@@ -48,6 +49,9 @@ func cmdAlarm(ctx context.Context, env *environment, args []string) error {
 		return err
 	}
 	return env.emit(alarm, func(w *tabwriter.Writer) {
+		if alarm.SkipHolidays {
+			fmt.Fprintln(w, "not during holidays")
+		}
 		for i, at := range alarm.Weekdays {
 			if at == "" {
 				at = "off"

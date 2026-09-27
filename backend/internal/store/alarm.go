@@ -18,6 +18,9 @@ type AlarmDay struct {
 type Alarm struct {
 	Weekdays  []string   `json:"weekdays"`
 	Overrides []AlarmDay `json:"overrides"`
+	// SkipHolidays is "not during holidays" (FR-24.4): no alarm on a date inside a family holiday,
+	// unless that date was changed on its own.
+	SkipHolidays bool `json:"skip_holidays"`
 }
 
 // GetAlarm reads a profile's alarm, with the date changes on or after fromDay.
@@ -55,7 +58,15 @@ func (s *Store) GetAlarm(ctx context.Context, childID uuid.UUID, fromDay string)
 		}
 		alarm.Overrides = append(alarm.Overrides, d)
 	}
-	return alarm, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	skip, err := s.AlarmSkipsHolidays(ctx, childID)
+	if err != nil {
+		return nil, err
+	}
+	alarm.SkipHolidays = skip
+	return alarm, nil
 }
 
 // SetAlarmWeek replaces the weekly schedule: seven entries, Monday first, "" for no alarm.

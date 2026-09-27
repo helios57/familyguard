@@ -99,6 +99,7 @@ class RecoveryActivity : AppCompatActivity() {
     // FR-22: earned time, the day's tasks, and what happened to the last "Fertig".
     private lateinit var todayEarned: TextView
     private lateinit var todayAlarm: TextView
+    private lateinit var todayAgenda: TextView
     private lateinit var todayPlan: LinearLayout
     private lateinit var todayPlanStatus: TextView
 
@@ -132,6 +133,7 @@ class RecoveryActivity : AppCompatActivity() {
         todayApps = findViewById(R.id.today_apps)
         todayEarned = findViewById(R.id.today_earned)
         todayAlarm = findViewById(R.id.today_alarm)
+        todayAgenda = findViewById(R.id.today_agenda)
         todayPlan = findViewById(R.id.today_plan)
         todayPlanStatus = findViewById(R.id.today_plan_status)
 
@@ -425,6 +427,17 @@ class RecoveryActivity : AppCompatActivity() {
                 runCatching { TodayReportReader.read(this@RecoveryActivity) }.getOrNull() to
                     runCatching { EncryptedDayPlanStore(this@RecoveryActivity).load() }.getOrNull()
             }
+            val agenda = withContext(Dispatchers.IO) {
+                runCatching {
+                    val block = io.github.helios57.familyguard.agenda.EncryptedAgendaStore(this@RecoveryActivity).load()
+                        ?: return@runCatching null
+                    // The profile's zone, which the alarm rule carries; the phone's own otherwise.
+                    val zone = runCatching {
+                        java.time.ZoneId.of(io.github.helios57.familyguard.alarm.EncryptedAlarmStore(this@RecoveryActivity).schedule()?.timezone)
+                    }.getOrDefault(java.time.ZoneId.systemDefault())
+                    io.github.helios57.familyguard.agenda.AgendaNow.of(block, java.time.LocalDateTime.now(zone))
+                }.getOrNull()
+            }
             val alarm = withContext(Dispatchers.IO) {
                 runCatching {
                     val store = io.github.helios57.familyguard.alarm.EncryptedAlarmStore(this@RecoveryActivity)
@@ -436,8 +449,31 @@ class RecoveryActivity : AppCompatActivity() {
             }
             renderToday(report)
             renderAlarm(alarm)
+            renderAgenda(agenda)
             renderPlan(plan, report)
         }
+    }
+
+    /** FR-24.5: a holiday, what is on now, what is next today, and tomorrow's items. */
+    private fun renderAgenda(view: io.github.helios57.familyguard.agenda.AgendaView?) {
+        val optional = getString(R.string.agenda_optional)
+        fun label(item: io.github.helios57.familyguard.agenda.AgendaItem) =
+            listOfNotNull(item.title, item.place.takeIf { it.isNotEmpty() }?.let { "· $it" }, optional.takeIf { item.optional })
+                .joinToString(" ")
+        val lines = mutableListOf<String>()
+        view?.today?.holiday?.takeIf { it.isNotEmpty() }?.let { lines += getString(R.string.agenda_holiday, it) }
+        view?.current?.let { lines += getString(R.string.agenda_now, label(it), it.endsAt) }
+        view?.next?.let { lines += getString(R.string.agenda_next, it.startsAt, label(it)) }
+        view?.tomorrow?.let { t ->
+            val text = if (t.holiday.isNotEmpty() && t.items.isEmpty()) {
+                getString(R.string.agenda_holiday, t.holiday)
+            } else {
+                t.items.joinToString(", ") { "${it.startsAt} ${label(it)}" }
+            }
+            if (text.isNotEmpty()) lines += getString(R.string.agenda_tomorrow, text)
+        }
+        todayAgenda.text = lines.joinToString("\n")
+        todayAgenda.visibility = if (lines.isEmpty()) View.GONE else View.VISIBLE
     }
 
     /** FR-23.5: the next alarm, as the child reads it — today, tomorrow, or the weekday. */

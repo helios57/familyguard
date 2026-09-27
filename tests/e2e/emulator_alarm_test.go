@@ -22,7 +22,7 @@ func TestTheAlarmRingsOnARealPhoneOfflineAndInDoze(t *testing.T) {
 	d := androidDeviceFromEnv(t)
 	d.dumpDeviceLogOnFailure()
 	h := newHarness(t, withPublicHost(emulatorHostAlias))
-	parent, child, _, _ := managedOnEmulator(t, h, d)
+	parent, child, device, _ := managedOnEmulator(t, h, d)
 
 	// The whole week at 06:30 so a next ring exists after this one, and today changed to a minute
 	// that is 90 to 150 seconds away, in the profile's own zone.
@@ -45,6 +45,20 @@ func TestTheAlarmRingsOnARealPhoneOfflineAndInDoze(t *testing.T) {
 	for !booked() {
 		if time.Now().After(deadline) {
 			t.Fatal("after 60 s the phone has booked no ALARM_FIRE with the platform")
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	// FR-23.4: the phone reports whether the alarm may take over the lock screen — measured on the
+	// phone, so null here is a phone that never sent it (0.6.22 shipped without it).
+	deadline = time.Now().Add(60 * time.Second)
+	for {
+		if st := h.deviceView(parent.Token, device.ID).State; st != nil && st.AlarmFullScreen != nil {
+			t.Logf("the phone reports alarm_full_screen=%v", *st.AlarmFullScreen)
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("after 60 s the phone has not reported alarm_full_screen")
 		}
 		time.Sleep(2 * time.Second)
 	}

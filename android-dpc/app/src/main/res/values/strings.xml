@@ -216,4 +216,10 @@
     <string name="alarm_next_today">Alarm: today %1$s</string>
     <string name="alarm_next_tomorrow">Alarm: tomorrow %1$s</string>
     <string name="alarm_next_day">Alarm: %1$s %2$s</string>
+    <!-- FR-24: the agenda on the Heute screen. -->
+    <string name="agenda_now">Now: %1$s until %2$s</string>
+    <string name="agenda_next">Next: %1$s %2$s</string>
+    <string name="agenda_tomorrow">Tomorrow: %1$s</string>
+    <string name="agenda_holiday">Holiday: %1$s</string>
+    <string name="agenda_optional">(optional)</string>
 </resources>

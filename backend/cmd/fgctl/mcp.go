@@ -155,8 +155,44 @@ type decideArgs struct {
 }
 
 type alarmArgs struct {
-	ChildID  string   `json:"child_id" jsonschema:"the child's UUID, as returned by list_children"`
-	Weekdays []string `json:"weekdays" jsonschema:"seven entries, Monday first, each HH:MM or an empty string for a day with no alarm"`
+	ChildID      string   `json:"child_id" jsonschema:"the child's UUID, as returned by list_children"`
+	Weekdays     []string `json:"weekdays" jsonschema:"seven entries, Monday first, each HH:MM or an empty string for a day with no alarm"`
+	SkipHolidays *bool    `json:"skip_holidays,omitempty" jsonschema:"true: no alarm on the family's holidays (a date changed on its own still rings); omit to leave it as it is"`
+}
+
+// String ids for the same reason as planGroupArg: a uuid.UUID's schema reads as an array.
+type agendaEntryArg struct {
+	ID       string `json:"id,omitempty" jsonschema:"the entry's id from get_agenda; omit for a new entry"`
+	Kind     string `json:"kind" jsonschema:"RECURRING (on weekdays) or SINGLE (on one date)"`
+	Title    string `json:"title" jsonschema:"what it is, such as Schule"`
+	Place    string `json:"place,omitempty" jsonschema:"where, optional"`
+	Optional bool   `json:"optional,omitempty" jsonschema:"true when the child may skip it"`
+	Weekdays int    `json:"weekdays,omitempty" jsonschema:"RECURRING only: bit set Monday 1 … Sunday 64; 31 is Monday to Friday"`
+	Day      string `json:"day,omitempty" jsonschema:"SINGLE only: YYYY-MM-DD"`
+	StartsAt string `json:"starts_at" jsonschema:"HH:MM"`
+	EndsAt   string `json:"ends_at" jsonschema:"HH:MM, after starts_at on the same day"`
+}
+
+type agendaArgs struct {
+	ChildID string           `json:"child_id" jsonschema:"the child's UUID, as returned by list_children"`
+	Entries []agendaEntryArg `json:"entries" jsonschema:"the WHOLE agenda: every entry to keep, with its id from get_agenda; one left out is retired"`
+}
+
+type weekArgs struct {
+	ChildID string `json:"child_id" jsonschema:"the child's UUID, as returned by list_children"`
+	From    string `json:"from,omitempty" jsonschema:"YYYY-MM-DD, default today in the child's timezone"`
+	Days    int    `json:"days,omitempty" jsonschema:"1 to 31, default 7"`
+}
+
+type holidayArg struct {
+	ID       string `json:"id,omitempty" jsonschema:"the holiday's id from get_holidays; omit for a new one"`
+	Title    string `json:"title" jsonschema:"such as Herbstferien"`
+	StartsOn string `json:"starts_on" jsonschema:"first day, YYYY-MM-DD"`
+	EndsOn   string `json:"ends_on" jsonschema:"last day, YYYY-MM-DD, at most 120 days after the first"`
+}
+
+type holidaysArgs struct {
+	Holidays []holidayArg `json:"holidays" jsonschema:"ALL the family's holidays: every one to keep, with its id; one left out is retired"`
 }
 
 type alarmDayArgs struct {
@@ -321,7 +357,11 @@ func registerTools(server *mcp.Server, client *fgclient.Client) {
 			"child can stop or snooze it but not change it.",
 		func(ctx context.Context, c *fgclient.Client, in alarmArgs) (any, error) {
 			var alarm store.Alarm
-			if err := c.Do(ctx, "PUT", "/api/v1/children/"+in.ChildID+"/alarm", map[string]any{"weekdays": in.Weekdays}, &alarm); err != nil {
+			body := map[string]any{"weekdays": in.Weekdays}
+			if in.SkipHolidays != nil {
+				body["skip_holidays"] = *in.SkipHolidays
+			}
+			if err := c.Do(ctx, "PUT", "/api/v1/children/"+in.ChildID+"/alarm", body, &alarm); err != nil {
 				return nil, err
 			}
 			return alarm, nil
@@ -354,6 +394,58 @@ func registerTools(server *mcp.Server, client *fgclient.Client) {
 			default:
 				return nil, fmt.Errorf("time is HH:MM, off or clear, not %q", in.Time)
 			}
+		})
+
+	add(server, client, "get_agenda",
+		"A child's agenda (FR-24): entries repeating on weekdays (school, training) or on one date, "+
+			"each with a time, an optional place and whether it is optional. Use get_week to see it laid out.",
+		func(ctx context.Context, c *fgclient.Client, in childArgs) (any, error) {
+			var out map[string]any
+			if err := c.Get(ctx, "/api/v1/children/"+in.ChildID+"/agenda", &out); err != nil {
+				return nil, err
+			}
+			return out, nil
+		})
+
+	add(server, client, "set_agenda",
+		"Replace a child's agenda. Send the whole agenda: call get_agenda first and keep the ids.",
+		func(ctx context.Context, c *fgclient.Client, in agendaArgs) (any, error) {
+			var out map[string]any
+			if err := c.Do(ctx, "PUT", "/api/v1/children/"+in.ChildID+"/agenda", map[string]any{"entries": in.Entries}, &out); err != nil {
+				return nil, err
+			}
+			return out, nil
+		})
+
+	add(server, client, "get_week",
+		"A child's agenda laid out over days, in time order, with the family holiday that applies — "+
+			"holidays pause repeating entries, not single ones. This is what the phone shows.",
+		func(ctx context.Context, c *fgclient.Client, in weekArgs) (any, error) {
+			days := ""
+			if in.Days > 0 {
+				days = fmt.Sprint(in.Days)
+			}
+			return fetchWeek(ctx, c, in.ChildID, in.From, days)
+		})
+
+	add(server, client, "get_holidays",
+		"The family's holidays: first and last day of each, both included.",
+		func(ctx context.Context, c *fgclient.Client, _ emptyArgs) (any, error) {
+			var out map[string]any
+			if err := c.Get(ctx, "/api/v1/family/holidays", &out); err != nil {
+				return nil, err
+			}
+			return out, nil
+		})
+
+	add(server, client, "set_holidays",
+		"Replace the family's holidays. Send all of them: call get_holidays first and keep the ids.",
+		func(ctx context.Context, c *fgclient.Client, in holidaysArgs) (any, error) {
+			var out map[string]any
+			if err := c.Do(ctx, "PUT", "/api/v1/family/holidays", map[string]any{"holidays": in.Holidays}, &out); err != nil {
+				return nil, err
+			}
+			return out, nil
 		})
 
 	add(server, client, "list_commands",

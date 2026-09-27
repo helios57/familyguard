@@ -63,6 +63,7 @@ class SynchronizerTest {
         localEarnedMinutes: (Input) -> Int = { 0 },
         onEnforced: (Input, DesiredState) -> Unit = { _, _ -> },
         onAlarm: (io.github.helios57.familyguard.alarm.AlarmSchedule) -> Unit = {},
+        onAgenda: (io.github.helios57.familyguard.agenda.AgendaBlock) -> Unit = {},
     ) = Synchronizer(
         api,
         cache,
@@ -75,6 +76,7 @@ class SynchronizerTest {
         localEarnedMinutes = localEarnedMinutes,
         onEnforced = onEnforced,
         onAlarm = onAlarm,
+        onAgenda = onAgenda,
     )
 
     // ---- the happy path ---------------------------------------------------------------------
@@ -124,6 +126,23 @@ class SynchronizerTest {
         synchronizer(onAlarm = { handed = it }).sync() as SyncResult.Applied
         assertEquals("06:30", handed?.weekdays?.first())
         assertEquals("Europe/Zurich", handed?.timezone)
+    }
+
+    /** FR-24.5: the agenda the server sends is kept for the Heute screen. */
+    @Test
+    fun `the agenda the server sends is handed on to be kept`() {
+        server.answerWith { request ->
+            if (request.path.endsWith("/heartbeat")) {
+                HttpResponse(200, body = """{"policy_version":99,"pending_commands":2}""")
+            } else {
+                HttpResponse(200, body = policyBody().dropLast(1) +
+                    ""","agenda":{"days":[{"day":"2026-10-07","holiday":"","items":[{"entry_id":"s","title":"Schule",""" +
+                    """"place":"","starts_at":"08:00","ends_at":"12:00","optional":false}]}]}}""")
+            }
+        }
+        var kept: io.github.helios57.familyguard.agenda.AgendaBlock? = null
+        synchronizer(onAgenda = { kept = it }).sync() as SyncResult.Applied
+        assertEquals("Schule", kept?.days?.single()?.items?.single()?.title)
     }
 
     @Test
@@ -482,6 +501,19 @@ class SynchronizerTest {
         val body = server.requests.last { it.path.endsWith("/heartbeat") }.body
         assertFalse("an unread battery level was sent as a number: $body", body.contains("battery_level"))
         assertFalse("an unread screen state was sent as a boolean: $body", body.contains("screen_on"))
+    }
+
+    /**
+     * FR-23.4: whether the alarm may take over the lock screen reaches the server, where the console
+     * turns a false into "alarm: notification only". 0.6.22 shipped the server and console halves and
+     * not this one — the first family phone on it reported nothing, and every test had posted the
+     * heartbeat by hand.
+     */
+    @Test
+    fun `the heartbeat says whether the alarm may take over the lock screen`() {
+        Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY.copy(alarmFullScreen = false) }, now = { DEVICE_NOW }).sync()
+        val body = server.requests.last { it.path.endsWith("/heartbeat") }.body
+        assertTrue("the heartbeat does not carry alarm_full_screen=false: $body", body.contains("\"alarm_full_screen\":false"))
     }
 
     /** A heartbeat that fails does not undo an apply that worked. The phone is enforcing either way. */

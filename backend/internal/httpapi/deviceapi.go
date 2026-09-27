@@ -336,7 +336,18 @@ func (s *Server) devicePolicy(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"desired": state, "input": input, "today": today, "alarm": alarm})
+	// FR-24.3: today and tomorrow of the agenda, so the Heute screen shows now and next offline.
+	pol, err := s.store.GetPolicy(c.Request.Context(), dev.ChildID)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	agendaBlock, err := s.deviceAgenda(c.Request.Context(), dev.ChildID, pol)
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"desired": state, "input": input, "today": today, "alarm": alarm, "agenda": agendaBlock})
 }
 
 // deviceCommands hands over the queued commands and records that it did.

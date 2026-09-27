@@ -7825,3 +7825,95 @@ Every probe a value change, restored with `cp` and verified with `cmp`. One devi
 Heute line rather than on its probe — the screen was read before it had re-read the store — so it
 measured nothing; the test now reopens the screen from Home, and the probe was retaken. This phase:
 **19 probes, 18 red, 1 invalid first attempt retaken.** Cumulative: **216 probes.**
+
+### 37.3 — live
+
+Deployed 2026-09-27 as 0.6.22, server first: image `sha256:26ac3e65…a357` on one pod, ArgoCD *Synced /
+Healthy*; `/dpc.apk` byte-identical to the signed `familyguard-0.6.22-versionCode-31.apk`
+(`0b9f0281…e764`, signer `b62cda94…8e10`). Read back live: `GET /children/:id/alarm` answers for both
+profiles (so migration 0020 ran), both phones' desired states answer 200, the served `app.js` carries
+the Alarm card and the badge while an impossible string counts 0, and the log had no error after the
+rollout. One family phone took 0.6.22 by itself.
+
+**It reported no `alarm_full_screen`.** The server, the console and their tests carried the field;
+the phone's heartbeat never did — every e2e test had posted the heartbeat by hand, so none of them
+could notice. Fixed in 0.6.23 with a `SynchronizerTest` through the real sync (red first: the body
+had no such key) and a check in the device test that the emulator's own report reaches the server.
+
+**Not measured yet — the owner's check on the family phone:** the alarm ringing with the screen off
+after the phone has lain unused, over a lock screen with a PIN.
+
+## Phase 38 — Agenda and holidays (FR-24)
+
+Phase 5 of the daily-plan design (`docs/superpowers/specs/2026-09-27-daily-plan-design.md` §7, §8, §9;
+plan `docs/superpowers/plans/2026-09-28-phase5-agenda.md`).
+
+**The server expands, the phone displays.** A profile's agenda is a document of entries — every week
+on some weekdays, or on one date — with a place and an *optional* flag; the family's holidays are a
+document of date ranges. The server lays them out over days (`internal/agenda`, pure): repeating
+entries on their weekdays unless a holiday applies, single entries on their date even in a holiday, in
+time order. The phone is sent today and tomorrow in the profile's calendar and picks the day by its own
+date, so a phone offline past midnight shows the right day; *Jetzt* and *Danach* are decided on the
+phone's clock. The alarm gains *Not during holidays*: the phone is sent the coming holidays with the
+rule and skips their dates, except a date changed on its own.
+
+1. **Server**: migration 0021 (`agenda_entries`, `holidays`, `alarm_settings`), `GET|PUT
+   /children/:id/agenda`, `GET /children/:id/agenda/days`, `GET|PUT /family/holidays`, `skip_holidays`
+   on the alarm, the `agenda` block and `alarm.holidays` in the device policy; audit `AGENDA_UPDATED`,
+   `HOLIDAYS_UPDATED`.
+2. **Phone**: `AgendaBlock`, `AgendaNow`, `EncryptedAgendaStore`, the Heute screen's holiday, *Jetzt*,
+   *Danach* and *Morgen*; `NextAlarm` skips holidays.
+3. **Console**: the *Agenda* card with *This week*, *Holidays* on the Family tab, *Not during holidays*
+   on the Alarm card.
+4. **fgctl/MCP**: `agenda [--set]`, `week [--from] [--days]`, `holidays [--set]`, `skip_holidays` in
+   `alarm --set`; `get_agenda`, `set_agenda`, `get_week`, `get_holidays`, `set_holidays`, and
+   `set_alarm`'s `skip_holidays`.
+
+**A defect found on the way, in code older than this phase:** a save that answered after the parent
+had switched tabs redrew the NEW tab from the OLD tab's data — `renderFamily` fed the Rules data threw
+*"Cannot read properties of undefined (reading 'map')"*. It surfaced once, by timing, in a probe run of
+this phase's console test. A test now holds the next tab's load back so the order is certain, went red
+with that exact error, and is green since `redraw` only draws the view its data belongs to.
+
+### 38.1 — tests
+
+- Go unit: `agenda.Expand` (the week, time order, an empty day as `[]`; a holiday suppressing the
+  repeating entries and not the single one, the days around it untouched).
+- Kotlin unit: `AgendaNowTest` (7: parse; before the first item; inside one; over at its end minute;
+  after the last; offline past midnight; a block for other days), `NextAlarmTest` +2 (holidays skipped,
+  not without the flag, a changed date inside one rings; parse), `SynchronizerTest` +2 (the agenda
+  handed on; the heartbeat's `alarm_full_screen`). Suite 910.
+- e2e: the agenda document, its ids and six refusals; the week from a known Monday; holidays and three
+  refusals; `days=32` refused; the alarm flag; the device blocks; audit; a guardian refused all five
+  routes; the emptiness and audit ratchets (both named the new collections and actions before they
+  were covered).
+- Chrome at 360 px: an admin adds a repeating and a one-date entry, sees *This week*, turns on *Not
+  during holidays*, adds a holiday of 12 days on the Family tab — each read back from the server —
+  with layout guards on both editors, and the place under its title in the week; the late-save test.
+- fgctl and MCP against the real binary.
+- Real Android (`tests/android/agenda.sh`): the Heute screen says *Now: Lernzeit · Stube until 23:59*
+  and *Tomorrow: 14:00 Zahnarzt (optional)* from an agenda kept on a real server.
+
+### 38.2 — calibration
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| 1 | `agenda/agenda.go` | the holiday ignored | **RED**: *Tuesday in the holiday reads … items=[Primarschule]* |
+| 2 | `agenda/agenda.go` | time order reversed | **RED**: *Wednesday holds [Training Zahnarzt Primarschule]* |
+| 3 | `httpapi/agenda.go` | the phone sent one day | **RED**: *want today and tomorrow* |
+| 4 | `httpapi/alarm.go` | past holidays sent to the phone | **RED**: *want skip_holidays and the coming holiday* |
+| 5 | `httpapi/agenda.go` | a one-date entry's date unchecked | **RED**: *answered 500, want 400* |
+| 6 | `Agenda.kt`, `AlarmSchedule.kt` (stubs) | answering nothing | **RED**: 5 of 7, and the holiday alarm test |
+| 7 | `Synchronizer.kt` | the agenda not handed on | **RED**: *expected Schule but was null* |
+| 8 | `Synchronizer.kt` (before the fix) | the heartbeat without `alarm_full_screen` | **RED**: *does not carry alarm_full_screen=false* |
+| 9–13 | `app.js` | place dropped; the date not sent; the holiday switch not sent; the week without titles; the holiday's length unsaid | **RED**, each on its line |
+| 14 | `app.css` | the week's title inline | **RED**: *drawn on the same line as its title* |
+| 15 | `app.js` (before the fix) | a late save redrawing another tab | **RED**: *TypeError … reading 'map'* |
+| 16 | `fgctl/agenda.go` | `--from` ignored | **RED**: the week began today |
+| 17 | `fgctl/mcp.go` | `skip_holidays` forced on | **RED**: *left it on* |
+| 18 | `Agenda.kt`, on the device | *now* read as after the end | **RED**: *does not say "Now: …"* while *Tomorrow* still showed |
+
+Every probe a value change, restored with `cp` and verified with `cmp`. A first version of the late-save
+test delayed the save instead of the next tab's load and stayed green — it measured the harmless order,
+so it was rewritten until it went red, and that red is row 15. This phase: **18 probes, 18 red.**
+Cumulative: **234 probes.**
