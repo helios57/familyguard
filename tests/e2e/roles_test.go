@@ -148,3 +148,116 @@ func TestTwoPrimaryAdminsCannotDemoteEachOtherToNone(t *testing.T) {
 		}
 	}
 }
+
+// Every parent route that is not on the guardian allowlist, called as a guardian, against a real
+// server with a real enrolled phone, so a path parameter that resolves to nothing cannot be what
+// produced the refusal. The unit test in httpapi is what catches a NEW route; this list is the
+// surface as of phase 1.
+func TestAGuardianIsRefusedEverythingOutsideTheGuardianWindow(t *testing.T) {
+	h := newHarness(t)
+	primary := h.signIn(primaryParent)
+	admin := h.signIn(secondParent)
+	child := h.newChild(primary.Token, "Mira")
+	device := h.newDevice(primary.Token, child.ID, "Mira's phone")
+	_, enrollToken := h.provision(primary.Token, device.ID)
+	h.enrollDevice(enrollToken, "Pixel 8", "Android 16", nil)
+	h.call(http.MethodPatch, "/children/"+child.ID+"/policy", primary.Token,
+		map[string]any{"daily_limit_minutes": 60}).expect(http.StatusOK)
+	h.addParent(primary.Token, guardianIdentity.Email, "GUARDIAN")
+	guardian := h.signIn(guardianIdentity)
+
+	c, d := "/children/"+child.ID, "/devices/"+device.ID
+	allowed := []struct {
+		method, path string
+		body         any
+		status       int
+	}{
+		{http.MethodGet, "/me", nil, http.StatusOK},
+		{http.MethodGet, "/family", nil, http.StatusOK},
+		{http.MethodGet, "/children", nil, http.StatusOK},
+		{http.MethodGet, "/devices?child_id=" + child.ID, nil, http.StatusOK},
+		{http.MethodGet, d + "/desired-state", nil, http.StatusOK},
+		{http.MethodPost, c + "/bonus", map[string]any{"minutes": 15}, http.StatusOK},
+	}
+	for _, a := range allowed {
+		if r := h.call(a.method, a.path, guardian.Token, a.body); r.Status != a.status {
+			t.Errorf("guardian %s %s: got %d, want %d\n%s", a.method, a.path, r.Status, a.status, r.Body)
+		}
+	}
+
+	refused := []struct {
+		method, path string
+		body         any
+	}{
+		{http.MethodGet, "/dpc", nil},
+		{http.MethodGet, "/family/blocked-packages", nil},
+		{http.MethodPut, "/family/blocked-packages", map[string]any{"package_name": "com.example.x"}},
+		{http.MethodDelete, "/family/blocked-packages?package_name=com.example.x", nil},
+		{http.MethodGet, "/parents", nil},
+		{http.MethodPost, "/parents", map[string]any{"email": "x@family.test", "role": "ADMIN"}},
+		{http.MethodPatch, "/parents/" + primary.Parent.ID, map[string]any{"role": "ADMIN"}},
+		{http.MethodDelete, "/parents/" + primary.Parent.ID, nil},
+		{http.MethodPost, "/children", map[string]any{"name": "X"}},
+		{http.MethodPatch, c, map[string]any{"name": "X"}},
+		{http.MethodDelete, c, nil},
+		{http.MethodGet, c + "/policy", nil},
+		{http.MethodPatch, c + "/policy", map[string]any{"daily_limit_minutes": 600}},
+		{http.MethodGet, c + "/app-rules", nil},
+		{http.MethodPut, c + "/app-rules", map[string]any{"package_name": "com.example.x", "action": "ALLOW"}},
+		{http.MethodDelete, c + "/app-rules?package_name=com.example.x", nil},
+		{http.MethodGet, c + "/blocked-domains", nil},
+		{http.MethodPost, c + "/blocked-domains", map[string]any{"domain": "example.com"}},
+		{http.MethodDelete, c + "/blocked-domains?domain=example.com", nil},
+		{http.MethodPost, c + "/devices", map[string]any{"name": "X"}},
+		{http.MethodGet, c + "/managed-apps", nil},
+		{http.MethodPut, c + "/managed-apps/com.example.x", nil},
+		{http.MethodDelete, c + "/managed-apps/com.example.x", nil},
+		{http.MethodGet, d, nil},
+		{http.MethodPatch, d, map[string]any{"name": "X"}},
+		{http.MethodDelete, d, nil},
+		{http.MethodPost, d + "/provisioning", nil},
+		{http.MethodGet, d + "/recovery-code", nil},
+		{http.MethodGet, d + "/recovery-events", nil},
+		{http.MethodGet, d + "/apps", nil},
+		{http.MethodDelete, d + "/apps/com.example.x", nil},
+		{http.MethodGet, d + "/usage", nil},
+		{http.MethodGet, d + "/usage/timeline", nil},
+		{http.MethodGet, d + "/locations", nil},
+		{http.MethodGet, d + "/commands", nil},
+		{http.MethodPost, d + "/commands", map[string]any{"type": "RING"}},
+		{http.MethodGet, d + "/debug", nil},
+		{http.MethodGet, "/apps", nil},
+		{http.MethodPost, "/apps", nil},
+		{http.MethodPost, "/apps/scan", nil},
+		{http.MethodDelete, "/apps/11111111-2222-3333-4444-555555555555", nil},
+		{http.MethodGet, "/api-keys", nil},
+		{http.MethodPost, "/api-keys", map[string]any{"name": "x"}},
+		{http.MethodPost, "/api-keys/11111111-2222-3333-4444-555555555555/revoke", nil},
+		{http.MethodDelete, "/api-keys/11111111-2222-3333-4444-555555555555", nil},
+		{http.MethodGet, "/audit", nil},
+	}
+	for _, r := range refused {
+		resp := h.call(r.method, r.path, guardian.Token, r.body)
+		if resp.Status != http.StatusForbidden || resp.errorCode() != "forbidden" {
+			t.Errorf("guardian %s %s: got %d %q, want 403 forbidden", r.method, r.path, resp.Status, resp.errorCode())
+		}
+	}
+	// Control: the refusals are about the role. An admin reading the same routes is not refused.
+	// Reads only, because an admin's writes here would delete the fixture under the rest of the loop.
+	for _, r := range refused {
+		if r.method != http.MethodGet || r.path == "/api-keys" || r.path == d+"/debug" {
+			continue
+		}
+		if resp := h.call(r.method, r.path, admin.Token, nil); resp.Status == http.StatusForbidden {
+			t.Errorf("admin GET %s was refused too, so the guardian's 403 proves nothing about roles", r.path)
+		}
+	}
+	// The phone still exists and the child still has a limit: nothing above landed.
+	var pol struct {
+		DailyLimitMinutes int `json:"daily_limit_minutes"`
+	}
+	h.call(http.MethodGet, c+"/policy", primary.Token, nil).expect(http.StatusOK).decode(&pol)
+	if pol.DailyLimitMinutes != 60 {
+		t.Errorf("a refused write landed: the daily limit is %d", pol.DailyLimitMinutes)
+	}
+}
