@@ -60,8 +60,8 @@ android {
         // versionName stays the same for both builds ON PURPOSE. FR-15.3 installs on a strictly
         // greater versionCode, and a test whose two builds also differed by name could pass while
         // the updater compared names.
-        versionCode = 32 + buildOffset
-        versionName = "0.6.23"
+        versionCode = 33 + buildOffset
+        versionName = "0.6.24"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
