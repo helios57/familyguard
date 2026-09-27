@@ -7992,3 +7992,21 @@ nothing private, loopback, link-local or in 100.64/10.
 
 Every probe a value change, restored with `cp` and verified with `cmp`. This phase: **17 probes, 17
 red.** Cumulative: **251 probes.**
+
+### 39.3 — live
+
+Deployed 2026-09-27 as 0.6.24, server first: image `sha256:b71b4b3b…e6d2` on one pod; `/dpc.apk`
+byte-identical to the signed `familyguard-0.6.24-versionCode-33.apk` (`b2443348…48b7`). Read back live:
+`GET /children/:id/calendar` answers for both profiles (migration 0022 ran), their `agenda/days` and
+both phones' desired states answer 200, the served `app.js` carries *Save calendar* while an impossible
+string counts 0, and no error was logged after the rollout. The production egress policy allows the
+world on 443, which is what a calendar read needs; **no real calendar has been read in production yet**
+— the first one a parent sets is that measurement.
+
+Both family phones updated themselves within minutes (one to 0.6.24, one to 0.6.23 on its way). The
+Android 16 phone has not heartbeated since its update (asleep), so its `alarm_full_screen` is **not yet
+measured**; the Android 13 one correctly reports nothing, the question not existing below Android 14.
+The same code reported `true` from the API 37 emulator through the real sync.
+
+**The daily-plan design is built, all six phases (Phases 34–39, 0.6.18–0.6.24).** Still open, and the
+owner's to take: the alarm on the family phone after it has lain unused, over a PIN lock screen.
