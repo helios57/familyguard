@@ -34,8 +34,7 @@ Single-tenant by design: one family, several parents, several children, several 
 | **Managed device** | An Android device where the DPC is Device Owner. Authenticates as itself. |
 | **Control plane** | Server holding all state; the only authority on policy. |
 
-RBAC roles: `PRIMARY_ADMIN`, `ADMIN`, `GUARDIAN`. `PRIMARY_ADMIN` is the only role that may add
-or remove parents; the others differ only in that.
+RBAC roles: `PRIMARY_ADMIN`, `ADMIN`, `GUARDIAN` — what each may do is FR-20.
 
 ---
 
@@ -613,24 +612,29 @@ below is about who can open it, what it can reach, and who can see that it is op
 
 The five requirements below were agreed with the owner on 2026-09-27 and are designed in
 [`docs/superpowers/specs/2026-09-27-daily-plan-design.md`](docs/superpowers/specs/2026-09-27-daily-plan-design.md).
-**None of them is built yet**; each names the phase that builds it, and the phase fills in the detail
-when it lands.
+FR-20 is built (phase 1, 0.6.18). **FR-21 … FR-24 are not built yet**; each names the phase that
+builds it, and the phase fills in the detail when it lands.
 
 ### FR-20 Roles and rights (phase 1)
 Measured 2026-09-27: the role was checked on 7 of 48 parent routes, so a guardian could delete a
 child.
 
 - FR-20.1 Every parent endpoint names the roles that may call it, and a route that names none fails
-  the build's tests. A `GUARDIAN` may read the family, the profiles, the devices and each device's
-  desired state, give time today, receive the event stream, and act through the guardian window
-  (FR-21, FR-22) — nothing else.
-- FR-20.2 Only a `PRIMARY_ADMIN` changes a role, and only from the console (FR-17.2's reasoning).
-  Nobody changes their own role; the last `PRIMARY_ADMIN` cannot be demoted, even by two primary
-  admins acting at the same moment. A change holds on the parent's next request and for their API
-  keys, and is audited with the role before and after.
-- FR-20.3 The console offers People & rights to the primary admin: add a person with a role, change
-  a role, remove a person. A `GUARDIAN` who signs in sees only the guardian window, in German,
-  whatever link they arrived on.
+  the build's tests. A `GUARDIAN` may read `/me`, the family, the profiles, the devices and each
+  device's desired state, give time today (FR-3.11) and receive the event stream — nothing else;
+  FR-21 and FR-22 add the guardian window's other actions. Reading the family blocklist moved from
+  every parent to admins, because the guardian window lists no apps.
+- FR-20.2 Only a `PRIMARY_ADMIN` changes a role (`PATCH /parents/:id`), and only from the console
+  (FR-17.2's reasoning: an API key is refused). Nobody changes their own role (409); the last
+  `PRIMARY_ADMIN` cannot be demoted, even by two primary admins demoting each other at the same
+  moment (409, "the family must keep at least one primary admin"). A change holds on the parent's
+  next request — the same session token — and for their API keys, and is audited as
+  `PARENT_ROLE_CHANGED` with `from` and `to`.
+- FR-20.3 The console offers People & rights to the primary admin: add a person with a role
+  (Guardian by default), change a role, remove a person; their own row offers neither. A `GUARDIAN`
+  who signs in sees only the guardian window, in German, whatever link they arrived on: one card per
+  profile with today's time against the limit, why apps are paused, and +15/+30/+60 where there is a
+  limit. The page requests nothing a guardian may not read.
 
 ### FR-21 Pause and today's time (phase 2)
 A parent or guardian can **pause** a profile's phones — everything suspended except the critical

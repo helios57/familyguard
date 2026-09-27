@@ -7452,3 +7452,79 @@ The likely cause is that Android refuses to suspend the package verifier; `Devic
 a refusal as "the platform did not act on it". That log could not be read: the phone was asleep, and
 the tunnel reaches only an awake phone (FR-19.8). This is not new with 0.6.17, because the store was in
 the sweep before as well.
+
+## Phase 34 — Roles and rights (FR-20)
+
+The owner, 2026-09-27, planning the daily plan with the children: *"das neue Fenster braucht eine neue
+Rolle im backend: Erziehungsberechtigten, neben der gibt es noch admin, auch mit google login"* and
+*"natürlich eine admin Oberfläche für die rechte"*. The role already existed, and it was the problem:
+**the role was checked on 7 of the 48 parent routes**, so a `GUARDIAN` could delete a child, change a
+policy or open adb. The design is `docs/superpowers/specs/2026-09-27-daily-plan-design.md` §2, the plan
+`docs/superpowers/plans/2026-09-27-phase1-roles-and-rights.md`.
+
+1. **Every parent route declares its roles.** Routes register through `parentRoutes`
+   (`httpapi/roles.go`), whose methods take the allowed roles as a required argument and install
+   `requireRole` themselves. A `GUARDIAN` may call seven routes; everything else is admins or the
+   primary admin, unchanged for admins.
+2. **`PATCH /parents/:id`** changes a role: primary admin, console only, never your own, never the last
+   primary admin — every primary-admin row is locked before the count, so two primary admins demoting
+   each other at once are serialised. Audited as `PARENT_ROLE_CHANGED`.
+3. **The console**: People & rights with a role select, and a German guardian view that is all a
+   guardian sees.
+
+### 34.1 — tests
+
+- `httpapi/roles_test.go`: a walk over gin's route table fails on any parent route without a
+  declaration (a route registered around the wrapper included); the guardian allowlist is pinned
+  both ways; the wrapper is shown to install the check, both outcomes per role.
+- `tests/e2e/roles_test.go`: a role change holds on the same token's next request; a demoted parent's
+  API key is demoted with them; only the primary admin changes roles and never their own; two primary
+  admins demoting each other concurrently, 20 rounds, always leave one; and every route outside the
+  allowlist answers a guardian 403 against a real server with an enrolled phone, with an admin
+  control showing the refusals are about the role.
+- `tests/e2e/roles_console_test.go` (real Chrome, 360 px): the primary admin adds a guardian and
+  changes the role; a guardian arriving on `#/rules` sees one card per profile, no tab bar and no
+  child name in the header, "Noch kein Handy eingerichtet" for a profile without a phone, "kein
+  Tageslimit" and no buttons for a phone without a limit, and +15 reaches the server. The page must
+  log no error, which includes any 403.
+- `audit_test.go` covers `PARENT_ROLE_CHANGED`; the blocklist test now expects a guardian's read to be
+  refused.
+
+Two defects were found by **looking at screenshots**, not by any test: the role select and Remove left a
+person's address about 40 px at phone width, so it broke one letter per line; and the status assertion
+passed on the card's "+60 min" *button* while the status line said something else. Both now have an
+assertion, and both were shown red (16, 17).
+
+### 34.2 — calibration
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| 1 | `server.go` | `/audit` registered on the raw group | **RED**: *declares no roles* |
+| 2 | `server.go` | policy readable by every role | **RED**: *a guardian may call it = true, want false* |
+| 3 | `roles.go` | the wrapper drops `requireRole` | **RED**: *got 200, want 403* |
+| 4 | `roles_test.go` | the walk matches nothing | **RED**: *the walk saw 0 parent routes* |
+| 5 | `store/family.go` | the UPDATE writes the old role | **RED**: *the answer says "GUARDIAN", expected ADMIN* (first attempt was an SQL syntax error — it measured the database; retaken) |
+| 6 | `parents.go` | the self-check compares to `uuid.Nil` | **RED**: *the primary admin changing their own role* |
+| 7 | `store/family.go` | the last-primary check disabled | **RED** in round 0 of 20 |
+| 7b | `store/family.go` | only the lock on primary rows removed | **RED** in round 1: the lock is load-bearing |
+| 8 | `parents.go` | the audit action misspelt | **RED**: `TestEveryAuditedActionIsWritten` |
+| 9 | `server.go` | policy readable by a guardian | **RED**: *guardian GET …/policy: got 200* |
+| 10 | `server.go` | bonus taken from a guardian | **RED**: *…/bonus: got 403, want 200* |
+| 11 | `server.go` | `/audit` narrowed to primary only | **RED**: *admin GET /audit was refused too* |
+| 12 | `app.js` | guardian routing off | **RED**: *one guardian card per profile* |
+| 13 | `app.js` | +time buttons without a limit | **green** — the only no-limit profile had no phone and returned early; a phone-without-limit profile was added |
+| 13b | `app.js` | the same, with that profile | **RED**: *time buttons [15 30 60 15 30 60]* |
+| 14 | `app.js` | the add form ignores the select | **RED**: *added the person as "ADMIN"* |
+| 15 | `app.js` | the own row gets a select | **RED**: *own row offers a role select* |
+| 16 | `app.css` | person rows do not wrap | **RED**: *the controls crowd them out* |
+| 17 | `app.js` | the status line shows other minutes | **RED**: *status line does not show today* |
+| 18 | `app.js` | the header names a profile for a guardian | **RED**: *the header names one profile* |
+
+Every probe was a value change, restored with `cp` and verified with `cmp`; none produced a build
+error. Cumulative: **133 probes, 130 red, one deliberate green, one green that corrected a comment and
+one green that found an uncovered case (13).**
+
+### 34.3 — live
+
+Read-only check before the change: the live family has one parent, a `PRIMARY_ADMIN`, so restricting
+`GUARDIAN` took access from nobody.
