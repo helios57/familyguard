@@ -114,6 +114,10 @@ type Child struct {
 	Name      string    `json:"name"`
 	BirthYear *int      `json:"birth_year,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+	// Paused is whether the profile's phones are paused (FR-21). Filled by the listing only — the
+	// guardian window reads it there, since a guardian may not read the policy itself — and nil
+	// everywhere else, so an answer that does not know never claims "not paused".
+	Paused *bool `json:"paused,omitempty"`
 }
 
 type Device struct {

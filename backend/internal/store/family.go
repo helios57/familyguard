@@ -221,7 +221,10 @@ func (s *Store) CreateChild(ctx context.Context, familyID uuid.UUID, name string
 
 // ListChildren returns every child in the family.
 func (s *Store) ListChildren(ctx context.Context) ([]Child, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+childCols+` FROM children ORDER BY created_at`)
+	rows, err := s.pool.Query(ctx,
+		`SELECT c.id, c.family_id, c.name, c.birth_year, c.created_at, COALESCE(p.paused, FALSE)
+		   FROM children c LEFT JOIN policies p ON p.child_id = c.id
+		  ORDER BY c.created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -229,9 +232,11 @@ func (s *Store) ListChildren(ctx context.Context) ([]Child, error) {
 	out := []Child{}
 	for rows.Next() {
 		var c Child
-		if err := rows.Scan(&c.ID, &c.FamilyID, &c.Name, &c.BirthYear, &c.CreatedAt); err != nil {
+		var paused bool
+		if err := rows.Scan(&c.ID, &c.FamilyID, &c.Name, &c.BirthYear, &c.CreatedAt, &paused); err != nil {
 			return nil, err
 		}
+		c.Paused = &paused
 		out = append(out, c)
 	}
 	return out, rows.Err()

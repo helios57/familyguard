@@ -629,8 +629,8 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
   };
 })()`, &open)
 
-		if open.VisibleTabs != 5 {
-			t.Errorf("the open drawer shows %d of the 5 navigation links", open.VisibleTabs)
+		if open.VisibleTabs != consoleDestinations {
+			t.Errorf("the open drawer shows %d of the %d navigation links", open.VisibleTabs, consoleDestinations)
 		}
 		if open.Width > phoneWidth+0.5 {
 			t.Errorf("the drawer is %.0f px wide on a %d px screen, so it is not a drawer — it is "+
@@ -686,7 +686,7 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 		// Moving the navigation to the top costs one-handed reach: the ☰ is in the corner furthest
 		// from a thumb. The drawer is allowed to cost that ONCE, for the opening tap. If its
 		// destinations then sit at the top of the drawer too, every navigation is a full-screen
-		// stretch and the tab bar was strictly better. So the five links must land in the lower part
+		// stretch and the tab bar was strictly better. So the links must land in the lower part
 		// of the screen — the band the tab bar used to occupy.
 		if reach := float64(phoneHeight) * 0.35; open.FirstTabTop < reach {
 			t.Errorf("the drawer's first destination starts %.0f px down a %d px screen, above the "+

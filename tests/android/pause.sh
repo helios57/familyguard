@@ -12,8 +12,15 @@
 # setPackagesSuspended — read back from `dumpsys package`, which is what the launcher obeys.
 #
 # Like remote-adb.sh this layer keeps adb: the test switches Allow debugging on before the phone
-# enrols. It installs the fixture app as the thing to pause, because it is ours, launchable, and
-# present on every image.
+# enrols. The app it pauses is a preinstalled one with a launcher entry (DeskClock on the Google
+# APIs images); the fixture app, which has no components at all, is the negative control a pause must
+# leave alone (FR-3.12).
+#
+# Emulator: on familyguard37 (API 37) `-gpu swiftshader_indirect` alone aborts SurfaceFlinger in a loop
+# ("Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma"), which takes device_policy and
+# StorageManager down with it and reads like a provisioning failure. Measured 2026-09-27. Launch with
+#   emulator -avd familyguard37 -no-window -no-audio -no-boot-anim -no-snapshot -wipe-data \
+#            -gpu swiftshader_indirect -feature Minigbm
 set -uo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/device.sh"

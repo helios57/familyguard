@@ -396,8 +396,10 @@ function renderChildSwitcher() {
 /* Which child is on screen, for the widths where the switcher itself is in the drawer. Without it
    every screen below the header is ambiguous the moment a family has two children. */
 function renderCrumb() {
-  // A guardian's page shows every profile at once, so naming one of them here would be wrong.
-  const child = isGuardian() ? null : state.children.find((c) => c.id === state.childId);
+  // The guardian window shows every profile at once, so naming one of them here would be wrong —
+  // for a guardian, and for an admin on that tab.
+  const child = isGuardian() || state.view === 'guardian'
+    ? null : state.children.find((c) => c.id === state.childId);
   document.getElementById('crumb').textContent = child ? child.name : '';
 }
 
@@ -418,10 +420,11 @@ function selectChild(id) {
 
 function onRoute() {
   const want = (location.hash.replace('#/', '') || 'home').split('?')[0];
-  state.view = ['home', 'rules', 'apps', 'activity', 'family'].includes(want) ? want : 'home';
+  state.view = ['guardian', 'home', 'rules', 'apps', 'activity', 'family'].includes(want) ? want : 'home';
   // FR-20: a guardian has one page. An old link to an admin page lands there too, rather than on a
   // "Could not load this page" made of 403s.
   if (isGuardian()) state.view = 'guardian';
+  renderCrumb();
   for (const tab of document.querySelectorAll('.tab')) {
     if (tab.dataset.tab === state.view) tab.setAttribute('aria-current', 'page');
     else tab.removeAttribute('aria-current');
@@ -874,20 +877,25 @@ function deviceCard(dev, desired) {
   if (desired) {
     const used = desired.used_minutes || 0;
     const quota = desired.quota_minutes || 0;
-    if (quota > 0) {
-      const pct = Math.min(100, Math.round((used / quota) * 100));
+    const bonus = desired.bonus_minutes || 0;
+    // A limit exists when the plain limit says so. The quota can be 0 with a limit in force — a day
+    // with its time taken away (FR-21) — and that is "0 min left", never "no daily limit".
+    if ((desired.daily_limit_minutes || 0) > 0) {
+      const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 100;
       body.push(el('div', { class: 'stack' },
         el('div', { class: 'row' },
           el('span', { class: 'muted', text: 'Screen time today' }),
           el('span', { text: fmtMinutes(used) + ' of ' + fmtMinutes(quota)
-            + (desired.bonus_minutes ? ' (incl. ' + fmtMinutes(desired.bonus_minutes) + ' extra)' : '') })),
+            + (bonus > 0 ? ' (incl. ' + fmtMinutes(bonus) + ' extra)' : '')
+            + (bonus < 0 ? ' (' + fmtMinutes(-bonus) + ' less today)' : '') })),
         el('div', { class: 'meter' }, el('span', { class: used >= quota ? 'over' : '', style: { width: pct + '%' } })),
         dev.child_id ? bonusButtons(dev) : null));
     } else {
       body.push(el('p', { class: 'muted', text: 'Screen time today: ' + fmtMinutes(used) + ' (no daily limit)' }));
     }
     if (desired.suspend_reason) {
-      body.push(el('p', { class: 'muted', text: 'Apps are paused right now: ' + desired.suspend_reason.toLowerCase() + '.' }));
+      body.push(el('p', { class: 'muted', text: 'Apps are paused right now: '
+        + (desired.suspend_reason === 'PAUSED' ? 'paused by a parent' : desired.suspend_reason.toLowerCase()) + '.' }));
     }
     if ((desired.pending_approval || []).length) {
       body.push(el('p', { class: 'muted', text: desired.pending_approval.length
@@ -2083,6 +2091,7 @@ function dayActivityCard(dev, timeline) {
 
 /** The words for why an app cannot be used right now (FR-3.10). One table, used everywhere. */
 const BLOCKED_TEXT = {
+  PAUSED: 'Paused by a parent',
   QUOTA: 'Paused — daily limit reached',
   BEDTIME: 'Paused — bedtime',
   APP_LIMIT: 'Paused — its own limit is used up',
@@ -2100,19 +2109,20 @@ const BLOCKED_TEXT = {
  */
 function screenTimeSummary(dev, screen) {
   const used = screen.counted_minutes || 0;
-  const limit = (screen.daily_limit_minutes || 0) + (screen.bonus_minutes || 0);
+  const bonus = screen.bonus_minutes || 0;
+  const limit = Math.max(0, (screen.daily_limit_minutes || 0) + bonus);
   const parts = [];
   if (!screen.limit_recorded) {
     parts.push(el('p', { class: 'muted', text: 'Screen time counted: ' + fmtMinutes(used)
       + '. The limit that applied on this day was not recorded — days before this was added have none.' }));
-  } else if (limit > 0) {
-    const pct = Math.min(100, Math.round((used / limit) * 100));
+  } else if ((screen.daily_limit_minutes || 0) > 0) {
+    const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 100;
     parts.push(el('div', { class: 'stack' },
       el('div', { class: 'row' },
         el('span', { class: 'muted', text: screen.is_today ? 'Screen time today' : 'Screen time' }),
         el('span', { text: fmtMinutes(used) + ' of ' + fmtMinutes(limit)
-          + (screen.bonus_minutes ? ' (' + fmtMinutes(screen.daily_limit_minutes) + ' + '
-            + fmtMinutes(screen.bonus_minutes) + ' extra)' : '') })),
+          + (bonus > 0 ? ' (' + fmtMinutes(screen.daily_limit_minutes) + ' + ' + fmtMinutes(bonus) + ' extra)' : '')
+          + (bonus < 0 ? ' (' + fmtMinutes(screen.daily_limit_minutes) + ' \u2212 ' + fmtMinutes(-bonus) + ' today)' : '') })),
       el('div', { class: 'meter', role: 'img', 'aria-label': fmtMinutes(used) + ' of ' + fmtMinutes(limit) },
         el('span', { class: used >= limit ? 'over' : '', style: { width: pct + '%' } }))));
   } else {
@@ -2148,11 +2158,18 @@ function bonusButtons(dev) {
 
 /* ---- guardian ----------------------------------------------------------- */
 
-/* The guardian window (FR-20, spec §6). One card per profile, in German, because the people this
-   page is for are the family's non-admins. Phase 2 adds pause and −time; phase 3 adds the tasks
-   waiting for confirmation above the cards. */
+/* The guardian window (FR-20, FR-21, spec §6). One card per profile, in German, because the people
+   this page is for are the family's non-admins: today's time, why apps are paused, Sperren /
+   Entsperren, and −15 · +15 · +30. An admin has it too, as the first tab. Phase 3 adds the tasks
+   waiting for confirmation above the cards.
+
+   The children are re-read on every load rather than taken from boot: whether a profile is paused
+   is part of that listing, and a card drawn from the boot-time copy would say "frei" about a phone
+   somebody paused a minute ago. */
 async function loadGuardian() {
-  return Promise.all(state.children.map(async (child) => {
+  const children = (await api('/children')).children || [];
+  state.children = children;
+  return Promise.all(children.map(async (child) => {
     const devices = ((await api('/devices?child_id=' + encodeURIComponent(child.id))).devices || [])
       .filter((d) => d.enrolled);
     const states = await Promise.all(devices.map((d) =>
@@ -2170,6 +2187,7 @@ function renderGuardian(profiles) {
     const card = el('div', { class: 'card full guardian-card' }, el('h2', { text: child.name }));
     if (!devices.length) {
       card.append(el('p', { class: 'muted', text: 'Noch kein Handy eingerichtet.' }));
+      card.append(guardianPauseButton(child));
       return card;
     }
     let hasLimit = false;
@@ -2178,37 +2196,86 @@ function renderGuardian(profiles) {
         card.append(el('p', { class: 'muted', text: dev.name + ': noch keine Angaben vom Handy.' }));
         continue;
       }
-      const used = desired.used_minutes || 0;
-      const quota = desired.quota_minutes || 0;
-      hasLimit = hasLimit || quota > 0;
-      card.append(el('p', { text: dev.name + ' — Heute ' + fmtMinutes(used)
-        + (quota > 0 ? ' von ' + fmtMinutes(quota) : ' (kein Tageslimit)')
-        + (desired.bonus_minutes ? ' (inkl. ' + fmtMinutes(desired.bonus_minutes) + ' extra)' : '') }));
-      if (desired.suspend_reason) {
+      // Whether there is a limit comes from the plain limit, never from the quota: a day taken to
+      // zero has a quota of 0 and is a limit reached, not "kein Tageslimit" (FR-21).
+      const limit = desired.daily_limit_minutes || 0;
+      hasLimit = hasLimit || limit > 0;
+      card.append(el('p', { text: dev.name + ' \u2014 ' + guardianToday(desired) }));
+      // A pause is said once, in its own line below; "Apps pausiert: gesperrt" above it repeated it.
+      if (desired.suspend_reason && desired.suspend_reason !== 'PAUSED') {
         card.append(el('p', { class: 'muted', text: 'Apps pausiert: ' + guardianReason(desired.suspend_reason) + '.' }));
       }
     }
+    if (child.paused) {
+      card.append(el('p', { class: 'guardian-paused',
+        text: 'Gesperrt \u2014 Anrufen und Nachrichten gehen weiter.' }));
+    }
+    card.append(guardianPauseButton(child));
     if (hasLimit) card.append(guardianTimeButtons(child));
     return card;
   });
 }
 
+/* "Heute 40 min von 45 min (15 min weniger)": the day against the limit in force, with today's
+   adjustment said in words rather than folded silently into the number. */
+function guardianToday(desired) {
+  const used = desired.used_minutes || 0;
+  const limit = desired.daily_limit_minutes || 0;
+  if (limit <= 0) return 'Heute ' + fmtMinutes(used) + ' (kein Tageslimit)';
+  const bonus = desired.bonus_minutes || 0;
+  return 'Heute ' + fmtMinutes(used) + ' von ' + fmtMinutes(desired.quota_minutes || 0)
+    + (bonus > 0 ? ' (inkl. ' + fmtMinutes(bonus) + ' extra)' : '')
+    + (bonus < 0 ? ' (' + fmtMinutes(-bonus) + ' weniger)' : '');
+}
+
 function guardianReason(reason) {
-  return ({ QUOTA: 'Tageslimit erreicht', BEDTIME: 'Bettzeit' })[reason] || reason.toLowerCase();
+  return ({ PAUSED: 'gesperrt', QUOTA: 'Tageslimit erreicht', BEDTIME: 'Nachtruhe' })[reason] || reason.toLowerCase();
+}
+
+/* Sperren asks twice: it is the one button here that takes a phone away. The first tap arms it for
+   five seconds and changes nothing; Entsperren gives something back and needs one tap. */
+function guardianPauseButton(child) {
+  const set = (paused) => act(paused ? 'Gesperrt' : 'Entsperrt', async () => {
+    await api('/children/' + child.id + '/pause', { method: 'POST', body: { paused } });
+    refresh();
+  });
+  if (child.paused) {
+    return el('button', {
+      class: 'btn btn-block', type: 'button', text: 'Entsperren', 'data-action': 'unpause',
+      onclick: () => set(false),
+    });
+  }
+  let armed = null;
+  const button = el('button', {
+    class: 'btn btn-block btn-danger', type: 'button', text: 'Sperren', 'data-action': 'pause',
+    'aria-label': child.name + 's Handy sperren, ausser Anrufen und Nachrichten',
+    onclick: () => {
+      if (armed) {
+        clearTimeout(armed);
+        armed = null;
+        set(true);
+        return;
+      }
+      button.textContent = 'Wirklich sperren?';
+      armed = setTimeout(() => { armed = null; button.textContent = 'Sperren'; }, 5000);
+    },
+  });
+  return button;
 }
 
 function guardianTimeButtons(child) {
-  const grant = (minutes) => el('button', {
-    class: 'btn', type: 'button', text: '+' + minutes + ' min', 'data-minutes': String(minutes),
-    'aria-label': minutes + ' Minuten mehr für heute',
-    onclick: () => act('+' + minutes + ' min für heute', async () => {
+  const change = (minutes) => el('button', {
+    class: 'btn', type: 'button', 'data-minutes': String(minutes),
+    text: (minutes > 0 ? '+' : '\u2212') + Math.abs(minutes) + ' min',
+    'aria-label': Math.abs(minutes) + (minutes > 0 ? ' Minuten mehr' : ' Minuten weniger') + ' für heute',
+    onclick: () => act((minutes > 0 ? '+' : '\u2212') + Math.abs(minutes) + ' min für heute', async () => {
       await api('/children/' + child.id + '/bonus', { method: 'POST', body: { minutes } });
       refresh();
     }),
   });
   return el('div', { class: 'stack' },
-    el('span', { class: 'muted', text: 'Mehr Zeit, nur heute:' }),
-    el('div', { class: 'btn-grid' }, grant(15), grant(30), grant(60)));
+    el('span', { class: 'muted', text: 'Zeit für heute:' }),
+    el('div', { class: 'btn-grid' }, change(-15), change(15), change(30)));
 }
 
 /**

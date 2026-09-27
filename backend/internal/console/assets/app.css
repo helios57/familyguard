@@ -309,8 +309,11 @@ p { margin: 0 0 0.6em; }
   border-top: 1px solid var(--line);
 }
 
-/* The same nav element, laid out as a list instead of a row. */
-.drawer .mainnav { flex-direction: column; gap: 2px; }
+/* The same nav element, laid out as a two-column grid instead of a row. A list was right for five
+   destinations; the sixth (the guardian window, FR-21) pushed the first one above the thumb's reach
+   on an 800 px phone, which mobile_test measures. Two columns of 48 px rows keep all six in the
+   drawer's lower part and every target at full tap size. */
+.drawer .mainnav { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 .drawer .tab { min-height: 48px; padding: 0 12px; font-size: 1rem; border-radius: 10px; }
 .drawer .tab-icon { width: 22px; text-align: center; }
 
@@ -440,6 +443,8 @@ p { margin: 0 0 0.6em; }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .btn-danger { color: var(--danger); }
+/* FR-21: a paused profile says so in the guardian window, in the colour of the button that did it. */
+.guardian-paused { color: var(--danger); font-weight: 600; }
 .btn-quiet { background: transparent; border-color: transparent; color: var(--text-dim); }
 .btn-block { display: block; width: 100%; text-align: center; text-decoration: none; }
 /* An <a> is inline, and min-height does not apply to an inline box — so a link styled as a button

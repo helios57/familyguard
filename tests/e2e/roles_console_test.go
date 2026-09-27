@@ -151,9 +151,9 @@ func TestAGuardianSeesTheGuardianViewAndCanGiveTime(t *testing.T) {
 	if !strings.Contains(lea, "kein Tageslimit") {
 		t.Errorf("a phone with no daily limit does not say so: %q", lea)
 	}
-	// Review focus 5: one set of buttons, for the profile that has a limit.
-	if fmt.Sprint(page.Buttons) != "[15 30 60]" {
-		t.Errorf("time buttons %v, want exactly [15 30 60] (Mira only)", page.Buttons)
+	// Review focus 5: one set of buttons, for the profile that has a limit (FR-21: −15 · +15 · +30).
+	if fmt.Sprint(page.Buttons) != "[-15 15 30]" {
+		t.Errorf("time buttons %v, want exactly [-15 15 30] (Mira only)", page.Buttons)
 	}
 	// Chrome logs a refused request (403) as a page error, so this also catches a guardian view that
 	// still asks for something only an admin may read.
@@ -178,5 +178,122 @@ func TestAGuardianSeesTheGuardianViewAndCanGiveTime(t *testing.T) {
 			t.Fatalf("+15 in the guardian view did not reach the server (bonus %d)", ds.Desired.BonusMinutes)
 		}
 		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// FR-21 in the guardian window: pausing takes a second tap, unpausing does not, and −15 takes time
+// away. Read back from the server each time, never from the page.
+func TestAGuardianPausesAndTakesTimeAway(t *testing.T) {
+	h := newHarness(t)
+	primary := h.signIn(primaryParent)
+	child := h.newChild(primary.Token, "Mira")
+	device := h.newDevice(primary.Token, child.ID, "Miras Handy")
+	_, enrollToken := h.provision(primary.Token, device.ID)
+	h.enrollDevice(enrollToken, "Pixel 8", "Android 16", nil)
+	h.call(http.MethodPatch, "/children/"+child.ID+"/policy", primary.Token,
+		map[string]any{"daily_limit_minutes": 60, "timezone": "Europe/Zurich"}).expect(http.StatusOK)
+	h.addParent(primary.Token, guardianIdentity.Email, "GUARDIAN")
+
+	paused := func() bool {
+		var list struct {
+			Children []struct {
+				ID     string `json:"id"`
+				Paused *bool  `json:"paused"`
+			} `json:"children"`
+		}
+		h.call(http.MethodGet, "/children", primary.Token, nil).expect(http.StatusOK).decode(&list)
+		for _, c := range list.Children {
+			if c.ID == child.ID {
+				if c.Paused == nil {
+					t.Fatal("the children listing does not say whether a profile is paused")
+				}
+				return *c.Paused
+			}
+		}
+		t.Fatal("the child is not in the listing")
+		return false
+	}
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				t.Fatalf("waited 10s for %s", what)
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+
+	b := startBrowser(t)
+	b.phone(phoneWidth, phoneHeight)
+	b.navigate(h.base + "/")
+	h.issuer.setNextLogin(guardianIdentity)
+	b.waitFor("!document.getElementById('signin').hidden", 15*time.Second, "the sign-in screen")
+	b.eval("document.querySelector('#signin a.btn-primary').click()", nil)
+	b.waitFor("document.querySelectorAll('#view .guardian-card button[data-action=\"pause\"]').length === 1",
+		15*time.Second, "the Sperren button")
+
+	// One tap arms it and changes nothing.
+	b.eval(`document.querySelector('#view button[data-action="pause"]').click()`, nil)
+	b.waitFor(`document.querySelector('#view button[data-action="pause"]').textContent.includes('Wirklich')`,
+		5*time.Second, "the button to ask again")
+	if paused() {
+		t.Fatal("one tap on Sperren paused the phone; it must ask again")
+	}
+	b.eval(`document.querySelector('#view button[data-action="pause"]').click()`, nil)
+	waitFor("the pause to reach the server", paused)
+	b.waitFor(`document.querySelector('#view .guardian-card').textContent.includes('Gesperrt')`,
+		10*time.Second, "the card to say Gesperrt")
+
+	b.eval(`document.querySelector('#view button[data-action="unpause"]').click()`, nil)
+	waitFor("the unpause to reach the server", func() bool { return !paused() })
+
+	b.waitFor(`!!document.querySelector('#view button[data-minutes="-15"]')`, 10*time.Second, "the −15 button")
+	b.eval(`document.querySelector('#view button[data-minutes="-15"]').click()`, nil)
+	waitFor("−15 to reach the server", func() bool {
+		var ds struct {
+			Desired struct {
+				BonusMinutes int `json:"bonus_minutes"`
+			} `json:"desired"`
+		}
+		h.call(http.MethodGet, "/devices/"+device.ID+"/desired-state", primary.Token, nil).
+			expect(http.StatusOK).decode(&ds)
+		return ds.Desired.BonusMinutes == -15
+	})
+	b.waitFor(`document.querySelector('#view .guardian-card h2 + p').textContent.includes('15 min weniger')`,
+		10*time.Second, "the status line to say 15 minutes less")
+	if len(b.pageErrors) != 0 {
+		t.Errorf("the guardian window made the page complain: %s", b.pageErrorReport())
+	}
+}
+
+// An admin gets the guardian window too, as the first tab, and keeps the full console.
+func TestAnAdminHasTheGuardianWindowAsTheFirstTab(t *testing.T) {
+	h := newHarness(t)
+	primary := h.signIn(primaryParent)
+	h.newChild(primary.Token, "Mira")
+	b := startBrowser(t)
+	b.phone(phoneWidth, phoneHeight)
+	b.navigate(h.base + "/")
+	h.issuer.setNextLogin(primaryParent)
+	b.waitFor("!document.getElementById('signin').hidden", 15*time.Second, "the sign-in screen")
+	b.eval("document.querySelector('#signin a.btn-primary').click()", nil)
+	b.waitFor("!document.getElementById('app').hidden", 30*time.Second, "the console to sign in")
+	var first string
+	b.eval(`document.querySelector('#mainnav .tab').dataset.tab`, &first)
+	if first != "guardian" {
+		t.Fatalf("the first tab is %q, want the guardian window", first)
+	}
+	b.eval(`document.querySelector('.tab[data-tab="guardian"]').click()`, nil)
+	b.waitFor("document.querySelectorAll('#view .guardian-card').length === 1", 15*time.Second, "the guardian card")
+	var crumb string
+	b.eval(`document.getElementById('crumb').textContent`, &crumb)
+	if crumb != "" {
+		t.Errorf("on the guardian tab the header names one profile (%q) above a page of all of them", crumb)
+	}
+	var tabs int
+	b.eval(`document.querySelectorAll('#mainnav .tab').length`, &tabs)
+	if tabs != 6 {
+		t.Errorf("an admin has %d tabs; the guardian window is added, nothing is taken away (want 6)", tabs)
 	}
 }

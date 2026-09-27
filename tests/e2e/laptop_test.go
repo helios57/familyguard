@@ -65,6 +65,11 @@ type chromePlacement struct {
 	DrawerOpen     bool   `json:"drawerOpen"`
 }
 
+// consoleDestinations is how many places the console's navigation leads to: Today (the guardian
+// window, FR-21), Home, Rules, Apps, Activity and Family. A layout test that counted the links it
+// could see against a different number would pass on a console that hid one.
+const consoleDestinations = 6
+
 func TestTheConsoleHasOneNavigationAtEveryWidth(t *testing.T) {
 	h, _ := catalogHarness(t)
 	seedAFamilyWorthLookingAt(t, h)
@@ -94,9 +99,9 @@ func TestTheConsoleHasOneNavigationAtEveryWidth(t *testing.T) {
 		t.Errorf("at %d px the navigation is not in the header row (in drawer: %v): the layout "+
 			"this width is designed around never happened", laptopWidth, wide.NavInDrawer)
 	}
-	if wide.VisibleTabs != 5 {
-		t.Errorf("at %d px %d of the 5 navigation links are visible in the header",
-			laptopWidth, wide.VisibleTabs)
+	if wide.VisibleTabs != consoleDestinations {
+		t.Errorf("at %d px %d of the %d navigation links are visible in the header",
+			laptopWidth, wide.VisibleTabs, consoleDestinations)
 	}
 	if !wide.KidsInHeader {
 		t.Errorf("at %d px the child switcher is not in the header row (in drawer: %v)",
@@ -197,8 +202,8 @@ func TestTheConsoleHasOneNavigationAtEveryWidth(t *testing.T) {
 			t.Errorf("after widening the menu button is visible again (computed display %q)",
 				back.MenuDisplay)
 		}
-		if back.VisibleTabs != 5 {
-			t.Errorf("after widening, %d of the 5 links are visible in the header", back.VisibleTabs)
+		if back.VisibleTabs != consoleDestinations {
+			t.Errorf("after widening, %d of the %d links are visible in the header", back.VisibleTabs, consoleDestinations)
 		}
 	})
 }
