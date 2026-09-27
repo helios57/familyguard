@@ -177,7 +177,21 @@ func (s *Server) agendaDays(ctx context.Context, childID uuid.UUID, first time.T
 			Weekdays: e.Weekdays, Day: e.Day, StartsAt: e.StartsAt, EndsAt: e.EndsAt,
 		})
 	}
-	return agenda.Expand(in, agendaHolidays(holidays), first, n), nil
+	// The days in the profile's zone, so a calendar's times are read in it (FR-25).
+	pol, err := s.store.GetPolicy(ctx, childID)
+	if err != nil {
+		return nil, err
+	}
+	loc, err := time.LoadLocation(pol.Timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	start := time.Date(first.Year(), first.Month(), first.Day(), 0, 0, 0, 0, loc)
+	occ, err := s.calendarOccurrences(ctx, childID, start, start.AddDate(0, 0, n))
+	if err != nil {
+		return nil, err
+	}
+	return agenda.ExpandWithCalendar(in, agendaHolidays(holidays), occ, start, n), nil
 }
 
 func agendaHolidays(holidays []store.Holiday) []agenda.Holiday {

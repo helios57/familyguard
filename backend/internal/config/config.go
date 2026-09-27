@@ -138,6 +138,14 @@ type Config struct {
 	MaintenanceInterval time.Duration
 
 	LogLevel string
+
+	// CalendarMaxAge is how old a profile's kept calendar may be before a read fetches it again
+	// (FR-25). CalendarAllowLocal lifts the fence that keeps the calendar fetch off private,
+	// loopback and link-local addresses and off plain http — for a bench whose calendars are served
+	// locally, never for a deployment: the address is a parent's input and the fetch runs inside the
+	// cluster.
+	CalendarMaxAge     time.Duration
+	CalendarAllowLocal bool
 }
 
 // Load reads and validates configuration from the environment. It returns every problem it finds,
@@ -181,6 +189,20 @@ func Load() (*Config, error) {
 		fail("LOCATION_RETENTION_DAYS must be positive, got %d", locDays)
 	} else {
 		c.LocationRetention = time.Duration(locDays) * 24 * time.Hour
+	}
+
+	c.CalendarMaxAge = 30 * time.Minute
+	if v := os.Getenv("CALENDAR_MAX_AGE"); v != "" {
+		if d, err := time.ParseDuration(v); err != nil || d < time.Second {
+			fail("CALENDAR_MAX_AGE must be a duration of at least 1s, got %q", v)
+		} else {
+			c.CalendarMaxAge = d
+		}
+	}
+	if v := os.Getenv("CALENDAR_ALLOW_LOCAL"); v != "" {
+		if c.CalendarAllowLocal, err = strconv.ParseBool(v); err != nil {
+			fail("CALENDAR_ALLOW_LOCAL must be true or false, got %q", v)
+		}
 	}
 
 	if c.DatabaseURL == "" {

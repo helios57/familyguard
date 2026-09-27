@@ -73,4 +73,25 @@ class AgendaNowTest {
         assertNull(v.today)
         assertNull(v.tomorrow)
     }
+
+    /** FR-25: an all-day calendar event is not "now" or "next" — it is the day, said on its own line. */
+    @Test
+    fun `an all-day event is listed for the day, and is neither now nor next`() {
+        val trip = AgendaItem(entryId = "", title = "Schulreise", startsAt = "00:00", endsAt = "23:59", allDay = true, source = "calendar")
+        val day = AgendaBlock(listOf(AgendaDay(day = "2026-10-08", items = listOf(trip, school.copy(startsAt = "13:00", endsAt = "15:00")))))
+        val v = AgendaNow.of(day, at("2026-10-08T09:00"))
+        assertNull(v.current)
+        assertEquals("Schule", v.next?.title)
+        assertEquals(listOf("Schulreise"), v.allDay.map { it.title })
+    }
+
+    @Test
+    fun `the calendar's fields parse`() {
+        val parsed = json.decodeFromString(AgendaBlock.serializer(), """
+            {"days":[{"day":"2026-10-08","holiday":"","items":[{"entry_id":"","title":"Schulreise","place":"",
+             "starts_at":"00:00","ends_at":"23:59","optional":false,"all_day":true,"source":"calendar"}]}]}
+        """.trimIndent())
+        assertEquals(true, parsed.days[0].items[0].allDay)
+        assertEquals("calendar", parsed.days[0].items[0].source)
+    }
 }

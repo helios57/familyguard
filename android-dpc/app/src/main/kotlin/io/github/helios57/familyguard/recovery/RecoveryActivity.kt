@@ -462,13 +462,18 @@ class RecoveryActivity : AppCompatActivity() {
                 .joinToString(" ")
         val lines = mutableListOf<String>()
         view?.today?.holiday?.takeIf { it.isNotEmpty() }?.let { lines += getString(R.string.agenda_holiday, it) }
+        // FR-25.4: an all-day event is the day, said once, rather than a moment in it.
+        val allDay = getString(R.string.agenda_all_day)
+        view?.allDay?.takeIf { it.isNotEmpty() }?.let { items ->
+            lines += getString(R.string.agenda_today_all_day, items.joinToString(", ") { "${label(it)} $allDay" })
+        }
         view?.current?.let { lines += getString(R.string.agenda_now, label(it), it.endsAt) }
         view?.next?.let { lines += getString(R.string.agenda_next, it.startsAt, label(it)) }
         view?.tomorrow?.let { t ->
             val text = if (t.holiday.isNotEmpty() && t.items.isEmpty()) {
                 getString(R.string.agenda_holiday, t.holiday)
             } else {
-                t.items.joinToString(", ") { "${it.startsAt} ${label(it)}" }
+                t.items.joinToString(", ") { if (it.allDay) "${label(it)} $allDay" else "${it.startsAt} ${label(it)}" }
             }
             if (text.isNotEmpty()) lines += getString(R.string.agenda_tomorrow, text)
         }

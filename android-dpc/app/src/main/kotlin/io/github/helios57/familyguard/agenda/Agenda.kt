@@ -30,10 +30,21 @@ data class AgendaItem(
     @SerialName("starts_at") val startsAt: String = "",
     @SerialName("ends_at") val endsAt: String = "",
     @SerialName("optional") val optional: Boolean = false,
+    /** FR-25.4: an event that takes the whole day; its times are 00:00–23:59. */
+    @SerialName("all_day") val allDay: Boolean = false,
+    /** "agenda" for an entry, "calendar" for an event read from the profile's calendar. */
+    @SerialName("source") val source: String = "",
 )
 
 /** What the Heute screen shows: today and tomorrow, what is on now, and what comes next today. */
-data class AgendaView(val today: AgendaDay?, val tomorrow: AgendaDay?, val current: AgendaItem?, val next: AgendaItem?)
+data class AgendaView(
+    val today: AgendaDay?,
+    val tomorrow: AgendaDay?,
+    val current: AgendaItem?,
+    val next: AgendaItem?,
+    /** Today's all-day events, which are the day rather than a moment in it. */
+    val allDay: List<AgendaItem> = emptyList(),
+)
 
 /** FR-24.5: now and next, decided on the phone from its own clock. */
 object AgendaNow {
@@ -47,10 +58,11 @@ object AgendaNow {
         val today = block.days.firstOrNull { it.day == date.toString() }
         val tomorrow = block.days.firstOrNull { it.day == date.plusDays(1).toString() }
         val clock = now.toLocalTime().toString().take(5)
-        val items = today?.items.orEmpty()
+        val all = today?.items.orEmpty()
+        val items = all.filterNot { it.allDay }
         val current = items.firstOrNull { it.startsAt <= clock && clock < it.endsAt }
         val next = items.firstOrNull { it.startsAt > clock }
-        return AgendaView(today, tomorrow, current, next)
+        return AgendaView(today, tomorrow, current, next, all.filter { it.allDay })
     }
 }
 

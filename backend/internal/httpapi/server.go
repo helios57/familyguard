@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/helios57/familyguard/backend/internal/agenda"
 	"github.com/helios57/familyguard/backend/internal/apk"
 	"github.com/helios57/familyguard/backend/internal/auth"
 	"github.com/helios57/familyguard/backend/internal/catalog"
@@ -81,6 +83,11 @@ type Server struct {
 
 	httpClient *http.Client
 
+	// calendars reads profiles' calendars behind the address fence (FR-25); calendarBusy holds the
+	// profiles whose calendar is being read, so a burst of reads starts one fetch.
+	calendars    *agenda.Fetcher
+	calendarBusy sync.Map
+
 	signatureChecksum string
 	packageChecksum   string
 	hostedAPK         *apk.Info
@@ -118,6 +125,7 @@ func New(d Deps) (*Server, error) {
 		log:               d.Logger,
 		now:               d.Now,
 		httpClient:        d.HTTPClient,
+		calendars:         agenda.NewFetcher(d.Config.CalendarAllowLocal),
 		signatureChecksum: d.SignatureChecksum,
 		packageChecksum:   d.PackageChecksum,
 		fgctl:             d.FgctlCatalog,
@@ -262,6 +270,10 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.GET("/children/:id/agenda/days", admins, s.getAgendaDays)
 	p.GET("/family/holidays", admins, s.getHolidays)
 	p.PUT("/family/holidays", admins, s.putHolidays)
+	// FR-25: the profile's calendar, read-only. Admins only.
+	p.GET("/children/:id/calendar", admins, s.getCalendar)
+	p.PUT("/children/:id/calendar", admins, s.putCalendar)
+	p.DELETE("/children/:id/calendar", admins, s.deleteCalendar)
 	p.PATCH("/children/:id/policy", admins, s.patchPolicy)
 	p.GET("/children/:id/app-rules", admins, s.listAppRules)
 	p.PUT("/children/:id/app-rules", admins, s.putAppRule)

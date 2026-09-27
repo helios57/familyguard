@@ -163,3 +163,47 @@ func fetchWeek(ctx context.Context, client *fgclient.Client, childID, from, days
 	}
 	return out.Days, nil
 }
+
+// calendarState is the server's answer about a profile's calendar (FR-25).
+type calendarState struct {
+	URL       string     `json:"url"`
+	FetchedAt *time.Time `json:"fetched_at"`
+	Error     string     `json:"error"`
+	Events    int        `json:"events"`
+}
+
+// cmdCalendar reads, sets or removes a profile's calendar address (FR-25.5).
+func cmdCalendar(ctx context.Context, env *environment, args []string) error {
+	path := ""
+	if len(args) >= 1 {
+		path = "/api/v1/children/" + args[0] + "/calendar"
+	}
+	var out calendarState
+	switch {
+	case len(args) == 1:
+		if err := env.client.Get(ctx, path, &out); err != nil {
+			return err
+		}
+	case len(args) == 3 && args[1] == "--set":
+		if err := env.client.Do(ctx, http.MethodPut, path, map[string]string{"url": args[2]}, &out); err != nil {
+			return err
+		}
+	case len(args) == 2 && args[1] == "--remove":
+		if err := env.client.Do(ctx, http.MethodDelete, path, nil, nil); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("usage: fgctl calendar <child-id> [--set https-or-webcal-address | --remove]")
+	}
+	return env.emit(out, func(w *tabwriter.Writer) {
+		if out.URL == "" {
+			fmt.Fprintln(w, "no calendar")
+			return
+		}
+		fmt.Fprintf(w, "address\t%s\n", out.URL)
+		fmt.Fprintf(w, "read\t%s, %d events in the coming 60 days\n", ago(out.FetchedAt), out.Events)
+		if out.Error != "" {
+			fmt.Fprintf(w, "last read failed\t%s\n", out.Error)
+		}
+	})
+}

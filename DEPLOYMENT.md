@@ -914,6 +914,23 @@ curl -H "Authorization: Bearer fgk_…" https://guard.example.com/api/v1/childre
 
 ---
 
+## Calendars read by the server (FR-25)
+
+A profile's agenda can include a calendar from its iCalendar address. The **control plane** reads it
+— the phone never sees the address, which is a credential — so the pod needs outbound HTTPS to the
+calendar's host. A default-deny egress policy that allows the world on port 443 is enough; a calendar
+served on any other port cannot be read from such a cluster, and the console says so when it is set.
+
+The read is fenced: `https://` (or `webcal://`) only, at most 1 MiB, 10 s and three redirects, and
+never to a private, loopback, link-local or shared (100.64/10) address — checked on the address
+actually dialled, so a DNS answer or a redirect cannot turn a parent's input into a request inside the
+cluster. Two settings, both optional:
+
+| variable | default | |
+|---|---|---|
+| `CALENDAR_MAX_AGE` | `30m` | how old the kept copy may be before a read fetches it again (in the background; the read answers from the copy) |
+| `CALENDAR_ALLOW_LOCAL` | `false` | lifts the fence and allows `http://` — for a bench whose calendars are served locally. **Never in a deployment.** |
+
 ## `fgctl` — the command line, and the MCP server
 
 `fgctl` is the same API from a terminal, and the same binary serves it over MCP. It authenticates

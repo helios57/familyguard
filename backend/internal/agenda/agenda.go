@@ -13,6 +13,12 @@ const (
 	Single    = "SINGLE"
 )
 
+// Item sources.
+const (
+	SourceAgenda   = "agenda"
+	SourceCalendar = "calendar"
+)
+
 // Entry is one agenda entry: repeating on weekdays (bit 0 Monday … bit 6 Sunday) or on one date.
 type Entry struct {
 	ID       string
@@ -41,6 +47,10 @@ type Item struct {
 	StartsAt string `json:"starts_at"`
 	EndsAt   string `json:"ends_at"`
 	Optional bool   `json:"optional"`
+	// AllDay is an event that takes the whole day (FR-25); its times are 00:00–23:59.
+	AllDay bool `json:"all_day"`
+	// Source is "agenda" for an entry, "calendar" for an event read from the profile's calendar.
+	Source string `json:"source"`
 }
 
 // Day is a date with its holiday ("" for none) and its items in time order.
@@ -82,7 +92,7 @@ func Expand(entries []Entry, holidays []Holiday, first time.Time, n int) []Day {
 			if on {
 				day.Items = append(day.Items, Item{
 					EntryID: e.ID, Title: e.Title, Place: e.Place,
-					StartsAt: e.StartsAt, EndsAt: e.EndsAt, Optional: e.Optional,
+					StartsAt: e.StartsAt, EndsAt: e.EndsAt, Optional: e.Optional, Source: SourceAgenda,
 				})
 			}
 		}

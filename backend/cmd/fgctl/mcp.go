@@ -191,6 +191,11 @@ type holidayArg struct {
 	EndsOn   string `json:"ends_on" jsonschema:"last day, YYYY-MM-DD, at most 120 days after the first"`
 }
 
+type calendarArgs struct {
+	ChildID string `json:"child_id" jsonschema:"the child's UUID, as returned by list_children"`
+	URL     string `json:"url" jsonschema:"an https:// or webcal:// iCalendar (.ics) address, read at once; an empty string removes the calendar"`
+}
+
 type holidaysArgs struct {
 	Holidays []holidayArg `json:"holidays" jsonschema:"ALL the family's holidays: every one to keep, with its id; one left out is retired"`
 }
@@ -443,6 +448,35 @@ func registerTools(server *mcp.Server, client *fgclient.Client) {
 		func(ctx context.Context, c *fgclient.Client, in holidaysArgs) (any, error) {
 			var out map[string]any
 			if err := c.Do(ctx, "PUT", "/api/v1/family/holidays", map[string]any{"holidays": in.Holidays}, &out); err != nil {
+				return nil, err
+			}
+			return out, nil
+		})
+
+	add(server, client, "get_calendar",
+		"A child's calendar read into the agenda (FR-25): its address, when it was last read, how many events "+
+			"it holds in the coming 60 days, and the error of the last read if it failed.",
+		func(ctx context.Context, c *fgclient.Client, in childArgs) (any, error) {
+			var out calendarState
+			if err := c.Get(ctx, "/api/v1/children/"+in.ChildID+"/calendar", &out); err != nil {
+				return nil, err
+			}
+			return out, nil
+		})
+
+	add(server, client, "set_calendar",
+		"Set a child's calendar address, which is read at once and refused if it is not an iCalendar file; "+
+			"its events then appear in get_week and on the phone. An empty url removes it.",
+		func(ctx context.Context, c *fgclient.Client, in calendarArgs) (any, error) {
+			path := "/api/v1/children/" + in.ChildID + "/calendar"
+			if strings.TrimSpace(in.URL) == "" {
+				if err := c.Do(ctx, "DELETE", path, nil, nil); err != nil {
+					return nil, err
+				}
+				return map[string]any{"removed": true}, nil
+			}
+			var out calendarState
+			if err := c.Do(ctx, "PUT", path, map[string]string{"url": in.URL}, &out); err != nil {
 				return nil, err
 			}
 			return out, nil

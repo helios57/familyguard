@@ -55,6 +55,7 @@ func commands() []command {
 		{"agenda", "<child-id> [--set file.json]", "the agenda's entries; --set replaces them with the document --json prints", true, cmdAgenda},
 		{"week", "<child-id> [--from YYYY-MM-DD] [--days n]", "the agenda laid out over days, holidays applied", true, cmdWeek},
 		{"holidays", "[--set file.json]", "the family's holidays; --set replaces them with the document --json prints", true, cmdHolidays},
+		{"calendar", "<child-id> [--set address | --remove]", "a calendar read into the agenda, read-only (an https or webcal .ics address)", true, cmdCalendar},
 		{"commands", "<device-id> [--limit n]", "the command queue and its timings", true, cmdCommands},
 		{"send", "<device-id> <TYPE>", "queue any command in the server's set", true, cmdSend},
 		{"apps", "", "the APKs this deployment hosts", true, cmdApps},

@@ -219,6 +219,9 @@ func TestAGuardianCannotReadOrChangeTheAgenda(t *testing.T) {
 		{http.MethodGet, c + "/agenda/days", nil},
 		{http.MethodGet, "/family/holidays", nil},
 		{http.MethodPut, "/family/holidays", map[string]any{"holidays": []any{}}},
+		{http.MethodGet, c + "/calendar", nil},
+		{http.MethodPut, c + "/calendar", map[string]any{"url": "https://example.com/cal.ics"}},
+		{http.MethodDelete, c + "/calendar", nil},
 	} {
 		if resp := h.call(r.method, r.path, guardian.Token, r.body); resp.Status != http.StatusForbidden {
 			t.Errorf("guardian %s %s: got %d, want 403", r.method, r.path, resp.Status)

@@ -3,11 +3,13 @@ module github.com/helios57/familyguard/backend
 go 1.27
 
 require (
+	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/teambition/rrule-go v1.8.2
 	golang.org/x/term v0.45.0
 	rsc.io/qr v0.2.0
 )

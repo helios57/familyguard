@@ -222,4 +222,6 @@
     <string name="agenda_tomorrow">Tomorrow: %1$s</string>
     <string name="agenda_holiday">Holiday: %1$s</string>
     <string name="agenda_optional">(optional)</string>
+    <string name="agenda_today_all_day">Today: %1$s</string>
+    <string name="agenda_all_day">(all day)</string>
 </resources>

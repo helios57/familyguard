@@ -1,6 +1,8 @@
 # Daily plan, earned time, roles, alarm and agenda — design
 
-Status: **draft for the owner's review**, 2026-09-27. Nothing here is built yet.
+Status: **built**, all six phases, 2026-09-27 — 0.6.18 (roles) to 0.6.24 (calendar import); see
+`IMPLEMENTATION_PLAN.md` Phases 34–39 and FR-20 … FR-25 in `REQUIREMENTS.md`. Still to measure on the
+family phone by its owner: the alarm ringing after the phone has lain unused, over a PIN lock screen.
 
 This extends FamilyGuard from "what may not be used" to "what the day holds": a child sees the
 day's tasks, the next alarm and what is on today; finishing a group of tasks, confirmed by a parent,

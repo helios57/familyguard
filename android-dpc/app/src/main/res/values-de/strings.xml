@@ -66,4 +66,6 @@
     <string name="agenda_tomorrow">Morgen: %1$s</string>
     <string name="agenda_holiday">Ferien: %1$s</string>
     <string name="agenda_optional">(freiwillig)</string>
+    <string name="agenda_today_all_day">Heute: %1$s</string>
+    <string name="agenda_all_day">(ganztägig)</string>
 </resources>

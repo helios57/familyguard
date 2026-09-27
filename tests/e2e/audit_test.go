@@ -33,6 +33,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -71,7 +72,13 @@ func (w want) String() string {
 func TestEveryAuditedActionIsWritten(t *testing.T) {
 	// With an APK directory, so the catalog's actions (FR-16) are drivable here rather than being
 	// permanently listed as uncovered — an exclusion list is how a ratchet stops ratcheting.
-	h, apkDir := catalogHarness(t)
+	// And with local calendars allowed, so FR-25's two actions can be driven from a calendar this
+	// test serves itself.
+	h, apkDir := catalogHarness(t, withEnv("CALENDAR_ALLOW_LOCAL", "true"))
+	calendar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(icsBody(icsEvent("a", "Termin", "DTSTART:20261007T120000Z", "DTEND:20261007T123000Z"))))
+	}))
+	defer calendar.Close()
 
 	// PARENT_SIGNED_IN, before anything else can have written a row.
 	parent := h.signIn(primaryParent)
@@ -237,6 +244,12 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 		{Title: "Herbstferien", StartsOn: "2026-10-06", EndsOn: "2026-10-08"},
 	}}).expect(http.StatusOK)
 	byParent("HOLIDAYS_UPDATED", "family", "")
+
+	// ---- the calendar (FR-25) ----
+	h.call(http.MethodPut, "/children/"+child.ID+"/calendar", parent.Token, map[string]any{"url": calendar.URL + "/cal.ics"}).expect(http.StatusOK)
+	byParent("CALENDAR_SET", "child", child.ID)
+	h.call(http.MethodDelete, "/children/"+child.ID+"/calendar", parent.Token, nil).expect(http.StatusNoContent)
+	byParent("CALENDAR_REMOVED", "child", child.ID)
 
 	// ---- commands: issued by a parent, acknowledged by the phone ----
 	//

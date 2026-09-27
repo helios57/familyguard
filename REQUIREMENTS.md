@@ -612,8 +612,8 @@ below is about who can open it, what it can reach, and who can see that it is op
 
 The five requirements below were agreed with the owner on 2026-09-27 and are designed in
 [`docs/superpowers/specs/2026-09-27-daily-plan-design.md`](docs/superpowers/specs/2026-09-27-daily-plan-design.md).
-FR-20 is built (phase 1, 0.6.18), FR-21 (phase 2, 0.6.19), FR-22 (phase 3, 0.6.20), FR-23 (phase 4, 0.6.22) and FR-24
-(phase 5, 0.6.23).
+FR-20 is built (phase 1, 0.6.18), FR-21 (phase 2, 0.6.19), FR-22 (phase 3, 0.6.20), FR-23 (phase 4, 0.6.22), FR-24
+(phase 5, 0.6.23) and FR-25 (phase 6, 0.6.24).
 
 ### FR-20 Roles and rights (phase 1)
 Measured 2026-09-27: the role was checked on 7 of 48 parent routes, so a guardian could delete a
@@ -765,6 +765,31 @@ that suspend recurring entries. The phone shows today and tomorrow; the console 
   `get_agenda`, `set_agenda`, `get_week`, `get_holidays`, `set_holidays` and `set_alarm`'s
   `skip_holidays` do the same.
 
+
+### FR-25 Calendar import (phase 6)
+A profile's agenda can include an existing calendar, read-only, from its iCalendar address.
+
+- FR-25.1 **The address** (`GET|PUT|DELETE /children/:id/calendar`, admins) is `https://` or `webcal://`
+  (read as https). Setting it reads it at once: an address that cannot be read, or that does not
+  answer an iCalendar file, is refused rather than stored to fail later. The address is a credential
+  — a secret calendar address reads the calendar — so it is shown to admins and never logged; the
+  audit (`CALENDAR_SET`, `CALENDAR_REMOVED`) carries its host only.
+- FR-25.2 **The fetch is fenced**: at most 1 MiB, 10 seconds, three redirects, and never to a private,
+  loopback, link-local or shared (100.64/10) address — checked on the address actually dialled, so
+  neither a DNS answer nor a redirect leads into the cluster. `CALENDAR_ALLOW_LOCAL=true` lifts the
+  fence and allows plain http, for a bench only.
+- FR-25.3 **The events join the days** of FR-24.3 as items with `source: "calendar"`: each occurrence on
+  every day it touches, clipped to that day, all-day events (`all_day`) first; recurring events with
+  their exceptions and moved occurrences; cancelled ones left out; a holiday does not hide them. The
+  last good copy is kept with when it was read; a read that finds it older than `CALENDAR_MAX_AGE`
+  (30 minutes) answers from it and reads again in the background, one read per profile at a time, and
+  a failed read keeps the copy and records its error.
+- FR-25.4 **The Heute screen** says today's all-day events on their own line (*Heute: Schulreise
+  (ganztägig)*) — they are neither *Jetzt* nor *Danach* — and marks them in tomorrow's list.
+- FR-25.5 The console's Agenda card has *Calendar (optional)*: the address, *Save calendar*, *Remove*,
+  and what the last read found (*n events in the coming 60 days, read …*, or the error); the week marks
+  calendar events and all-day ones. `fgctl calendar <child> [--set address | --remove]` and the MCP
+  tools `get_calendar` and `set_calendar` (an empty address removes it) do the same.
 ---
 
 ## 4. Non-functional requirements

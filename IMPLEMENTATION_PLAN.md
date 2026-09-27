@@ -7917,3 +7917,78 @@ Every probe a value change, restored with `cp` and verified with `cmp`. A first 
 test delayed the save instead of the next tab's load and stayed green — it measured the harmless order,
 so it was rewritten until it went red, and that red is row 15. This phase: **18 probes, 18 red.**
 Cumulative: **234 probes.**
+
+### 38.3 — live
+
+Deployed 2026-09-27 as 0.6.23, server first: image `sha256:52da7e85…3e22` on one pod; `/dpc.apk`
+byte-identical to the signed `familyguard-0.6.23-versionCode-32.apk` (`79a95e7e…3903`). Read back live:
+`GET /family/holidays` and both profiles' `agenda/days` answer 200 (migration 0021 ran), both phones'
+desired states answer, the served `app.js` carries *Save agenda* and *Save holidays* while an impossible
+string counts 0, and no error was logged after the rollout.
+
+## Phase 39 — Calendar import (FR-25)
+
+Phase 6 of the daily-plan design, the optional one (`docs/superpowers/specs/2026-09-27-daily-plan-design.md`
+§9: *"read an existing calendar (ICS URL) read-only as an extra source"*; plan
+`docs/superpowers/plans/2026-09-28-phase6-calendar-import.md`).
+
+**Read by the server, fenced, and merged into the days.** A profile's calendar address (`https://` or
+`webcal://`) is read by the control plane when it is set — an address that is not readable or not an
+iCalendar file is refused there — and the last good copy is kept. The days of FR-24 gain its events,
+parsed with `emersion/go-ical` and `rrule-go`: recurring events with EXDATE/RDATE (split here — the
+library reads a list of dates as one), occurrences moved with RECURRENCE-ID, cancelled events dropped,
+all-day events, events across midnight on each day. A read that finds the copy older than
+`CALENDAR_MAX_AGE` answers from it and fetches in the background, one fetch per profile; a failed
+fetch keeps the copy and records its error. The fetch is fenced on the address actually dialled:
+nothing private, loopback, link-local or in 100.64/10.
+
+1. **Server**: migration 0022 (`calendar_sources`), `GET|PUT|DELETE /children/:id/calendar`,
+   `internal/agenda` calendar occurrences and the fenced `Fetcher`, `CALENDAR_MAX_AGE`,
+   `CALENDAR_ALLOW_LOCAL`; audit `CALENDAR_SET`, `CALENDAR_REMOVED` with the host only.
+2. **Phone**: `AgendaItem.allDay` / `.source`; all-day events are neither *Jetzt* nor *Danach* and are
+   said on their own line.
+3. **Console**: *Calendar (optional)* in the Agenda card with what the last read found; the week marks
+   calendar and all-day items.
+4. **fgctl/MCP**: `calendar [--set | --remove]`; `get_calendar`, `set_calendar`.
+
+### 39.1 — tests
+
+- Go unit (7): a TZID event shown in the profile's zone; an all-day event; a weekly RRULE with a
+  two-date EXDATE; a moved occurrence and a cancelled event; an event across midnight; a holiday not
+  hiding an event; an HTML page refused.
+- e2e, with calendars served by the test: set → read at once with its three events; the week with the
+  calendar beside the agenda, all-day first, sources marked; the phone's block carrying today's event;
+  the calendar changing and the week following once stale; a 500 keeping the last good copy with the
+  error; a web page and an ftp address refused; remove; the audit rows carrying the host and never the
+  address; a guardian refused all three routes. A second harness **without** `CALENDAR_ALLOW_LOCAL`:
+  plain http, loopback, `webcal://localhost` and the cloud metadata address all refused, the loopback
+  refusal saying why.
+- Chrome at 360 px: set the address, the status says *2 events*, the week marks *calendar* and
+  *all day*, remove; layout guard.
+- fgctl and MCP against the real binary, an empty MCP address removing it.
+- Kotlin unit: `AgendaNowTest` +2 (all-day neither now nor next; parse). Suite 912.
+- Real Android (`tests/android/agenda.sh`, extended): *Today: Schulreise (all day)* from a calendar the
+  test serves, read by a real server.
+
+### 39.2 — calibration
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| 1 | `agenda/calendar.go` (stubs) | reading nothing | **RED**: 6 of 7 |
+| 2 | `agenda/calendar.go` | a moved occurrence kept | **RED**: the moved-occurrence test |
+| 3 | `agenda/calendar.go` | an EXDATE list not split | **RED**: the weekly test |
+| 4 | `agenda/calendar.go` | cancelled events shown | **RED**: the moved-occurrence test |
+| 5 | `agenda/calendar.go` | across midnight not clipped | **RED**: the midnight test |
+| 6 | `agenda/calendar.go` | times shown in UTC | **RED**: three tests |
+| 7 | `agenda/fetch.go` | the fence open | **RED**: *the refusal of a loopback address does not say why* — the statuses stayed 400 for other reasons, so only the message binds |
+| 8 | `httpapi/calendar.go` | never stale | **RED**: *the week did not follow the changed calendar* |
+| 9 | `store/calendar.go` | a failed read dropping the copy | **RED**: *a failed read lost the last good copy* |
+| 10 | `httpapi/calendar.go` | the audit carrying the address | **RED**: *carries the calendar's address* |
+| 11 | `Agenda.kt` (before the fix) | an all-day event as *now* | **RED**: *expected null* |
+| 12–14 | `app.js` | the count unsaid; calendar unmarked; *all day* unsaid | **RED**, each on its line |
+| 15 | `fgctl/agenda.go` | `--remove` sent as a read | **RED**: *the server holds …* |
+| 16 | `fgctl/mcp.go` | an empty address kept | **RED**: *should remove it* |
+| 17 | `RecoveryActivity.kt`, on the device | the all-day line off | **RED**: *does not say "Today: Schulreise (all day)"* |
+
+Every probe a value change, restored with `cp` and verified with `cmp`. This phase: **17 probes, 17
+red.** Cumulative: **251 probes.**

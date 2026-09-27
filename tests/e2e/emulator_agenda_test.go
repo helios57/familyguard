@@ -5,6 +5,8 @@ package e2e
 // clock in the profile's timezone. Driven by tests/android/agenda.sh; run on its own it SKIPS.
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +15,14 @@ import (
 func TestTheHeuteScreenShowsTheAgendaOnARealPhone(t *testing.T) {
 	d := androidDeviceFromEnv(t)
 	d.dumpDeviceLogOnFailure()
-	h := newHarness(t, withPublicHost(emulatorHostAlias))
+	// FR-25.4 too: an all-day event from a calendar this test serves, read by the server.
+	today := time.Now().In(mustZurich())
+	calendar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(icsBody(icsEvent("trip", "Schulreise",
+			"DTSTART;VALUE=DATE:"+today.Format("20060102"), "DTEND;VALUE=DATE:"+today.AddDate(0, 0, 1).Format("20060102")))))
+	}))
+	defer calendar.Close()
+	h := newHarness(t, withPublicHost(emulatorHostAlias), withEnv("CALENDAR_ALLOW_LOCAL", "true"))
 	parent, child, _, _ := managedOnEmulator(t, h, d)
 
 	zurich, _ := time.LoadLocation("Europe/Zurich")
@@ -31,8 +40,12 @@ func TestTheHeuteScreenShowsTheAgendaOnARealPhone(t *testing.T) {
 		{Kind: "SINGLE", Title: "Zahnarzt", Day: tomorrow, StartsAt: "14:00", EndsAt: "14:30", Optional: true},
 	})
 
-	// The emulator runs in English: "Now: … until 23:59", "Tomorrow: 14:00 Zahnarzt (optional)".
-	want := []string{"Now: Lernzeit · Stube until 23:59", "Tomorrow: 14:00 Zahnarzt (optional)"}
+	h.call(http.MethodPut, "/children/"+child.ID+"/calendar", parent.Token, map[string]any{"url": calendar.URL + "/cal.ics"}).
+		expect(http.StatusOK)
+
+	// The emulator runs in English: "Now: … until 23:59", "Tomorrow: 14:00 Zahnarzt (optional)", and
+	// the calendar's all-day event on its own line.
+	want := []string{"Now: Lernzeit · Stube until 23:59", "Tomorrow: 14:00 Zahnarzt (optional)", "Today: Schulreise (all day)"}
 	deadline := time.Now().Add(60 * time.Second)
 	var ui string
 	for {
@@ -41,7 +54,7 @@ func TestTheHeuteScreenShowsTheAgendaOnARealPhone(t *testing.T) {
 		time.Sleep(2 * time.Second)
 		d.run(30*time.Second, "shell", "uiautomator", "dump", "/sdcard/fg-ui.xml")
 		ui, _ = d.run(30*time.Second, "exec-out", "cat", "/sdcard/fg-ui.xml")
-		if strings.Contains(ui, want[0]) && strings.Contains(ui, want[1]) {
+		if strings.Contains(ui, want[0]) && strings.Contains(ui, want[1]) && strings.Contains(ui, want[2]) {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -54,4 +67,12 @@ func TestTheHeuteScreenShowsTheAgendaOnARealPhone(t *testing.T) {
 			t.Errorf("the Heute screen does not say %q", w)
 		}
 	}
+}
+
+func mustZurich() *time.Location {
+	loc, err := time.LoadLocation("Europe/Zurich")
+	if err != nil {
+		panic(err)
+	}
+	return loc
 }

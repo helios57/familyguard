@@ -1107,7 +1107,7 @@ async function showRecovery(dev) {
 /* ---- rules -------------------------------------------------------------- */
 
 async function loadRules() {
-  const [policy, domains, devices, plan, alarm, agenda, agendaWeek] = await Promise.all([
+  const [policy, domains, devices, plan, alarm, agenda, agendaWeek, calendar] = await Promise.all([
     api('/children/' + state.childId + '/policy'),
     api('/children/' + state.childId + '/blocked-domains'),
     api('/devices?child_id=' + encodeURIComponent(state.childId)),
@@ -1115,6 +1115,7 @@ async function loadRules() {
     api('/children/' + state.childId + '/alarm'),
     api('/children/' + state.childId + '/agenda'),
     api('/children/' + state.childId + '/agenda/days?days=7'),
+    api('/children/' + state.childId + '/calendar'),
   ]);
   const entries = state.agendaDraft;
   if (!entries || entries.childId !== state.childId || !entries.dirty) {
@@ -1138,6 +1139,7 @@ async function loadRules() {
     enrolled: (devices.devices || []).some((d) => d.enrolled),
     alarm,
     week: agendaWeek.days || [],
+    calendar,
   };
 }
 
@@ -1309,8 +1311,9 @@ function agendaCard(data) {
     d.items.length
       ? el('ul', { class: 'list' }, d.items.map((it) => el('li', {},
         el('span', { class: 'label' },
-          el('span', { text: it.starts_at + '\u2013' + it.ends_at + ' ' + it.title }),
-          el('small', { text: [it.place, it.optional ? 'optional' : ''].filter(Boolean).join(' \u00b7 ') })))))
+          el('span', { text: (it.all_day ? '' : it.starts_at + '\u2013' + it.ends_at + ' ') + it.title }),
+          el('small', { text: [it.all_day ? 'all day' : '', it.place, it.optional ? 'optional' : '', it.source === 'calendar' ? 'calendar' : '']
+            .filter(Boolean).join(' \u00b7 ') })))))
       : el('p', { class: 'muted', text: d.holiday ? 'Holiday \u2014 nothing repeating.' : 'Nothing.' }))));
 
   return el('div', { class: 'card full agenda-card' },
@@ -1320,8 +1323,40 @@ function agendaCard(data) {
     el('div', { class: 'row' },
       el('button', { class: 'btn', type: 'button', text: '+ Entry', 'data-agenda': 'add', onclick: () => restructure(() => draft.entries.push(newAgendaEntry())) }),
       el('button', { class: 'btn btn-primary', type: 'button', text: 'Save agenda', 'data-agenda': 'save', onclick: save })),
+    calendarBlock(data),
     el('h3', { text: 'This week' }),
     week);
+}
+
+/* FR-25.5: a calendar read into the agenda, read-only. The address is a credential (a secret calendar
+   address reads the calendar), so the field shows it only to the admins who may set it, and the
+   status says what the last read found rather than repeating the address. */
+function calendarBlock(data) {
+  const cal = data.calendar || {};
+  const input = el('input', {
+    type: 'url', value: cal.url || '', placeholder: 'https://… .ics or webcal://…', 'data-calendar': 'url',
+    'aria-label': 'Calendar address', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false',
+  });
+  const status = !cal.url
+    ? 'No calendar. Paste a calendar\u2019s iCal address (in Google Calendar: Settings \u2192 the calendar \u2192 Secret address in iCal format).'
+    : (cal.error ? 'The last read failed: ' + cal.error + '. Showing what was read ' + fmtTime(cal.fetched_at) + '.'
+      : cal.events + (cal.events === 1 ? ' event' : ' events') + ' in the coming 60 days, read ' + fmtTime(cal.fetched_at) + '.');
+  const save = async () => {
+    const ok = await tried('Calendar saved', () =>
+      api('/children/' + state.childId + '/calendar', { method: 'PUT', body: { url: input.value.trim() } }));
+    if (ok) refresh();
+  };
+  const remove = async () => {
+    const ok = await tried('Calendar removed', () => api('/children/' + state.childId + '/calendar', { method: 'DELETE' }));
+    if (ok) refresh();
+  };
+  return el('div', { class: 'stack calendar-block' },
+    el('h3', { text: 'Calendar (optional)' }),
+    input,
+    el('p', { class: 'muted calendar-status' + (cal.error ? ' warn' : ''), text: status }),
+    el('div', { class: 'row' },
+      el('button', { class: 'btn btn-primary', type: 'button', text: 'Save calendar', 'data-calendar': 'save', onclick: save }),
+      cal.url ? el('button', { class: 'btn btn-quiet btn-danger', type: 'button', text: 'Remove', 'data-calendar': 'remove', onclick: remove }) : null));
 }
 
 /* ---- holidays (FR-24.6) ------------------------------------------------------ */
