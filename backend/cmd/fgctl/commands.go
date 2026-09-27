@@ -42,7 +42,9 @@ func commands() []command {
 		{"devices", "", "list every enrolled device", true, cmdDevices},
 		{"device", "<device-id>", "one device with its reported state", true, cmdDevice},
 		{"policy", "<child-id>", "the policy in force for a child", true, cmdPolicy},
-		{"bonus", "<child-id> <minutes>", "extra screen time for today only, on top of the daily limit", true, cmdBonus},
+		{"bonus", "<child-id> <±minutes>", "add or take away screen time for today only (-15 takes 15 away)", true, cmdBonus},
+		{"pause", "<child-id>", "pause a profile's phones: everything but calls and messages, until unpaused", true, cmdPause},
+		{"unpause", "<child-id>", "lift a pause", true, cmdPause},
 		{"commands", "<device-id> [--limit n]", "the command queue and its timings", true, cmdCommands},
 		{"send", "<device-id> <TYPE>", "queue any command in the server's set", true, cmdSend},
 		{"apps", "", "the APKs this deployment hosts", true, cmdApps},
@@ -343,15 +345,15 @@ func cmdDevice(ctx context.Context, env *environment, args []string) error {
 	})
 }
 
-// cmdBonus is the console's "+ time today" (FR-3.11): extra minutes for the child's current local
-// day only, which the phone drops again at midnight.
+// cmdBonus is the console's "+ time today" and the guardian window's −15 (FR-3.11, FR-21): minutes
+// added to or taken from the child's current local day only, which the phone drops at midnight.
 func cmdBonus(ctx context.Context, env *environment, args []string) error {
 	if len(args) != 2 {
-		return fmt.Errorf("usage: fgctl bonus <child-id> <minutes>")
+		return fmt.Errorf("usage: fgctl bonus <child-id> <±minutes>")
 	}
 	minutes, err := strconv.Atoi(args[1])
-	if err != nil || minutes < 1 || minutes > 1440 {
-		return fmt.Errorf("minutes must be a number from 1 to 1440, not %q", args[1])
+	if err != nil || minutes == 0 || minutes < -1440 || minutes > 1440 {
+		return fmt.Errorf("minutes must be a number from -1440 to 1440 and not 0, not %q", args[1])
 	}
 	var out struct {
 		Day               string `json:"day"`
@@ -365,9 +367,37 @@ func cmdBonus(ctx context.Context, env *environment, args []string) error {
 	}
 	return env.emit(out, func(w *tabwriter.Writer) {
 		fmt.Fprintf(w, "day\t%s\n", out.Day)
-		fmt.Fprintf(w, "extra today\t%d minutes\n", out.BonusMinutes)
-		fmt.Fprintf(w, "limit today\t%d minutes (%d + %d extra)\n",
-			out.LimitTodayMinutes, out.DailyLimitMinutes, out.BonusMinutes)
+		fmt.Fprintf(w, "adjustment today\t%+d minutes\n", out.BonusMinutes)
+		sign, n := "+", out.BonusMinutes
+		if n < 0 {
+			sign, n = "−", -n
+		}
+		fmt.Fprintf(w, "limit today\t%d minutes (%d %s %d)\n", out.LimitTodayMinutes, out.DailyLimitMinutes, sign, n)
+	})
+}
+
+// cmdPause pauses or unpauses a profile's phones (FR-21), by which verb it was called as.
+func cmdPause(ctx context.Context, env *environment, args []string) error {
+	verb := env.verb
+	if len(args) != 1 {
+		return fmt.Errorf("usage: fgctl %s <child-id>", verb)
+	}
+	var out struct {
+		Paused   bool    `json:"paused"`
+		PausedAt *string `json:"paused_at"`
+		Version  int64   `json:"version"`
+	}
+	if err := env.client.Do(ctx, http.MethodPost, "/api/v1/children/"+args[0]+"/pause",
+		map[string]bool{"paused": verb == "pause"}, &out); err != nil {
+		return err
+	}
+	return env.emit(out, func(w *tabwriter.Writer) {
+		if out.Paused {
+			fmt.Fprintf(w, "state\tpaused — everything but calls and messages\n")
+		} else {
+			fmt.Fprintf(w, "state\tnot paused\n")
+		}
+		fmt.Fprintf(w, "policy version\t%d (the phones fetch it now)\n", out.Version)
 	})
 }
 

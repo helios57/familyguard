@@ -113,6 +113,16 @@ type sendArgs struct {
 	Type     string `json:"type" jsonschema:"one of TRIGGER_ALARM, STOP_ALARM, LOCK_NOW, UNLOCK_DEVICE, LOCATE_NOW, BLOCK_YOUTUBE_ALL, UNBLOCK_YOUTUBE_ALL, SYNC_POLICY, UPDATE_APP"`
 }
 
+type pauseArgs struct {
+	ChildID string `json:"child_id" jsonschema:"the child's UUID, as returned by list_children"`
+	Paused  bool   `json:"paused" jsonschema:"true pauses every app the child can open except calls and messages; false lifts it"`
+}
+
+type adjustArgs struct {
+	ChildID string `json:"child_id" jsonschema:"the child's UUID, as returned by list_children"`
+	Minutes int    `json:"minutes" jsonschema:"minutes to add (positive) or take away (negative) for today only, -1440 to 1440, not 0"`
+}
+
 type auditArgs struct {
 	Limit int `json:"limit,omitempty" jsonschema:"how many entries, 1-500, default 100"`
 }
@@ -169,6 +179,35 @@ func registerTools(server *mcp.Server, client *fgclient.Client) {
 				return nil, err
 			}
 			return pol, nil
+		})
+
+	add(server, client, "pause_profile",
+		"Pause or unpause a child's phones (FR-21). Paused, every app the child can open is suspended "+
+			"except the dialer, SMS and the family's messengers (WhatsApp, Signal, Threema); it lasts "+
+			"until unpaused, through reboots and with the phone offline.",
+		func(ctx context.Context, c *fgclient.Client, in pauseArgs) (any, error) {
+			var out map[string]any
+			if err := c.Do(ctx, "POST", "/api/v1/children/"+in.ChildID+"/pause",
+				map[string]bool{"paused": in.Paused}, &out); err != nil {
+				return nil, err
+			}
+			return out, nil
+		})
+
+	add(server, client, "adjust_time_today",
+		"Add or take away screen time for a child for today only (FR-3.11, FR-21): +30 gives half an "+
+			"hour more, -15 takes a quarter of an hour away. The day's limit never goes below zero; "+
+			"the child must have a daily limit. Returns the day's total adjustment.",
+		func(ctx context.Context, c *fgclient.Client, in adjustArgs) (any, error) {
+			if in.Minutes == 0 || in.Minutes < -1440 || in.Minutes > 1440 {
+				return nil, fmt.Errorf("minutes must be from -1440 to 1440 and not 0, not %d", in.Minutes)
+			}
+			var out map[string]any
+			if err := c.Do(ctx, "POST", "/api/v1/children/"+in.ChildID+"/bonus",
+				map[string]int{"minutes": in.Minutes}, &out); err != nil {
+				return nil, err
+			}
+			return out, nil
 		})
 
 	add(server, client, "list_commands",
