@@ -181,7 +181,7 @@ func TestAGuardianSeesTheGuardianViewAndCanGiveTime(t *testing.T) {
 	}
 }
 
-// FR-21 in the guardian window: pausing takes a second tap, unpausing does not, and −15 takes time
+// FR-21.3 in the guardian window: pausing takes a second tap, unpausing does not, and −15 takes time
 // away. Read back from the server each time, never from the page.
 func TestAGuardianPausesAndTakesTimeAway(t *testing.T) {
 	h := newHarness(t)

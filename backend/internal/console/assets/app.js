@@ -2158,7 +2158,7 @@ function bonusButtons(dev) {
 
 /* ---- guardian ----------------------------------------------------------- */
 
-/* The guardian window (FR-20, FR-21, spec §6). One card per profile, in German, because the people
+/* The guardian window (FR-20, FR-21.3, spec §6). One card per profile, in German, because the people
    this page is for are the family's non-admins: today's time, why apps are paused, Sperren /
    Entsperren, and −15 · +15 · +30. An admin has it too, as the first tab. Phase 3 adds the tasks
    waiting for confirmation above the cards.

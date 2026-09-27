@@ -37,7 +37,7 @@ func (s *Store) UsageMinutesCountedForDay(ctx context.Context, deviceID uuid.UUI
 }
 
 // AdjustDay adds a signed number of minutes to a child's adjustment for one local day (FR-3.11,
-// FR-21) and returns the day's new total.
+// FR-21.2) and returns the day's new total.
 //
 // Two bounds, deliberately different. Extra time past MaxBonusMinutesPerDay is refused
 // (ErrBonusTooLarge): a grant that large is a mistake worth a sentence. Time taken away below floor —

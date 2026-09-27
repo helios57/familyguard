@@ -1,6 +1,6 @@
 package e2e
 
-// FR-21 against the real server: a pause, and today's time going down as well as up. Every
+// FR-21.1 and FR-21.2 against the real server: a pause, and today's time going down as well as up. Every
 // assertion about what the phone must do reads the policy with the DEVICE's own credential — the
 // answer the phone acts on — rather than the console's preview of it.
 

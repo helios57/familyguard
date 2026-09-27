@@ -612,7 +612,7 @@ below is about who can open it, what it can reach, and who can see that it is op
 
 The five requirements below were agreed with the owner on 2026-09-27 and are designed in
 [`docs/superpowers/specs/2026-09-27-daily-plan-design.md`](docs/superpowers/specs/2026-09-27-daily-plan-design.md).
-FR-20 is built (phase 1, 0.6.18). **FR-21 … FR-24 are not built yet**; each names the phase that
+FR-20 is built (phase 1, 0.6.18) and FR-21 (phase 2, 0.6.19). **FR-22 … FR-24 are not built yet**; each names the phase that
 builds it, and the phase fills in the detail when it lands.
 
 ### FR-20 Roles and rights (phase 1)
@@ -621,8 +621,9 @@ child.
 
 - FR-20.1 Every parent endpoint names the roles that may call it, and a route that names none fails
   the build's tests. A `GUARDIAN` may read `/me`, the family, the profiles, the devices and each
-  device's desired state, give time today (FR-3.11) and receive the event stream — nothing else;
-  FR-21 and FR-22 add the guardian window's other actions. Reading the family blocklist moved from
+  device's desired state (the state only, never the input it was computed from), give or take
+  time today and pause or unpause a profile (FR-21), and receive the event stream — nothing else;
+  FR-22 adds the guardian window's task confirmations. Reading the family blocklist moved from
   every parent to admins, because the guardian window lists no apps.
 - FR-20.2 Only a `PRIMARY_ADMIN` changes a role (`PATCH /parents/:id`), and only from the console
   (FR-17.2's reasoning: an API key is refused). Nobody changes their own role (409); the last
@@ -637,10 +638,24 @@ child.
   limit. The page requests nothing a guardian may not read.
 
 ### FR-21 Pause and today's time (phase 2)
-A parent or guardian can **pause** a profile's phones — everything suspended except the critical
-packages (FR-5.5) and the family's communication apps — as a state that survives reboots and an
-offline phone and ends only when someone unpauses. They can **add or reduce** today's daily budget;
-it never falls below zero, and every change is audited.
+- FR-21.1 A parent or guardian can **pause** a profile's phones: every app the child can open is
+  suspended — always-free and preinstalled-free apps included — except the critical packages (FR-5.5)
+  and the family's always-usable communication apps (FR-5.9: WhatsApp, Signal, Threema, Audible). It
+  is a policy state, not a command: it outranks bedtime and the daily limit, is honoured in
+  tracking-only mode like LOCK_NOW, survives a reboot and an offline phone (the phone caches the input
+  it recomputes from), and ends only when someone unpauses — which restores exactly the state it
+  replaced. Audited as `PROFILE_PAUSED` / `PROFILE_UNPAUSED`. *The separate admin-kept communication
+  list the design proposed was not built: the family decided this exact list on 2026-09-20 and it
+  already travels in every policy.*
+- FR-21.2 Today's time can be **added or taken away** (−1440 … 1440 minutes, not 0). More than 1440
+  minutes of extra time is refused; taking more than the day has leaves the day at zero minutes, and
+  zero with a limit is a limit reached, never "no limit" — the engine reports the plain limit beside
+  the day's quota so no screen can confuse the two. Audited as `BONUS_GRANTED` / `TIME_REDUCED`.
+- FR-21.3 The guardian window offers both: *Sperren* (armed by a first tap, done by a second within
+  five seconds) or *Entsperren*, and −15 · +15 · +30; an admin has the same page as the first tab,
+  *Today*. The phone says so in German: *"Deine Eltern haben dein Handy gesperrt. Anrufen und
+  Nachrichten gehen weiter."* `fgctl pause|unpause`, `fgctl bonus ±n` and the MCP tools
+  `pause_profile` and `adjust_time_today` do the same.
 
 ### FR-22 Daily plan and earned time (phase 3)
 A profile has a plan of task groups, each with weekdays, a window and the minutes it earns. The child

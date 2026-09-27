@@ -7544,3 +7544,81 @@ and refuses keys), and the served `app.js` carries People & rights and the guard
 impossible string counts 0. `UPDATE_APP` was queued for the family phone and not yet taken: the phone
 was asleep (FR-19.8). Nothing in this phase changes the phone's behaviour; the new build is a version
 bump there.
+
+## Phase 35 — Pause and today's time (FR-21)
+
+Phase 2 of the daily-plan design (`docs/superpowers/specs/2026-09-27-daily-plan-design.md` §4, §6;
+plan `docs/superpowers/plans/2026-09-27-phase2-pause-and-time.md`). The owner, 2026-09-27: the new
+window needs *"Handy komplett sperren entsperren (alles ausser kommunikations-apps), Zeit hinzufügen,
+Zeit reduzieren"*.
+
+1. **Both engines** read `settings.paused` (reason `PAUSED`, above bedtime and the quota) and a signed
+   day adjustment with a floor of zero; `DesiredState.daily_limit_minutes` says whether a limit exists.
+   Seven shared vectors (58).
+2. **Server**: `policies.paused` (migration 0018), `POST /children/:id/pause`, signed
+   `POST /children/:id/bonus` clamped at the day's limit, `paused` in the children listing.
+3. **Phone**: German texts for the blocked screen, the notice and the Heute screen; a reduced day
+   reads *"(heute 15 Min. weniger)"*.
+4. **Console**: the guardian window's Sperren/Entsperren and −15 · +15 · +30; admins' *Today* tab; the
+   drawer's six destinations in two columns.
+5. **fgctl/MCP**: `pause`, `unpause`, signed `bonus`; `pause_profile`, `adjust_time_today`.
+
+**Two defects found on the way, neither in the feature:**
+
+- **A re-enrolled phone never sent its app list.** The inventory digest outlived enrolment, so a phone
+  enrolled a second time — a new device record — reported "unchanged" after every sync and the new
+  record never learned what was installed; on the server's side a pause, bedtime or a daily limit had
+  nothing to take. Found by the emulator test (three failing runs: *"fixture in inventory=false"*, the
+  DPC's own log silent on inventory). `InventoryDigest` binds the digest to the device id.
+- **The audit completeness guard could not see actions passed in a variable.** The first draft of the
+  pause handler did exactly that and the guard stayed green with neither pause action driven. It now
+  counts such call sites and learned the `blocklistChanged` helper — which exposed that nothing had
+  ever asserted `FAMILY_BLOCKLIST_SET` / `_CLEARED`. Both are driven now.
+
+### 35.1 — tests
+
+- Shared vectors: pause with a game, an always-free app, a free camera, the dialer, WhatsApp and an
+  icon-less service; pause over bedtime; pause in tracking-only; unpause restores; a reduction; a day
+  taken to zero; a reduction for another day.
+- e2e (`pause_test.go`): the phone's own policy under a pause, after a server restart and after
+  unpausing; unpausing inside bedtime lands in bedtime; a guardian may pause; bad bodies; −15, a floor
+  at zero, +15 back; a reduction without a limit is a 409.
+- Real Android (`tests/android/pause.sh`, `familyguard37`, API 37): DeskClock suspended by the pause
+  and back after it, the dialer and the icon-less fixture untouched — read from `dumpsys package`.
+- Console in Chrome: two taps to pause, one to unpause, −15 read back from the server, the status line,
+  the admin's Today tab; fgctl and MCP against the real binary.
+- Unit: `TodayReportTest` (pause, reduction, zero), `InventoryDigestTest` (four cases).
+
+### 35.2 — calibration
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| 1 | `policy/engine.go` | pause ignored in the reason | **RED**: two pause vectors |
+| 2 | `policy/engine.go` | always-free exempt under pause | **RED**: vector *everything a child can open* |
+| 3 | `policy/engine.go` | quota check keyed on the quota again | **RED**: vector *reduced to nothing* |
+| 4 | `policy/engine.go` | tracking-only ignores the pause | **RED**: vector *honoured in tracking-only* |
+| 5–7 | `EnforcementEngine.kt` | the same three | **RED**, each on its vector |
+| 8 | `httpapi/pause.go` | action chosen into a variable again | **RED**: *in a variable at 3 call sites* |
+| 9 | `audit_test.go` | FAMILY_BLOCKLIST_SET not driven | **RED**: named as not driven |
+| 10 | `store/policy.go` | SetPaused writes false | **RED**: *want paused with a time* |
+| 11 | `enforce/resolve.go` | the resolver drops the pause | **RED**: *want PAUSED* |
+| 12 | `store/screentime.go` | the floor removed | **RED**: *want the adjustment floored* |
+| 13 | `enforce/resolve.go` | a negative adjustment not sent | **RED**: *after −15 the phone is told* |
+| 14 | `TodayReport.kt` | PAUSED mapped to BLOCKED | **RED**: 1 test |
+| 15 | `TodayReport.kt` | the plain limit read from the quota | **RED**: 2 tests |
+| 16 | `EnforcementEngine.kt`, on the device | the phone ignores the pause | **RED**: *suspended="false" after 2m0s* |
+| 17 | `app.js` | one tap pauses | **RED**: the button never asks again |
+| 18 | `app.js` | the reduction not said | **RED**: *15 minutes less* never shown |
+| 19 | `index.html` | the Today tab hidden | **green** — a hidden `<a>` is still the first `.tab`; the probe measured nothing |
+| 19b | `index.html` | the Today tab renamed | **RED**: *the first tab is "today"* |
+| 20 | `app.js` | the crumb shown on the Today tab | **RED**: *header names one profile* |
+| 21 | `commands.go` | `pause` sends unpause | **RED**: *the profile is not paused* |
+| 22 | `mcp.go` | the tool flips the sign | **RED**: *should leave −30* |
+| 23 | `commands.go` | the table loses the magnitude | **RED**: *the table rendering of a reduced day* |
+
+Every probe a value change, restored with `cp` and verified with `cmp`. The inventory-digest fix's red
+is the three device runs before it, with the DPC logging no inventory. Cumulative: **157 probes, 153
+red, one deliberate green, one green that corrected a comment, one that found an uncovered case and one
+that was an invalid probe (19).**
+
+### 35.3 — live

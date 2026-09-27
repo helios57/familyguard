@@ -11,7 +11,7 @@ type pauseRequest struct {
 	Paused *bool `json:"paused"`
 }
 
-// pauseChild pauses or unpauses a child's phones (FR-21): everything the child can open is
+// pauseChild pauses or unpauses a child's phones (FR-21.1): everything the child can open is
 // suspended except the critical and always-usable packages — calls, messages, the family's
 // messengers — until someone unpauses. A guardian may do it; it is one of the guardian window's
 // actions (FR-20.1).
