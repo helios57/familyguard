@@ -198,6 +198,8 @@ object EnforcementEngine {
     const val REASON_NONE = ""
     const val REASON_BEDTIME = "BEDTIME"
     const val REASON_QUOTA = "QUOTA"
+    /** A parent's or guardian's pause (FR-21): everything a child can open, until someone unpauses. */
+    const val REASON_PAUSED = "PAUSED"
 
     /**
      * RFC 3339 with seconds always present — the format Go's `time.RFC3339` produces, and the one
@@ -264,15 +266,18 @@ object EnforcementEngine {
         if (input.settings.allowUninstall) restrictions.remove(RESTRICTION_UNINSTALL_APPS)
         restrictions.removeAll(FORBIDDEN_RESTRICTIONS)
 
-        // FR-3.11: a bonus counts on the one local day it was granted for, and only on top of a limit.
-        // The day is compared as the policy zone's calendar date, the same string the server wrote,
-        // so a phone offline across midnight drops yesterday's bonus by itself.
+        // FR-3.11, FR-21: an adjustment counts on the one local day it was made for, and only on top
+        // of a limit. The day is compared as the policy zone's calendar date, the same string the
+        // server wrote, so a phone offline across midnight drops yesterday's by itself. A reduction
+        // never takes the day below zero, and zero with a limit is a day with no time left — never
+        // a day without a limit, which is why dailyLimitMinutes travels beside the quota.
+        val limit = maxOf(0, input.settings.dailyLimitMinutes)
         val bonus = if (
-            input.settings.dailyLimitMinutes > 0 &&
-            input.settings.bonusMinutes > 0 &&
+            limit > 0 &&
+            input.settings.bonusMinutes != 0 &&
             input.settings.bonusDay == local.toLocalDate().toString()
         ) input.settings.bonusMinutes else 0
-        val quota = input.settings.dailyLimitMinutes + bonus
+        val quota = if (bonus != 0) maxOf(0, limit + bonus) else limit
         val base = DesiredState(
             // Only a parent's LOCK_NOW locks the keyguard. Bedtime and quota suspend apps instead:
             // a locked keyguard makes the phone less able to place an emergency call than a phone
@@ -292,8 +297,9 @@ object EnforcementEngine {
             userRestrictions = restrictions.toList(),
             quotaMinutes = quota,
             usedMinutes = input.usedMinutesToday,
-            remainingMinutes = if (quota > 0) maxOf(0, quota - input.usedMinutesToday) else 0,
+            remainingMinutes = if (limit > 0) maxOf(0, quota - input.usedMinutesToday) else 0,
             bonusMinutes = bonus,
+            dailyLimitMinutes = limit,
             policyVersion = input.settings.version,
         )
 
@@ -303,7 +309,15 @@ object EnforcementEngine {
         // suspension is enforced, while content filtering and hardening remain. So the YouTube
         // killswitch still blocks the domains and the browser but does not suspend the app —
         // suspension is suspension whatever caused it.
-        if (input.settings.trackingOnly) return base
+        if (input.settings.trackingOnly) {
+            // FR-21: a pause is an explicit act, like LOCK_NOW, and is honoured here too. Mirrors
+            // the Go engine line for line.
+            if (!input.settings.paused) return base
+            val paused = sortedSetOf<String>()
+            for (app in input.installed) if (app.pkg.isNotEmpty() && app.launchable != false) paused.add(app.pkg)
+            paused.removeAll(critical)
+            return base.copy(suspendReason = REASON_PAUSED, suspendedPackages = paused.toList())
+        }
 
         // ---- enforcement ----
 
@@ -320,9 +334,10 @@ object EnforcementEngine {
         } else {
             false
         }
-        val quotaReached = quota > 0 && input.usedMinutesToday >= quota
+        val quotaReached = limit > 0 && input.usedMinutesToday >= quota
 
         val reason = when {
+            input.settings.paused -> REASON_PAUSED
             inBedtime -> REASON_BEDTIME
             quotaReached -> REASON_QUOTA
             else -> REASON_NONE
@@ -379,6 +394,9 @@ object EnforcementEngine {
             if (reason != REASON_NONE && app.pkg !in allowed && app.launchable != false && !freeByDefault) {
                 suspended.add(app.pkg)
             }
+            // FR-21: a pause takes everything the child can open, always-free and preinstalled-free
+            // apps included. What it leaves is the whitelist, removed below.
+            if (reason == REASON_PAUSED && app.launchable != false) suspended.add(app.pkg)
             // FR-5.8: an app with an allowance of its own, spent. Independent of the shared quota,
             // so this suspends one app on a phone with screen time left — and deliberately not a
             // suspendReason: the phone is not in a quota state, one app is.
@@ -570,9 +588,11 @@ data class Settings(
     @SerialName("allow_uninstall") val allowUninstall: Boolean = false,
     @SerialName("youtube_blocked") val youtubeBlocked: Boolean = false,
     @SerialName("daily_limit_minutes") val dailyLimitMinutes: Int = 0,
-    /** Extra minutes for the one local day [bonusDay] (YYYY-MM-DD), on top of the limit (FR-3.11). */
+    /** The adjustment for the one local day [bonusDay] (YYYY-MM-DD): + extra, − taken away (FR-3.11, FR-21). */
     @SerialName("bonus_minutes") val bonusMinutes: Int = 0,
     @SerialName("bonus_day") val bonusDay: String = "",
+    /** A parent's or guardian's pause (FR-21): a state, like bedtime, until someone unpauses. */
+    @SerialName("paused") val paused: Boolean = false,
     @SerialName("bedtime_enabled") val bedtimeEnabled: Boolean = false,
     @SerialName("bedtime_start") val bedtimeStart: String = "",
     @SerialName("bedtime_end") val bedtimeEnd: String = "",
@@ -725,9 +745,11 @@ data class DesiredState(
     @SerialName("allow_installs") val allowInstalls: Boolean = false,
     @SerialName("user_restrictions") val userRestrictions: List<String> = emptyList(),
     @SerialName("quota_minutes") val quotaMinutes: Int = 0,
+    /** The plain daily limit, 0 for none: the one field that says whether a limit exists (FR-21). */
+    @SerialName("daily_limit_minutes") val dailyLimitMinutes: Int = 0,
     @SerialName("used_minutes") val usedMinutes: Int = 0,
     @SerialName("remaining_minutes") val remainingMinutes: Int = 0,
-    /** The part of [quotaMinutes] that is today's bonus (FR-3.11). */
+    /** Today's adjustment, + or − (FR-3.11, FR-21). */
     @SerialName("bonus_minutes") val bonusMinutes: Int = 0,
     @SerialName("next_change_at") val nextChangeAt: String = "",
     @SerialName("policy_version") val policyVersion: Long = 0,

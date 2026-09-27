@@ -58,6 +58,9 @@ const (
 	ReasonNone    = ""
 	ReasonBedtime = "BEDTIME"
 	ReasonQuota   = "QUOTA"
+	// ReasonPaused is a parent's or guardian's pause (FR-21): everything a child can open is
+	// suspended except the critical and always-usable packages, until someone unpauses.
+	ReasonPaused = "PAUSED"
 )
 
 // DefaultCriticalPackages can never be suspended or hidden, whatever the policy says (FR-5.5).
@@ -270,13 +273,18 @@ type Settings struct {
 	YouTubeBlocked    bool `json:"youtube_blocked"`
 	DailyLimitMinutes int  `json:"daily_limit_minutes"`
 
-	// BonusMinutes is extra screen time a parent granted for ONE local day, BonusDay (YYYY-MM-DD in
-	// the policy's zone), on top of DailyLimitMinutes (FR-3.11). It counts only on that day: a phone
-	// that is offline across midnight recomputes from its cached input, and a bonus that outlived
-	// its day would be a permanent raise nobody chose. Ignored when there is no daily limit — extra
-	// time on top of "unlimited" is not a quantity.
+	// BonusMinutes is a parent's adjustment to ONE local day, BonusDay (YYYY-MM-DD in the policy's
+	// zone), on top of DailyLimitMinutes (FR-3.11, FR-21). Positive is extra time, negative is time
+	// taken away; the day's limit never goes below zero. It counts only on that day: a phone that is
+	// offline across midnight recomputes from its cached input, and an adjustment that outlived its
+	// day would be a permanent change nobody chose. Ignored when there is no daily limit — there is
+	// nothing to add to or take from "unlimited".
 	BonusMinutes int    `json:"bonus_minutes"`
 	BonusDay     string `json:"bonus_day"`
+
+	// Paused is a parent's or guardian's pause (FR-21). A state rather than a command, like bedtime:
+	// it survives a reboot and an offline phone, and it ends only when someone unpauses.
+	Paused bool `json:"paused"`
 
 	BedtimeEnabled bool   `json:"bedtime_enabled"`
 	BedtimeStart   string `json:"bedtime_start"`
@@ -451,12 +459,17 @@ type DesiredState struct {
 	AllowInstalls    bool     `json:"allow_installs"`
 	UserRestrictions []string `json:"user_restrictions"`
 
-	// QuotaMinutes is the limit in force today: the daily limit plus today's bonus (FR-3.11).
-	QuotaMinutes     int `json:"quota_minutes"`
-	UsedMinutes      int `json:"used_minutes"`
-	RemainingMinutes int `json:"remaining_minutes"`
-	// BonusMinutes is the part of QuotaMinutes that is a bonus for today, so a phone and a console
-	// can say "60 + 30 extra" instead of a number that changed for no visible reason.
+	// QuotaMinutes is the limit in force today: the daily limit plus today's adjustment (FR-3.11,
+	// FR-21), never below zero. Zero with DailyLimitMinutes > 0 is a day with no time left, not a day
+	// without a limit — which is why DailyLimitMinutes travels beside it.
+	QuotaMinutes int `json:"quota_minutes"`
+	// DailyLimitMinutes is the plain daily limit, 0 for none: the one field that says whether a
+	// limit exists at all.
+	DailyLimitMinutes int `json:"daily_limit_minutes"`
+	UsedMinutes       int `json:"used_minutes"`
+	RemainingMinutes  int `json:"remaining_minutes"`
+	// BonusMinutes is today's adjustment, so a phone and a console can say "60 + 30 extra" or
+	// "60 − 15 today" instead of a number that changed for no visible reason.
 	BonusMinutes int `json:"bonus_minutes"`
 
 	// ManagedApps is passed through from the settings, sorted by package name and never nil. The
@@ -579,14 +592,16 @@ func Compute(in Input) (DesiredState, error) {
 	// stranger does not care what the enforcement mode is set to.
 	out.Locked = in.ParentLock
 
-	quota := in.Settings.DailyLimitMinutes
-	if quota > 0 && in.Settings.BonusMinutes > 0 && in.Settings.BonusDay == local.Format("2006-01-02") {
+	limit := max(0, in.Settings.DailyLimitMinutes)
+	quota := limit
+	if limit > 0 && in.Settings.BonusMinutes != 0 && in.Settings.BonusDay == local.Format("2006-01-02") {
 		out.BonusMinutes = in.Settings.BonusMinutes
-		quota += in.Settings.BonusMinutes
+		quota = max(0, limit+in.Settings.BonusMinutes)
 	}
+	out.DailyLimitMinutes = limit
 	out.QuotaMinutes = quota
 	out.UsedMinutes = in.UsedMinutesToday
-	if quota > 0 {
+	if limit > 0 {
 		out.RemainingMinutes = max(0, quota-in.UsedMinutesToday)
 	}
 
@@ -599,6 +614,21 @@ func Compute(in Input) (DesiredState, error) {
 	if in.Settings.TrackingOnly {
 		out.SuspendReason = ReasonNone
 		out.SuspendedPackages = []string{}
+		// FR-21: a pause is an explicit act, like LOCK_NOW, and is honoured here too — it suspends
+		// what the child can open and leaves the whitelist, exactly as it does outside this mode.
+		if in.Settings.Paused {
+			out.SuspendReason = ReasonPaused
+			paused := newSet(nil)
+			for _, app := range in.Installed {
+				if app.Package != "" && app.canBeOpened() {
+					paused.add(app.Package)
+				}
+			}
+			for _, p := range critical.sorted() {
+				paused.remove(p)
+			}
+			out.SuspendedPackages = paused.sorted()
+		}
 		out.HiddenPackages = []string{}
 		out.PendingApproval = []string{}
 		out.FreeByDefault = []string{}
@@ -625,9 +655,11 @@ func Compute(in Input) (DesiredState, error) {
 		}
 	}
 
-	quotaReached := quota > 0 && in.UsedMinutesToday >= quota
+	quotaReached := limit > 0 && in.UsedMinutesToday >= quota
 
 	switch {
+	case in.Settings.Paused:
+		out.SuspendReason = ReasonPaused
 	case inBedtime:
 		out.SuspendReason = ReasonBedtime
 	case quotaReached:
@@ -700,6 +732,11 @@ func Compute(in Input) (DesiredState, error) {
 			free.add(app.Package)
 		}
 		if out.SuspendReason != ReasonNone && !allowed.has(app.Package) && app.canBeOpened() && !freeByDefault {
+			suspended.add(app.Package)
+		}
+		// FR-21: a pause takes everything the child can open, the apps a parent made always free
+		// and the preinstalled free ones included. What it leaves is the whitelist, removed below.
+		if out.SuspendReason == ReasonPaused && app.canBeOpened() {
 			suspended.add(app.Package)
 		}
 		// FR-5.8: an app with an allowance of its own, spent. Independent of the shared quota, so
