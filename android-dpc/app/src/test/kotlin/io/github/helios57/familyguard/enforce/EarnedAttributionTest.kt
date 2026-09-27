@@ -1,6 +1,8 @@
 package io.github.helios57.familyguard.enforce
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -75,6 +77,41 @@ class EarnedAttributionTest {
     fun `a pause costs nothing, because nothing that costs runs`() {
         assertEquals(emptyMap<String, Long>(),
             EarnedAttribution.attribute(mapOf(GAME to 3 * min, MOVIES to 3 * min), ctx(paused = true)))
+    }
+
+    // ---- the context, from a real engine run ------------------------------------------------
+
+    private fun engineContext(settings: Settings, used: Int = 0, now: String = "2026-09-28T14:00:00+02:00"): EarnedContext {
+        val input = Input(
+            settings = settings,
+            installed = listOf(App(GAME, launchable = true), App(CAMERA, system = true, launchable = true), App(WHATSAPP)),
+            usedMinutesToday = used,
+            now = now,
+        )
+        return EarnedAttribution.contextOf(input, EnforcementEngine.compute(input), setOf(LAUNCHER), DAY)
+    }
+
+    @Test
+    fun `the context exempts always-free, preinstalled-free and critical apps, and nothing governed`() {
+        val c = engineContext(Settings(timezone = "Europe/Zurich", allowedPackages = listOf(VIDEO), dailyLimitMinutes = 60))
+        assertTrue(VIDEO in c.exempt)
+        assertTrue("a preinstalled app with an icon is free by default (FR-5.10)", CAMERA in c.exempt)
+        assertTrue("WhatsApp is always usable (FR-5.9)", WHATSAPP in c.exempt)
+        assertFalse(GAME in c.exempt)
+    }
+
+    @Test
+    fun `the context's budget is what is left of the day, and none without a limit`() {
+        assertEquals(15 * min, engineContext(Settings(timezone = "Europe/Zurich", dailyLimitMinutes = 60), used = 45).budgetLeftMs)
+        assertEquals(Long.MAX_VALUE, engineContext(Settings(timezone = "Europe/Zurich")).budgetLeftMs)
+    }
+
+    @Test
+    fun `the context knows bedtime while earned time is covering it, and a pause`() {
+        val bed = Settings(timezone = "Europe/Zurich", bedtimeEnabled = true, bedtimeStart = "21:00", bedtimeEnd = "07:00",
+            earnedAvailableMinutes = 30)
+        assertTrue(engineContext(bed, now = "2026-09-28T22:00:00+02:00").inBedtime)
+        assertTrue(engineContext(Settings(timezone = "Europe/Zurich", paused = true)).paused)
     }
 
     private companion object {
