@@ -50,7 +50,7 @@ func (s *Server) getPlan(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"groups": plan})
 }
 
-// putPlan replaces the plan as one document (FR-22). A group or task that carries its id is
+// putPlan replaces the plan as one document (FR-22.1). A group or task that carries its id is
 // updated in place, so its history stays attached; one without is new; one left out is retired.
 func (s *Server) putPlan(c *gin.Context) {
 	childID, ok := uuidParam(c, "id")
@@ -249,7 +249,7 @@ type decisionRequest struct {
 	Decision string `json:"decision"`
 }
 
-// decideTask confirms, rejects or undoes a task for today (FR-22) — the guardian window's
+// decideTask confirms, rejects or undoes a task for today (FR-22.3) — the guardian window's
 // "Bestätigen" and "Nicht erledigt". Confirming a group's last open task earns its credit; any
 // decision that leaves the group incomplete withdraws it.
 func (s *Server) decideTask(c *gin.Context) {
@@ -324,7 +324,7 @@ func (s *Server) decideTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"today": view, "credit": change})
 }
 
-// deviceReportTask is the child's "Fertig" (FR-22): only a task of this phone's profile, of a group
+// deviceReportTask is the child's "Fertig" (FR-22.2): only a task of this phone's profile, of a group
 // that runs today, inside its window. It asks a parent to confirm; it earns nothing by itself.
 func (s *Server) deviceReportTask(c *gin.Context) {
 	dev := deviceOf(c)

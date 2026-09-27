@@ -123,6 +123,37 @@ type adjustArgs struct {
 	Minutes int    `json:"minutes" jsonschema:"minutes to add (positive) or take away (negative) for today only, -1440 to 1440, not 0"`
 }
 
+// The plan's own argument types, rather than store.PlanGroup: a uuid.UUID is a [16]byte, and the
+// schema the SDK derives from it tells a model that an id is an ARRAY, so no model could ever send a
+// valid set_plan. The ids travel as the strings get_plan shows, and an absent one is omitted, which
+// is what the server reads as "new".
+type planTaskArg struct {
+	ID    string `json:"id,omitempty" jsonschema:"the task's id from get_plan; omit for a new task"`
+	Title string `json:"title" jsonschema:"what the child does, at most 120 characters"`
+	Note  string `json:"note,omitempty" jsonschema:"optional detail such as '10 min', at most 200 characters"`
+}
+
+type planGroupArg struct {
+	ID            string        `json:"id,omitempty" jsonschema:"the group's id from get_plan; omit for a new group"`
+	Title         string        `json:"title" jsonschema:"the group's name, such as Morgen"`
+	Weekdays      int           `json:"weekdays" jsonschema:"bit set: Monday 1, Tuesday 2, … Sunday 64; 127 is every day, 31 Monday to Friday"`
+	StartsAt      string        `json:"starts_at" jsonschema:"HH:MM, when the child can start reporting these tasks"`
+	EndsAt        string        `json:"ends_at" jsonschema:"HH:MM, after starts_at on the same day"`
+	EarnedMinutes int           `json:"earned_minutes" jsonschema:"minutes of earned time the group earns once every task is confirmed, 0-1440"`
+	Tasks         []planTaskArg `json:"tasks" jsonschema:"1 to 20 tasks"`
+}
+
+type planArgs struct {
+	ChildID string         `json:"child_id" jsonschema:"the child's UUID, as returned by list_children"`
+	Groups  []planGroupArg `json:"groups" jsonschema:"the WHOLE plan: every group to keep, each with its id as get_plan returned it; a group or task without an id is new, one left out is retired"`
+}
+
+type decideArgs struct {
+	ChildID  string `json:"child_id" jsonschema:"the child's UUID, as returned by list_children"`
+	TaskID   string `json:"task_id" jsonschema:"the task's UUID, as returned by get_today"`
+	Decision string `json:"decision" jsonschema:"confirm, reject or undo"`
+}
+
 type auditArgs struct {
 	Limit int `json:"limit,omitempty" jsonschema:"how many entries, 1-500, default 100"`
 }
@@ -205,6 +236,59 @@ func registerTools(server *mcp.Server, client *fgclient.Client) {
 			var out map[string]any
 			if err := c.Do(ctx, "POST", "/api/v1/children/"+in.ChildID+"/bonus",
 				map[string]int{"minutes": in.Minutes}, &out); err != nil {
+				return nil, err
+			}
+			return out, nil
+		})
+
+	add(server, client, "get_plan",
+		"A child's daily plan (FR-22): groups of tasks, each with its weekdays (a bit set, Monday = 1 "+
+			"… Sunday = 64, 127 = every day), its window, and the minutes of earned time (Bonuszeit) it "+
+			"earns once every task in it is confirmed.",
+		func(ctx context.Context, c *fgclient.Client, in childArgs) (any, error) {
+			var plan planDoc
+			if err := c.Get(ctx, "/api/v1/children/"+in.ChildID+"/plan", &plan); err != nil {
+				return nil, err
+			}
+			return plan, nil
+		})
+
+	add(server, client, "set_plan",
+		"Replace a child's daily plan with the given groups. Send the whole plan: call get_plan first "+
+			"and keep the ids, because a group that is left out is retired and one sent without its id "+
+			"starts a new history.",
+		func(ctx context.Context, c *fgclient.Client, in planArgs) (any, error) {
+			var plan planDoc
+			if err := c.Do(ctx, "PUT", "/api/v1/children/"+in.ChildID+"/plan", map[string]any{"groups": in.Groups}, &plan); err != nil {
+				return nil, err
+			}
+			return plan, nil
+		})
+
+	add(server, client, "get_today",
+		"Today's tasks for a child with their states (OPEN, REPORTED by the child, CONFIRMED, REJECTED), "+
+			"and the earned time: available, spent today, left (negative is a debt), and when each "+
+			"credit expires.",
+		func(ctx context.Context, c *fgclient.Client, in childArgs) (any, error) {
+			var day todayDoc
+			if err := c.Get(ctx, "/api/v1/children/"+in.ChildID+"/today", &day); err != nil {
+				return nil, err
+			}
+			return day, nil
+		})
+
+	add(server, client, "decide_task",
+		"Confirm, reject or undo a task for today. Confirming a group's last open task earns the group's "+
+			"minutes; a task need not be reported first. Undo or reject on a complete group takes its "+
+			"minutes back.",
+		func(ctx context.Context, c *fgclient.Client, in decideArgs) (any, error) {
+			decision := strings.ToLower(strings.TrimSpace(in.Decision))
+			if decision != "confirm" && decision != "reject" && decision != "undo" {
+				return nil, fmt.Errorf("decision must be confirm, reject or undo, not %q", in.Decision)
+			}
+			var out map[string]any
+			if err := c.Do(ctx, "POST", "/api/v1/children/"+in.ChildID+"/tasks/"+in.TaskID+"/decision",
+				map[string]string{"decision": decision}, &out); err != nil {
 				return nil, err
 			}
 			return out, nil

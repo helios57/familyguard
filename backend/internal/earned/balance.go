@@ -1,4 +1,4 @@
-// Package earned computes a profile's earned-time (Bonuszeit) balance (FR-22).
+// Package earned computes a profile's earned-time (Bonuszeit) balance (FR-22.4).
 //
 // Pure: credits and each day's spending in, the balance out. The spending comes from the phones —
 // each attributes every measured window when it measures it — so this package never decides what a

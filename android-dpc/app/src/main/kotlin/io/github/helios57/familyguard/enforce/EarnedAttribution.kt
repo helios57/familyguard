@@ -21,7 +21,7 @@ data class EarnedContext(
 )
 
 /**
- * Which of a window's minutes are earned time (Bonuszeit) — FR-22.
+ * Which of a window's minutes are earned time (Bonuszeit) — FR-22.5.
  *
  * A minute is earned time when it is a bonus app, inside bedtime, or past the daily budget, and
  * never when the app is exempt or uncounted. That is a statement about WHEN a minute was used, so it

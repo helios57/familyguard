@@ -21,7 +21,7 @@ const (
 	BlockedByRule   = "BLOCKED"   // a parent's BLOCK rule, the family blocklist or the YouTube switch
 	BlockedPending  = "PENDING"   // installed while free installation is off, waiting for a parent
 	BlockedAppLimit = "APP_LIMIT" // this app's own daily allowance is spent
-	BlockedEarned   = "EARNED"    // a bonus app, and no earned time is left (FR-22)
+	BlockedEarned   = "EARNED"    // a bonus app, and no earned time is left (FR-22.6)
 	BlockedQuota    = policy.ReasonQuota
 	BlockedBedtime  = policy.ReasonBedtime
 	notBlocked      = ""

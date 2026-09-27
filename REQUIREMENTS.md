@@ -612,8 +612,8 @@ below is about who can open it, what it can reach, and who can see that it is op
 
 The five requirements below were agreed with the owner on 2026-09-27 and are designed in
 [`docs/superpowers/specs/2026-09-27-daily-plan-design.md`](docs/superpowers/specs/2026-09-27-daily-plan-design.md).
-FR-20 is built (phase 1, 0.6.18) and FR-21 (phase 2, 0.6.19). **FR-22 … FR-24 are not built yet**; each names the phase that
-builds it, and the phase fills in the detail when it lands.
+FR-20 is built (phase 1, 0.6.18), FR-21 (phase 2, 0.6.19) and FR-22 (phase 3, 0.6.20). **FR-23 and FR-24 are not built
+yet**; each names the phase that builds it, and the phase fills in the detail when it lands.
 
 ### FR-20 Roles and rights (phase 1)
 Measured 2026-09-27: the role was checked on 7 of 48 parent routes, so a guardian could delete a
@@ -665,6 +665,36 @@ valid for seven days from the day it was earned, spent oldest first. It is spent
 app once the daily budget is used up or bedtime has begun, and always on apps marked as bonus apps,
 which run on nothing else. Precedence: pause, then a parent's block on one app, then earned time, then
 bedtime, then the daily budget.
+
+- FR-22.1 **The plan** is one document per profile (`GET|PUT /children/:id/plan`, admins): up to 12
+  groups, each with a title, weekdays (a bit set, Monday 1 … Sunday 64), a window `HH:MM`–`HH:MM` on
+  one day, 0–1440 minutes and 1–20 tasks (title ≤ 120, note ≤ 200). A group or task sent with its id
+  is edited in place and keeps its history; one without is new; one left out is retired, never
+  deleted. Audited as `PLAN_UPDATED`. The console edits it on the Rules tab.
+- FR-22.2 **Reporting** is the child's *Fertig* on the phone's Heute screen
+  (`POST /device/tasks/:task/report`): only a task of the phone's own profile, of a group that runs
+  today, inside its window, and only with the server reachable. It earns nothing by itself; it asks a
+  parent (`TASK_REPORTED`).
+- FR-22.3 **Deciding** (`POST /children/:id/tasks/:task/decision`, every parent role): confirm, reject
+  or undo, for today. A task need not have been reported to be confirmed. Confirming a group's last
+  open task credits its minutes for the day (`EARNED_TIME_CREDITED`); any decision that leaves the
+  group incomplete withdraws the credit (`EARNED_TIME_WITHDRAWN`). The guardian window lists reported
+  tasks under *Wartet auf dich* with *Bestätigen* / *Nicht erledigt*, shows each card's tasks for
+  today with *Bestätigen* (or *Rückgängig* once confirmed), and the balance in gold — a debt in red —
+  with the day the oldest credit runs out.
+- FR-22.4 **The balance** (`GET /children/:id/today`): credits from the last seven days, spent oldest
+  first, dropped after their seventh day; spending beyond the balance is carried as a debt the next
+  credit settles. Two phones of one profile can spend the same minutes before they sync (accepted).
+- FR-22.5 **Spending** is attributed on the phone, per measured window, as it is measured: a minute of
+  a bonus app, a minute inside bedtime, and a minute after the daily budget is spent are paid in
+  earned time; always-free, preinstalled-free, critical and uncounted apps never are. A minute paid
+  in earned time does not also count against the budget.
+- FR-22.6 **Bonus apps** are the fifth answer on the Apps tab (rule `BONUS`): suspended whenever no
+  earned time is left, whatever the hour — the console says *Paused — no earned time left* (reason
+  `EARNED`) — and usable while there is some, even in bedtime or past the limit.
+- FR-22.7 `fgctl plan <child> [--set file.json]` (the document `--json` prints is the one `--set`
+  takes), `fgctl today <child>`, `fgctl confirm|reject|undo <child> <task>`, and the MCP tools
+  `get_plan`, `set_plan`, `get_today` and `decide_task` do the same.
 
 ### FR-23 Alarm (phase 4)
 A profile has an alarm time per weekday, a one-off override for the next day and an option to stay
