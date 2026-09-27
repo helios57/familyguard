@@ -536,7 +536,7 @@ class ConnectionService : Service() {
         // reach the same managers, and two resolutions would be two answers to "is this app the
         // device owner" that could disagree across a `connect()` that outlives an ownership change.
         val policy = DeviceOwnerPolicy.of(this)
-        val reports = reporting(api, policy)
+        val reports = reporting(api, policy) { store.load()?.deviceId.orEmpty() }
         // Built from the same stores the recovery screen uses, and deliberately not a second set:
         // the screen writes the flag from its own process, and a synchronizer reading a different
         // file would keep enforcing bedtime on a phone somebody had just recovered.
@@ -921,7 +921,7 @@ class ConnectionService : Service() {
      * service is started at boot and after a kill, and assuming the screen is on would credit the
      * whole of the first window to whatever the child had open before the phone was put down.
      */
-    private fun reporting(api: ApiClient, policy: DeviceOwnerPolicy?): Reporting {
+    private fun reporting(api: ApiClient, policy: DeviceOwnerPolicy?, deviceId: () -> String): Reporting {
         val ledger = UsageLedger(EncryptedUsageStore(this))
         val sessions = SessionLog(EncryptedSessionStore(this))
         val power = getSystemService(PowerManager::class.java)
@@ -939,6 +939,13 @@ class ConnectionService : Service() {
             monotonicClock = { SystemClock.elapsedRealtime() },
         )
         val digests = encryptedPreferences(this, INVENTORY_FILE)
+        // Bound to the device record it was sent to, so a phone enrolled again sends its list to the
+        // new record instead of calling it unchanged. See InventoryDigest.
+        val inventoryDigest = InventoryDigest(
+            read = { digests.getString(KEY_INVENTORY_DIGEST, null) },
+            write = { digests.edit().putString(KEY_INVENTORY_DIGEST, it).commit() },
+            deviceId = deviceId,
+        )
         return Reporting(
             tracker = tracker,
             ledger = ledger,
@@ -972,10 +979,8 @@ class ConnectionService : Service() {
                         )
                     )
                 },
-                lastDigest = { digests.getString(KEY_INVENTORY_DIGEST, "").orEmpty() },
-                recordDigest = {
-                    digests.edit().putString(KEY_INVENTORY_DIGEST, it).commit()
-                },
+                lastDigest = inventoryDigest::last,
+                recordDigest = inventoryDigest::record,
             ),
         )
     }
