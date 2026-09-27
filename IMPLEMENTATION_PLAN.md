@@ -7631,3 +7631,93 @@ signer `b62cda94…8e10`). Read back live with the owner's key: the children lis
 impossible string counts 0. The family phone was last seen ten hours earlier at 3 % battery, still on
 0.6.17: `UPDATE_APP` is queued and lands when it is charged and awake. Until then it ignores
 `settings.paused` (unknown keys are ignored), so a pause reaches it only after the update.
+
+## Phase 36 — Daily plan and earned time (FR-22)
+
+Phase 3 of the daily-plan design (`docs/superpowers/specs/2026-09-27-daily-plan-design.md` §5–§7;
+plan `docs/superpowers/plans/2026-09-27-phase3-daily-plan-and-earned-time.md`). A profile has a plan
+of task groups; the child reports a task done on the phone; a parent or guardian confirms it; a
+group whose tasks are all confirmed earns **Bonuszeit**, spent automatically once the budget is used
+or bedtime has begun, and always on bonus apps.
+
+**The accounting is decided on the phone, per measured window.** A minute is earned time when it is a
+bonus app, falls inside bedtime, or comes after the budget is spent — a statement about *when*, which
+day totals cannot recover (a child who spends the budget on a game in the morning and chats on
+WhatsApp in the evening would be charged gold for the chat by any formula over totals). So
+`EarnedAttribution` judges each ~5-minute window by the state it was used under, a second ledger
+carries the earned part, and both engines take the result as one number.
+
+1. **Both engines**: `gold = earned_available_minutes − earned_spent_minutes_today`; while gold > 0,
+   BEDTIME and QUOTA suspend nothing and `earned_active` names what gold covers; bonus apps are
+   suspended whenever gold ≤ 0. Ten shared vectors (68).
+2. **Phone**: `EarnedAttribution`, `EarnedAccount` (an encrypted second ledger), the usage report's
+   `earned`, the Heute screen's tasks with *Fertig* and the Bonuszeit in gold, `TaskReporter`.
+3. **Server**: migration 0019, the plan document, today's view, the decisions and credits, the device's
+   report inside the window, the seven-day oldest-first balance with debt (`internal/earned`), the
+   block reason `EARNED`.
+4. **Console**: the plan editor (Rules tab), *Bonus app* (Apps tab), the guardian window's *Wartet auf
+   dich*, each card's tasks and the gold balance.
+5. **fgctl/MCP**: `plan [--set]`, `today`, `confirm|reject|undo`; `get_plan`, `set_plan`, `get_today`,
+   `decide_task`.
+
+**Three defects found on the way, by the tests, before anything shipped:**
+
+- **`set_plan` could never have worked for a model.** `store.PlanGroup`'s ids are `uuid.UUID`, a
+  `[16]byte`, and the MCP SDK's schema told the model an id is an array (*"has type string, want
+  array"*). The e2e test was the first thing ever to call it. The tool now takes its own argument types
+  with string ids.
+- **A bonus app out of earned time read "Blocked"** in the console — a parent's rule — because the
+  server's reason fell through to its default. It is `EARNED` now: *Paused — no earned time left*.
+- **The plan editor was 373 px wide on a 360 px phone**, with 43 px day buttons: seven 44 px buttons
+  need 316 px and a phone card has 304. Caught by the layout guard added for the open group; days are
+  four to a row below 480 px. Screenshots at 360 px then showed the task state glued to its title and
+  the ISO expiry date in the German window; both fixed and each pinned by an assertion.
+
+### 36.1 — tests
+
+- Shared vectors (10): gold covers bedtime and the quota, not a pause or a block; a bonus app with and
+  without gold, in bedtime; tracking-only restrains nothing.
+- Kotlin unit: `EarnedAttributionTest` (9, among them WhatsApp after the budget costs no gold),
+  `EarnedAccountTest` (4), `SynchronizerTest` (+2), the attribution context from a real engine run (3),
+  `DayPlanTest` (3), `TodayReportTest` (+2).
+- Go unit: the balance simulation (FIFO, expiry at the end of the seventh day, debt, today's spend not
+  subtracted twice).
+- e2e: the plan document and its ids; the whole day from *Fertig* to a bonus app running at the limit,
+  the gold running out and undo leaving a debt; the report window; the checks; the audit ratchet (seven
+  new actions); a guardian may read today and decide, not edit the plan.
+- Console in Chrome at 360 px: an admin builds and re-saves a plan (same id); a guardian rejects,
+  re-confirms and confirms, and sees *Bonuszeit: 30 min* expiring *bis Sa 3.10.*; *Bonus app* stored as
+  `BONUS`; the Activity row of a bonus app with no gold; layout guards for the open group and the
+  waiting card.
+- fgctl and MCP against the real binary: plan, today, confirm/reject/undo, get/set plan, decide.
+- Real Android (`tests/android/bonus.sh`, `familyguard37`, API 37): DeskClock marked a bonus app is
+  suspended with no earned time, usable after a parent's confirmation, suspended again after undo —
+  read from `dumpsys package`, with no tap on the phone.
+- Heute screen on the emulator, read through the UI hierarchy (the headless AVD's `screencap` returns a
+  single white colour, so pixels were not measured): *Bonuszeit: 30 Min. — 30 Min. davon gültig bis
+  Samstag*, *FERTIG*, *nicht erledigt — nochmal melden*, *Geschafft: +30 Min. Bonuszeit*. The gold
+  colour itself is not verified on a device.
+
+### 36.2 — calibration
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| 1–3 | `policy/engine.go` | covering threshold raised; zero-gold bonus app usable; bonus rule not ending the approval wait | **RED**, each on its vector |
+| 4–5 | `EnforcementEngine.kt` | the first two | **RED**, each on its vector |
+| 6–8 | `EarnedAccount`, `UsageLedger.addCredited` | written before their tests, broken on purpose | **RED**, each on its one test |
+| 9–11 | `Synchronizer` | the merge and the hook | **RED**, each on its one test |
+| 12–14 | `EarnedAttribution.contextOf` | free-by-default not exempt; budget read as the quota; bedtime missed under gold | **RED**, each on its one test |
+| 15–18 | `earned/balance.go` | no expiry; newest first; debt ignored; today's spend subtracted | **RED**, each on its test |
+| 19–25 | `httpapi/plan.go`, store | no credit on a complete group; undo not withdrawing; no today block; weekday ignored; earned ms stored as 0; groups on days they do not run; credits as null | **RED**, each on its own message |
+| 26–29 | `enforce/resolve.go` | four hand-off values | **RED** — two only after a first attempt that was a build error (invalid, retaken as value changes) |
+| 30–32 | Heute (`DayPlan`, `TodayReport`) | three values | **RED**, each on its test |
+| 33 | `app.js` | the expiry as the ISO date | **RED**: *does not say when it expires as a day* |
+| 34 | `app.css` | the task's state inline | **RED**: *drawn on the same line as its title* |
+| 35–37 | `app.js` | `fmtMinutes` says "1 h 0 min" | **RED** in three tests (home card, chart label, guardian status) |
+| 38 | `EnforcementEngine.kt`, on the device | a zero-gold bonus app left usable (`gold <= -100000`) | **RED**: *suspended="false" after 2m0s, want "true"* |
+
+The console, fgctl and REQUIREMENTS work was written test-first: four console tests red on the missing
+feature, the fgctl test red on the unknown command, `RequirementCitationsTest` red on seven uncited
+FR-22 numbers, and the 360 px layout guard red on the editor as first drawn. Every probe a value
+change, restored with `cp` and verified with `cmp`. This phase: **40 probes, 38 red, 2 invalid first
+attempts retaken.** Cumulative: **197 probes.**

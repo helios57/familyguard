@@ -59,50 +59,9 @@ func (d *androidDevice) awaitSuspended(t *testing.T, pkg, want string, within ti
 func TestAPauseSuspendsAppsOnARealPhone(t *testing.T) {
 	d := androidDeviceFromEnv(t)
 	d.dumpDeviceLogOnFailure()
-
 	h := newHarness(t, withPublicHost(emulatorHostAlias))
-	deviceBase := fmt.Sprintf("http://%s:%d", emulatorHostAlias, h.port)
+	parent, child, _, target := managedOnEmulator(t, h, d)
 
-	parent := h.signIn(primaryParent)
-	child := h.newChild(parent.Token, "Ada")
-	// adb has to survive the first policy, or nothing here could read the device afterwards.
-	h.patchPolicy(parent.Token, child.ID, map[string]any{"allow_debugging": true, "timezone": "Europe/Zurich"})
-	device := h.newDevice(parent.Token, child.ID, "Ada's phone")
-	_, enrollToken := h.provision(parent.Token, device.ID)
-	d.enroll(deviceBase, enrollToken)
-	// The enrolment instrumentation runs in its own process and leaves no service behind; a reboot
-	// starts the DPC the way a phone in a pocket starts it, which is the state this test is about.
-	// Same step as TestRemoteADBReachesARealPhonesAdbd.
-	enrolled := time.Now()
-	d.reboot()
-
-	target := ""
-	for _, p := range pausableCandidates {
-		if d.suspendedState(p) != "" {
-			target = p
-			break
-		}
-	}
-	if target == "" {
-		t.Fatalf("this image has none of %v, so there is no launchable app to pause", pausableCandidates)
-	}
-
-	// The phone is managed once it has reported in and filed an inventory with both apps in it.
-	deadline := time.Now().Add(3 * time.Minute)
-	for {
-		view := h.deviceView(parent.Token, device.ID)
-		seen := view.State != nil && view.State.LastSeenAt != nil && view.State.LastSeenAt.After(enrolled)
-		hasFixture := h.deviceHasApp(parent.Token, device.ID, fixturePackageOnDevice)
-		hasTarget := h.deviceHasApp(parent.Token, device.ID, target)
-		if seen && hasFixture && hasTarget {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("after 3 min: reported since enrolment=%v, fixture in inventory=%v, %s in inventory=%v",
-				seen, hasFixture, target, hasTarget)
-		}
-		time.Sleep(2 * time.Second)
-	}
 	// Positive control: before the pause the app is usable. Without this, a device that suspends it
 	// for another reason — a pause left over from an earlier run — would make the pause look applied.
 	d.awaitSuspended(t, target, "false", 2*time.Minute)
@@ -133,6 +92,54 @@ func TestAPauseSuspendsAppsOnARealPhone(t *testing.T) {
 	h.call(http.MethodPost, "/children/"+child.ID+"/pause", parent.Token, map[string]any{"paused": false}).
 		expect(http.StatusOK)
 	d.awaitSuspended(t, target, "false", 2*time.Minute)
+}
+
+// managedOnEmulator enrols the emulator for a new child with adb kept on, reboots it the way a phone
+// in a pocket starts the DPC, and waits until the phone has reported in with an inventory holding
+// the fixture and a preinstalled app with a launcher entry — which it returns as the target.
+func managedOnEmulator(t *testing.T, h *harness, d *androidDevice) (sessionDTO, childDTO, deviceDTO, string) {
+	t.Helper()
+	deviceBase := fmt.Sprintf("http://%s:%d", emulatorHostAlias, h.port)
+	parent := h.signIn(primaryParent)
+	child := h.newChild(parent.Token, "Ada")
+	// adb has to survive the first policy, or nothing here could read the device afterwards.
+	h.patchPolicy(parent.Token, child.ID, map[string]any{"allow_debugging": true, "timezone": "Europe/Zurich"})
+	device := h.newDevice(parent.Token, child.ID, "Ada's phone")
+	_, enrollToken := h.provision(parent.Token, device.ID)
+	d.enroll(deviceBase, enrollToken)
+	// The enrolment instrumentation runs in its own process and leaves no service behind; a reboot
+	// starts the DPC the way a phone in a pocket starts it, which is the state these tests are about.
+	// Same step as TestRemoteADBReachesARealPhonesAdbd.
+	enrolled := time.Now()
+	d.reboot()
+
+	target := ""
+	for _, p := range pausableCandidates {
+		if d.suspendedState(p) != "" {
+			target = p
+			break
+		}
+	}
+	if target == "" {
+		t.Fatalf("this image has none of %v, so there is no launchable app to suspend", pausableCandidates)
+	}
+
+	// The phone is managed once it has reported in and filed an inventory with both apps in it.
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		view := h.deviceView(parent.Token, device.ID)
+		seen := view.State != nil && view.State.LastSeenAt != nil && view.State.LastSeenAt.After(enrolled)
+		hasFixture := h.deviceHasApp(parent.Token, device.ID, fixturePackageOnDevice)
+		hasTarget := h.deviceHasApp(parent.Token, device.ID, target)
+		if seen && hasFixture && hasTarget {
+			return parent, child, device, target
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after 3 min: reported since enrolment=%v, fixture in inventory=%v, %s in inventory=%v",
+				seen, hasFixture, target, hasTarget)
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 // deviceHasApp is whether the phone's own inventory lists pkg.

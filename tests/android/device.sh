@@ -364,3 +364,76 @@ allow_local_network() {
 	[ "$attempt" -eq 1 ] || say "ACCESS_LOCAL_NETWORK took $attempt attempts"
 	say "ACCESS_LOCAL_NETWORK is held, read back from dumpsys"
 }
+
+# run_package_test <TestName> <what a pass proved>: installs the DPC, its instrumentation and the
+# fixture app, makes the DPC the device owner, and runs one e2e test that reads the package manager —
+# refusing a green that came from a filter matching nothing. Shared by pause.sh and bonus.sh.
+run_package_test() {
+	local TEST_NAME="$1" pass="$2"
+	local E2E="$ROOT/tests/e2e/run.sh"
+	LOG=""
+	trap 'if [ -n "$LOG" ]; then rm -f "$LOG"; fi' EXIT
+
+	[ -x "$E2E" ] || result "NOT MEASURED" "no e2e runner at $E2E"
+	require_one_device
+
+	DEBUG_APK="$ANDROID/app/build/outputs/apk/debug/app-debug.apk"
+	TEST_APK="$ANDROID/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+
+	say "building the DPC and the instrumentation"
+	(cd "$ANDROID" && ./gradlew --console=plain :app:assembleDebug :app:assembleDebugAndroidTest :fixture-app:assembleV1Debug)
+	[ $? -eq 0 ] || result "NOT MEASURED" "the DPC did not build"
+
+	# Before installing, not only before enrolling: sys.boot_completed turns 1 while the package
+	# manager is still coming up, and an install in that window dies inside the platform — measured
+	# 2026-09-23 on a cold-booted API 37 AVD: `NullPointerException … PackageManagerInternal.freeStorage`
+	# from StorageManagerService.allocateBytes, and the same command succeeded a minute later.
+	wait_for_unlocked_user "before installing"
+
+	say "installing the DPC and the instrumentation"
+	adb install -r -d "$DEBUG_APK" | tail -n1
+	[ "${PIPESTATUS[0]}" -eq 0 ] || result "NOT MEASURED" "could not install the DPC on the device"
+	adb install -r -d "$TEST_APK" | tail -n1
+	[ "${PIPESTATUS[0]}" -eq 0 ] || result "NOT MEASURED" "could not install the instrumentation APK"
+	FIXTURE_APK="$(ls "$ANDROID"/fixture-app/build/outputs/apk/v1/debug/*.apk 2>/dev/null | head -n1)"
+	[ -n "$FIXTURE_APK" ] || result "NOT MEASURED" "the fixture app did not build"
+	# Retried: on a freshly wiped emulator the first installs can meet StorageManager before it is up
+	# ("StorageManager.getVolumes() on a null object reference", measured 2026-09-27), a platform race
+	# that clears within seconds and says nothing about the product.
+	fixture_ok=0
+	for attempt in 1 2 3; do
+		if adb install -r -d "$FIXTURE_APK" 2>&1 | tail -n1 | command grep -q '^Success'; then
+			fixture_ok=1
+			break
+		fi
+		say "fixture install attempt $attempt failed; retrying"
+		sleep 10
+	done
+	[ "$fixture_ok" -eq 1 ] || result "NOT MEASURED" "could not install the fixture app"
+
+	ensure_device_owner
+	allow_local_network
+	wait_for_unlocked_user "before the enrollment instrumentation"
+
+	LOG="$(mktemp)" || result "NOT MEASURED" "could not create a log file"
+	say "running $TEST_NAME"
+	E2E_ANDROID=1 \
+		E2E_ANDROID_ADB="$ADB" \
+		E2E_ANDROID_SERIAL="${ANDROID_SERIAL:-}" \
+		"$E2E" -run "^${TEST_NAME}\$" -v 2>&1 | tee "$LOG"
+	rc="${PIPESTATUS[0]}"
+
+	if ! command grep -q -- "--- PASS: $TEST_NAME" "$LOG"; then
+		if command grep -q -- "--- SKIP: $TEST_NAME" "$LOG"; then
+			result "NOT MEASURED" "$TEST_NAME skipped itself; it was not given a device"
+		fi
+		if [ "$rc" -eq 0 ]; then
+			result "NOT MEASURED" "the suite exited 0 without running $TEST_NAME; the filter matched nothing"
+		fi
+	fi
+	case "$rc" in
+	0) result "PASS" "$pass" ;;
+	1) result "FAIL" "$TEST_NAME failed" ;;
+	*) result "NOT MEASURED" "the e2e harness could not run (exit $rc) — its own reason is the last NOT MEASURED line above" ;;
+	esac
+}
