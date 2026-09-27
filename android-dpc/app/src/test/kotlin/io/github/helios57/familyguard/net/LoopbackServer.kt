@@ -55,6 +55,15 @@ class LoopbackServer(private var respond: (RecordedRequest) -> HttpResponse) : A
     @Volatile
     private var answering = true
 
+    /**
+     * Set by [close] before the socket is shut. The JDK does not make that shut synchronous with an
+     * accept already in progress: a connection that arrives in the window is still accepted and was
+     * served — measured on CI, where `a closed server stops serving` recorded the test's own request
+     * made after close(), and reproduced here 13 times in 3000 by racing a connect against close().
+     */
+    @Volatile
+    private var closing = false
+
     /** Requests in arrival order. Written from the accept threads, read from the test thread. */
     val requests = CopyOnWriteArrayList<RecordedRequest>()
 
@@ -62,16 +71,19 @@ class LoopbackServer(private var respond: (RecordedRequest) -> HttpResponse) : A
 
     val last: RecordedRequest? get() = requests.lastOrNull()
 
-    init {
-        thread(isDaemon = true, name = "loopback-http-accept") {
-            while (!socket.isClosed) {
-                val connection = try {
-                    socket.accept()
-                } catch (_: IOException) {
-                    return@thread
-                }
-                thread(isDaemon = true, name = "loopback-http-connection") { serve(connection) }
+    private val acceptThread = thread(isDaemon = true, name = "loopback-http-accept") {
+        while (!socket.isClosed) {
+            val connection = try {
+                socket.accept()
+            } catch (_: IOException) {
+                return@thread
             }
+            if (closing) {
+                // Accepted in the window after close() began: dropped, never served.
+                runCatching { connection.close() }
+                return@thread
+            }
+            thread(isDaemon = true, name = "loopback-http-connection") { serve(connection) }
         }
     }
 
@@ -113,13 +125,20 @@ class LoopbackServer(private var respond: (RecordedRequest) -> HttpResponse) : A
 
     /** Idempotent, and relied upon to be: `@After` closes a server a test may already have closed. */
     override fun close() {
+        closing = true
         socket.close()
+        // Synchronous: once close() returns, the accept thread has ended, so nothing accepted later
+        // can be served. Bounded, because teardown must not hang on a thread the JDK never wakes.
+        acceptThread.join(2_000)
     }
 
     private fun serve(connection: Socket) {
         try {
             connection.use {
                 val request = read(it.getInputStream()) ?: return
+                // A connection accepted just before close() but read after it is not recorded:
+                // "a closed server records nothing" is the property teardown and the tests rely on.
+                if (closing) return
                 requests.add(request)
                 // `use` closes the connection on the way out, which is the whole response.
                 if (!answering) return
