@@ -116,8 +116,13 @@ class UpdateSchedule(
          * node at startup — so this is the delay between a deploy and a phone taking it. The check
          * costs one small authenticated GET, and a phone already on the current build downloads
          * nothing: the comparison is made against the version the server declares.
+         *
+         * Six hours since 0.6.27, and no longer a quarter of an hour (FR-26.2): its wake-up was one of
+         * the four that kept an idle phone's radio busy, and a parent who wants a build on a phone now
+         * has *Update app*, which reaches it as a command. Checks also ride along on any sync that finds
+         * one due, so a phone in use takes a new build soon after the six hours are up.
          */
-        const val INTERVAL_MILLIS = 15 * 60 * 1000L
+        const val INTERVAL_MILLIS = 6 * 60 * 60 * 1000L
 
         /**
          * How long the phone waits after a refused update before trying again.
@@ -131,6 +136,6 @@ class UpdateSchedule(
          * It is also the furthest ahead this class ever books, which is what makes it the test for
          * a stored instant that the clock has moved out of reach — see [arm].
          */
-        const val RETRY_MILLIS = 6 * 60 * 60 * 1000L
+        const val RETRY_MILLIS = 24 * 60 * 60 * 1000L
     }
 }

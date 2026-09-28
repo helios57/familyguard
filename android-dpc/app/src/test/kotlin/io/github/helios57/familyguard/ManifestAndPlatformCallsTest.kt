@@ -608,6 +608,9 @@ class ManifestAndPlatformCallsTest {
             // The connection is a foreground service so "lock now" locks now.
             "android.permission.FOREGROUND_SERVICE" to "ConnectionService",
             "android.permission.FOREGROUND_SERVICE_SPECIAL_USE" to "its specialUse type",
+            // FR-27.2: Live. The service takes the location type only while a session runs; without
+            // it a background app gets a few positions an hour instead of one every ten seconds.
+            "android.permission.FOREGROUND_SERVICE_LOCATION" to "Live mode's positions",
             // Granted to itself as device owner; without it the service runs with no notification,
             // which removes the child's disclosure that the phone is managed.
             "android.permission.POST_NOTIFICATIONS" to "the foreground-service notification",

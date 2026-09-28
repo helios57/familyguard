@@ -15,6 +15,9 @@ interface EnergyClock {
     /** When this process started, on the wall clock. Fixed for the life of the process. */
     val processStartEpochMillis: Long
 
+    /** `elapsedRealtime`: counts through sleep, cannot be moved. */
+    fun elapsedMillis(): Long
+
     /** CPU time this process has used, in milliseconds. */
     fun cpuMillis(): Long
 
@@ -45,6 +48,9 @@ data class EnergyReport(
     @SerialName("polls") val polls: Long = 0,
     @SerialName("pushes") val pushes: Long = 0,
     @SerialName("other_syncs") val otherSyncs: Long = 0,
+    /** FR-26.1: time spent in each mode; null from a process that has not been told one. */
+    @SerialName("active_ms") val activeMs: Long? = null,
+    @SerialName("passive_ms") val passiveMs: Long? = null,
 )
 
 /**
@@ -82,7 +88,39 @@ class EnergyMeter(private val clock: EnergyClock) {
         }
     }
 
-    fun report(): EnergyReport = EnergyReport(
+    private var mode: io.github.helios57.familyguard.sync.PowerMode? = null
+    private var modeSinceElapsed = 0L
+    private var activeMs = 0L
+    private var passiveMs = 0L
+
+    /**
+     * The phone is now in [mode] (FR-26.1). Time is counted on `elapsedRealtime`, so a phone asleep in
+     * PASSIVE accrues PASSIVE time — which is the time this whole design is about.
+     */
+    @Synchronized
+    fun modeChanged(mode: io.github.helios57.familyguard.sync.PowerMode) {
+        if (mode == this.mode) return
+        accrue(clock.elapsedMillis())
+        this.mode = mode
+    }
+
+    @Synchronized
+    private fun accrue(now: Long) {
+        when (mode) {
+            io.github.helios57.familyguard.sync.PowerMode.ACTIVE -> activeMs += now - modeSinceElapsed
+            io.github.helios57.familyguard.sync.PowerMode.PASSIVE -> passiveMs += now - modeSinceElapsed
+            null -> Unit
+        }
+        modeSinceElapsed = now
+    }
+
+    @Synchronized
+    fun report(): EnergyReport {
+        if (mode != null) accrue(clock.elapsedMillis())
+        return snapshot()
+    }
+
+    private fun snapshot(): EnergyReport = EnergyReport(
         since = since,
         cpuMs = clock.cpuMillis(),
         rxBytes = grown(rxAtStart, clock.rxBytes()),
@@ -92,6 +130,8 @@ class EnergyMeter(private val clock: EnergyClock) {
         polls = polls.get(),
         pushes = pushes.get(),
         otherSyncs = otherSyncs.get(),
+        activeMs = if (mode != null) activeMs else null,
+        passiveMs = if (mode != null) passiveMs else null,
     )
 
     /**
@@ -116,6 +156,7 @@ object AndroidEnergyClock : EnergyClock {
     override val processStartEpochMillis: Long =
         System.currentTimeMillis() - (SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime())
 
+    override fun elapsedMillis(): Long = SystemClock.elapsedRealtime()
     override fun cpuMillis(): Long = Process.getElapsedCpuTime()
     override fun rxBytes(): Long = TrafficStats.getUidRxBytes(Process.myUid())
     override fun txBytes(): Long = TrafficStats.getUidTxBytes(Process.myUid())

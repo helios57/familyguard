@@ -8142,3 +8142,100 @@ Every probe a value change, restored with `cp` and verified with `cmp`. The devi
 emulator restarts first: one probe's run crashed the enrolment and left the device-owner state
 inconsistent (NOT MEASURED, retaken), and one hung on reboot (retaken). **This phase: 26 probes, 24 red,
 2 green and explained (#6, #13); #2 went red once its test existed.** Cumulative: **279 probes.**
+
+## Phase 42 — Energy, phase 2: the modes and Live (FR-26.1, FR-26.2, FR-27)
+
+Phase 2 of the energy design. The phone keeps its event stream open only while it is **ACTIVE** —
+screen on, a minute's grace after it goes off, or Live — and otherwise rests: no stream, one sync
+every 5 minutes by an exact allow-while-idle alarm, and the screen coming on syncs at once (the stream
+opens and its `connected` frame is a sync). The keepalive that arrived every 20 s — 180 radio wake-ups
+an hour on mobile data — is gone while the phone rests; the poll is 12.
+
+**Phone.** `PowerMode.decide` (pure: screen, `elapsedRealtime` of screen-off, Live's end) and
+`nextChangeAtEpoch`, which books the one alarm that ends the grace or Live — no coroutine `delay`
+anywhere in it, since that clock stops while the phone sleeps. `EventStream` gained a `gate` (it opens
+nothing while PASSIVE) and `interrupt()` (a phone going PASSIVE closes the stream from outside; not a
+dropped stream, so no backoff and no reconnect wake-up). The poll books its successor before it syncs,
+so a failing sync cannot end the cadence. The update check moved from 15 minutes to 6 hours (retry 24
+h). Live: `live_until` arrives with the policy; while it runs the service takes the `location` type
+and `LiveLocation` reports GPS and network fixes, throttled to one per ~10 s. The energy meter counts
+time per mode.
+
+**Server.** Migration 0024 (`devices.live_until`, `live_since`); `GET|POST|DELETE
+/devices/:id/live` for admins and guardians — a guardian sees the session's positions and not the
+history; extending keeps the start; audited; the device is woken on the stream. The policy carries
+`live_until`. The device views carry `stream_open` (the hub's count of the phone's streams), a phone
+holding its stream is online, and the offline threshold went from 3 to 11 minutes (two polls and a
+margin). Console: *Live 30 min*, *+30 min*, *Stop* on the device card and on a guardian's profile card
+(German there), the last position with its age, accuracy and a map link, following the phone through
+the event stream; and *resting* for a phone that is online without its stream, with what that means
+for Lock and Ring. `fgctl live`, MCP `get_live`, `start_live`, `stop_live`.
+
+### 42.1 — tests
+
+- Kotlin unit: `PowerModeTest` (7), `EventStreamTest` +2 (nothing opened while the gate is shut; an
+  interrupt closes a held connection and waits for the gate without waiting to retry — against a
+  server that holds the connection, as the real one does), `SynchronizerTest` +1 (Live's end, "" and
+  absent), `EnergyMeterTest` +1 (time per mode, null before the first), `LiveThrottleTest` (2),
+  `UpdateScheduleTest` +1 (at most every six hours). Suite 938 in 95 classes.
+- e2e: Live start/extend/bounds/stop, the policy's `live_until`, a guardian seeing the session only and
+  refused the history, 404; the audit rows; fgctl and MCP; `stream_open` in both views and the online
+  threshold at 5 and 12 minutes (backdated by SQL). Chrome at 360 px: a guardian starts Live, sees the
+  position arrive through the event stream with its accuracy and map link, stops it; the admin's card
+  shows a session started elsewhere; a resting phone says so and turns *online* once it holds its
+  stream.
+- Real Android (`tests/android/modes.sh`), every step read from the server: the stream open with the
+  screen on; still open 40 s after it goes off, closed at **1 min 2 s**; in forced Doze a command
+  queued with Live arrived by the poll in **5 min 11 s**; the same poll brought Live, the stream
+  reopened and four positions arrived about 10 s apart (emulated GPS fixes); Stop closed the stream in
+  **2 s**. The energy report showed polls, passive and active time.
+
+The first device run measured the socket table instead and said the stream closed after 2 min 11 s.
+The phone's log said PASSIVE at 60 s exactly: the lingering socket was the HTTP client's idle
+keep-alive connection from the last sync, which carries nothing. The table is not the authority for
+"holds its stream"; the hub is, which is why `stream_open` exists.
+
+### 42.2 — calibration
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| L1 | `store/devices.go` | extending restarts the session | **RED**: *extending moved the session's start*, and the guardian then sees none of it |
+| L2 | `httpapi/live.go` | no upper bound | **RED**: 121 minutes accepted |
+| L3 | `httpapi/live.go` | positions from a year back | **RED**: the guardian sees the history |
+| L4 | `deviceapi.go` | `live_until` sent for an hour after it ended | **RED**: *after Stop the phone is still told* |
+| L5 | `fgctl/live.go` | `--minutes` ignored | **RED** |
+| L6 | `fgctl/mcp.go` | `start_live` stops | **RED** |
+| L7–L9 | `app.js` | never live; no Live on a guardian's card; the position unsaid | **RED**, each |
+| M1 | `PowerMode.kt` | no grace | **RED**: *a glance at the clock* |
+| M2 | `PowerMode.kt` | Live ignored | **RED** |
+| M3 | `EventStream.kt` | an interrupt waits to retry | **RED** |
+| M4 | `EventStream.kt` | the gate not awaited | **RED**: both stream tests |
+| M5 | `Synchronizer.kt` | `live_until` dropped | **RED** |
+| M6 | `EnergyMeter.kt` | active time booked as passive | **RED** |
+| M7 | `LiveLocation.kt` | no throttle | **RED** |
+| M8 | `UpdateSchedule.kt` | back to 15 minutes | **RED** |
+| S1 | `devices.go` | the list never says open | **RED** |
+| S2 | `config.go` | offline after 3 minutes | **RED**: *checked in 5 minutes ago … reported offline* |
+| S3 | `config.go` | offline after 20 minutes | **RED**: *silent for 12 minutes … reported online* |
+| S4 | `app.js` | never resting | **RED** |
+| S5 | `httpapi/live.go` | session positions as null | **RED**: the emptiness guard — which had caught the collection missing from its list on the first full run |
+| D3 | `ConnectionService.kt`, device | PASSIVE keeps the stream | **RED**: *the stream closing after the screen went off never happened* |
+| D4 | `ConnectionService.kt`, device | the poll booked a day out | **RED**: the command *still QUEUED after 7m0s* |
+| D5 | `LiveLocation.kt`, device | no provider asked | **RED**: *0 positions* — first attempt NOT MEASURED (the enrolment crashed on a used emulator; wiped and retaken) |
+
+**This phase: 25 probes, 25 red.** Cumulative: **304 probes.**
+
+Versions, per the owner's rule, resolved against the live registries on the day: Gradle 9.7.1 → 9.8.0
+(the wrapper jar checked against Gradle's published checksum), AGP 9.4.0 → 9.4.1, Kotlin 2.4.10 →
+2.4.20, core-ktx 1.19.0 → 1.19.1; every Go module the backend builds with (pgx 5.11, the MCP SDK 1.8,
+x/term, x/text, x/time and their indirect neighbours). Pre-releases (AGP 9.5 alphas, Kotlin 2.5 beta,
+serialization 1.12 RC) are not "latest". The final device run was taken on these.
+
+### 42.3 — what it does not settle
+
+The first real self-report (0.6.26, the Android 16 phone, screen on, unplugged): **2.5 GB received
+in 39 minutes, 420 s of FamilyGuard CPU, 3 % of battery.** That is video, and all of it crossed the ad
+filter's tunnel, which relays every packet in user space — about 0.17 s of CPU per MB. The modes do
+nothing for it: the screen was on. It is a question for the owner, not a defect to fix quietly: the
+relay could be made cheaper, or the screen-on route could be DNS-only too, which gives up catching
+apps that resolve names themselves.

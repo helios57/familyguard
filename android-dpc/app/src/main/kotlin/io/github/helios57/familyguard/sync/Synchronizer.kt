@@ -135,6 +135,9 @@ class Synchronizer(
 
     /** Given the agenda's today and tomorrow, to keep for the Heute screen (FR-24.5). */
     private val onAgenda: (io.github.helios57.familyguard.agenda.AgendaBlock) -> Unit = {},
+
+    /** FR-27: when Live ends, epoch millis, or 0 when the phone is not in Live. */
+    private val onLive: (Long) -> Unit = {},
 ) {
 
     /** Per package, the larger of the two. See [localUsedMinutesByPackage] for why it is a max. */
@@ -162,6 +165,8 @@ class Synchronizer(
             response.today?.let { dayPlans?.save(it) }
             response.alarm?.let(onAlarm)
             response.agenda?.let(onAgenda)
+            // Unparseable is not live: a phone that cannot read the end must not stay awake forever.
+            onLive(runCatching { java.time.Instant.parse(response.liveUntil).toEpochMilli() }.getOrDefault(0L))
             // Stamped here — on receipt — and nowhere else. Not in `applyFrom`, which also runs for
             // a cached policy and would then report a phone that has not seen the server in a week
             // as having reached it a minute ago; and not after the apply, because a policy that

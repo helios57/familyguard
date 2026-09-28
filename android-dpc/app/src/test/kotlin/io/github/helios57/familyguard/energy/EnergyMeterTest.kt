@@ -16,6 +16,8 @@ class EnergyMeterTest {
         var tx: Long = 500,
     ) : EnergyClock {
         override val processStartEpochMillis = 1_790_000_000_000L
+        var elapsed = 0L
+        override fun elapsedMillis() = elapsed
         override fun cpuMillis() = cpu
         override fun rxBytes() = rx
         override fun txBytes() = tx
@@ -62,5 +64,23 @@ class EnergyMeterTest {
         val meter = EnergyMeter(FakeClock())
         assertEquals("2026-09-21T14:13:20Z", meter.report().since)
         assertEquals(meter.report().since, meter.report().since)
+    }
+
+    @Test
+    fun `time in each mode is counted from the first mode it is told, and is null before that`() {
+        val clock = FakeClock()
+        val meter = EnergyMeter(clock)
+        assertEquals("a build that never told the meter its mode must not claim zero", null, meter.report().activeMs)
+        clock.elapsed = 1_000
+        meter.modeChanged(io.github.helios57.familyguard.sync.PowerMode.ACTIVE)
+        clock.elapsed = 61_000
+        meter.modeChanged(io.github.helios57.familyguard.sync.PowerMode.PASSIVE)
+        clock.elapsed = 361_000
+        val r = meter.report()
+        assertEquals(60_000L, r.activeMs)
+        assertEquals("the mode still running counts up to now", 300_000L, r.passiveMs)
+        meter.modeChanged(io.github.helios57.familyguard.sync.PowerMode.PASSIVE)
+        clock.elapsed = 371_000
+        assertEquals("telling it the same mode again changes nothing", 310_000L, meter.report().passiveMs)
     }
 }

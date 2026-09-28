@@ -103,6 +103,11 @@ type deviceArgs struct {
 	DeviceID string `json:"device_id" jsonschema:"the device's UUID, as returned by list_devices"`
 }
 
+type liveArgs struct {
+	DeviceID string `json:"device_id" jsonschema:"the device's UUID, as returned by list_devices"`
+	Minutes  int    `json:"minutes,omitempty" jsonschema:"how long, 1 to 120; default 30"`
+}
+
 type energyArgs struct {
 	DeviceID string `json:"device_id" jsonschema:"the device's UUID, as returned by list_devices"`
 	Hours    int    `json:"hours,omitempty" jsonschema:"how many hours back, 1 to 744; default 24"`
@@ -570,6 +575,27 @@ func registerTools(server *mcp.Server, client *fgclient.Client) {
 				return nil, err
 			}
 			return body.Locations, nil
+		})
+
+	add(server, client, "get_live",
+		"Live mode (FR-27) for a device: whether it runs, until when, and the positions captured since the "+
+			"session began, newest first.",
+		func(ctx context.Context, c *fgclient.Client, in deviceArgs) (any, error) {
+			return liveCall(ctx, c, in.DeviceID, "", 0)
+		})
+
+	add(server, client, "start_live",
+		"Start or extend Live for a device: it stays connected and reports its GPS position every 10 s "+
+			"until the time runs out (default 30 minutes, at most 120) — for a child walking home or a phone that "+
+			"has gone missing. A phone asleep hears of it at its next wake-up.",
+		func(ctx context.Context, c *fgclient.Client, in liveArgs) (any, error) {
+			return liveCall(ctx, c, in.DeviceID, "start", in.Minutes)
+		})
+
+	add(server, client, "stop_live",
+		"Stop Live for a device now; it goes back to following its screen.",
+		func(ctx context.Context, c *fgclient.Client, in deviceArgs) (any, error) {
+			return liveCall(ctx, c, in.DeviceID, "stop", 0)
 		})
 
 	add(server, client, "get_energy",

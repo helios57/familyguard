@@ -64,6 +64,7 @@ class SynchronizerTest {
         onEnforced: (Input, DesiredState) -> Unit = { _, _ -> },
         onAlarm: (io.github.helios57.familyguard.alarm.AlarmSchedule) -> Unit = {},
         onAgenda: (io.github.helios57.familyguard.agenda.AgendaBlock) -> Unit = {},
+        onLive: (Long) -> Unit = {},
     ) = Synchronizer(
         api,
         cache,
@@ -77,6 +78,7 @@ class SynchronizerTest {
         onEnforced = onEnforced,
         onAlarm = onAlarm,
         onAgenda = onAgenda,
+        onLive = onLive,
     )
 
     // ---- the happy path ---------------------------------------------------------------------
@@ -143,6 +145,39 @@ class SynchronizerTest {
         var kept: io.github.helios57.familyguard.agenda.AgendaBlock? = null
         synchronizer(onAgenda = { kept = it }).sync() as SyncResult.Applied
         assertEquals("Schule", kept?.days?.single()?.items?.single()?.title)
+    }
+
+    /** FR-27: Live's end reaches the phone with its policy; "" and absent are both "not live". */
+    @Test
+    fun `Live's end is handed on, and its absence reads as not live`() {
+        server.answerWith { request ->
+            if (request.path.endsWith("/heartbeat")) {
+                HttpResponse(200, body = """{"policy_version":99,"pending_commands":0}""")
+            } else {
+                HttpResponse(200, body = policyBody().dropLast(1) + ""","live_until":"2026-09-28T15:30:00Z"}""")
+            }
+        }
+        var until = -1L
+        synchronizer(onLive = { until = it }).sync() as SyncResult.Applied
+        assertEquals(java.time.Instant.parse("2026-09-28T15:30:00Z").toEpochMilli(), until)
+
+        server.answerWith { request ->
+            if (request.path.endsWith("/heartbeat")) {
+                HttpResponse(200, body = """{"policy_version":99,"pending_commands":0}""")
+            } else {
+                HttpResponse(200, body = policyBody().dropLast(1) + ""","live_until":""}""")
+            }
+        }
+        synchronizer(onLive = { until = it }).sync()
+        assertEquals("an empty live_until is not live", 0L, until)
+
+        until = -1L
+        server.answerWith { request ->
+            if (request.path.endsWith("/heartbeat")) HttpResponse(200, body = """{"policy_version":99,"pending_commands":0}""")
+            else HttpResponse(200, body = policyBody())
+        }
+        synchronizer(onLive = { until = it }).sync()
+        assertEquals("a server that does not send it is not live either", 0L, until)
     }
 
     @Test

@@ -251,6 +251,12 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 	h.call(http.MethodDelete, "/children/"+child.ID+"/calendar", parent.Token, nil).expect(http.StatusNoContent)
 	byParent("CALENDAR_REMOVED", "child", child.ID)
 
+	// ---- Live (FR-27) ----
+	h.call(http.MethodPost, "/devices/"+device.ID+"/live", parent.Token, map[string]any{"minutes": 5}).expect(http.StatusOK)
+	byParent("LIVE_STARTED", "device", device.ID)
+	h.call(http.MethodDelete, "/devices/"+device.ID+"/live", parent.Token, nil).expect(http.StatusOK)
+	byParent("LIVE_STOPPED", "device", device.ID)
+
 	// ---- commands: issued by a parent, acknowledged by the phone ----
 	//
 	// Two of them, because the device-side action name is *computed* — `"COMMAND_"+cmd.State` — so

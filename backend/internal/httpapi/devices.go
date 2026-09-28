@@ -71,6 +71,11 @@ func (s *Server) listDevices(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
+	for i := range devices {
+		devices[i].StreamOpen = s.hub.DeviceListeners(devices[i].ID) > 0
+		// A phone that holds its stream is online now, whenever it last heartbeated.
+		devices[i].State.Online = devices[i].State.Online || devices[i].StreamOpen
+	}
 	c.JSON(http.StatusOK, gin.H{"devices": devices})
 }
 
@@ -91,7 +96,14 @@ func (s *Server) getDevice(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"device": dev, "state": state, "enrolled": dev.EnrolledAt != nil})
+	// stream_open is whether the phone holds its event stream right now (FR-26.1): true while it is
+	// ACTIVE, false while it sleeps between polls. The hub is the authority; nothing is stored.
+	streamOpen := s.hub.DeviceListeners(id) > 0
+	if state != nil && streamOpen {
+		state.Online = true
+	}
+	c.JSON(http.StatusOK, gin.H{"device": dev, "state": state, "enrolled": dev.EnrolledAt != nil,
+		"stream_open": streamOpen})
 }
 
 func (s *Server) renameDevice(c *gin.Context) {

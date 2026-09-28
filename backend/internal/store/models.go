@@ -138,6 +138,10 @@ type Device struct {
 	CriticalPackages []string   `json:"critical_packages,omitempty"`
 	EnrolledAt       *time.Time `json:"enrolled_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
+	// LiveUntil is when Live ends (FR-27); in the past or nil, the phone follows its screen.
+	// LiveSince is when the current or last session began.
+	LiveUntil *time.Time `json:"live_until,omitempty"`
+	LiveSince *time.Time `json:"live_since,omitempty"`
 }
 
 // DeviceState is the last telemetry the device reported. Online is derived from LastSeenAt against

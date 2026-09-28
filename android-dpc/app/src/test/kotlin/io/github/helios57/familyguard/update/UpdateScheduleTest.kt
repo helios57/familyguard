@@ -196,4 +196,13 @@ class UpdateScheduleTest {
             schedule(clock, store).isDue(),
         )
     }
+
+    /** FR-26.2: the update check is not one of the wake-ups that keep an idle phone busy. */
+    @Test
+    fun `an ordinary check is at most every six hours`() {
+        val clock = Clock(1_000_000)
+        val store = InMemoryUpdateScheduleStore()
+        val next = schedule(clock, store).checked()
+        assertTrue("the next ordinary check is ${(next - clock.millis) / 60_000} min away", next - clock.millis >= 6 * 60 * 60 * 1000L)
+    }
 }

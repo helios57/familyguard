@@ -411,7 +411,15 @@ func (s *Server) devicePolicy(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"desired": state, "input": input, "today": today, "alarm": alarm, "agenda": agendaBlock})
+	// FR-27: while Live runs the phone stays connected and reports its position; "" is not live. Sent
+	// with the policy because the phone reads it on every sync, which is how a phone in PASSIVE learns
+	// of it at its next poll.
+	live := ""
+	if dev.LiveUntil != nil && dev.LiveUntil.After(s.now()) {
+		live = dev.LiveUntil.UTC().Format(time.RFC3339)
+	}
+	c.JSON(http.StatusOK, gin.H{"desired": state, "input": input, "today": today, "alarm": alarm, "agenda": agendaBlock,
+		"live_until": live})
 }
 
 // deviceCommands hands over the queued commands and records that it did.

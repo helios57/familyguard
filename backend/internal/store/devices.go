@@ -17,13 +17,14 @@ import (
 func scanDevice(row pgx.Row) (*Device, error) {
 	var d Device
 	if err := row.Scan(&d.ID, &d.ChildID, &d.Name, &d.Model, &d.OSVersion, &d.Locked,
-		&d.CriticalPackages, &d.EnrolledAt, &d.CreatedAt); err != nil {
+		&d.CriticalPackages, &d.EnrolledAt, &d.CreatedAt, &d.LiveUntil, &d.LiveSince); err != nil {
 		return nil, mapErr(err)
 	}
 	return &d, nil
 }
 
-const deviceCols = `id, child_id, name, model, os_version, locked, critical_packages, enrolled_at, created_at`
+const deviceCols = `id, child_id, name, model, os_version, locked, critical_packages, enrolled_at, created_at,
+	live_until, live_since`
 
 // CreateDevice registers a device slot with no enrollment credential yet.
 //
@@ -139,13 +140,16 @@ type DeviceWithState struct {
 	// Enrolled reports whether the device has completed provisioning. A device slot that only has
 	// a pending QR is listed, because hiding it would make a failed provisioning invisible.
 	Enrolled bool `json:"enrolled"`
+	// StreamOpen is whether the phone holds its event stream right now (FR-26.1). Not stored: the
+	// handler asks the hub, which is the only thing that knows.
+	StreamOpen bool `json:"stream_open"`
 }
 
 // ListDevices returns every device, optionally filtered to one child, with the derived online flag.
 func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfter time.Duration) ([]DeviceWithState, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT d.id, d.child_id, d.name, d.model, d.os_version, d.locked, d.critical_packages,
-		        d.enrolled_at, d.created_at,
+		        d.enrolled_at, d.created_at, d.live_until, d.live_since,
 		        COALESCE(s.battery_level, NULL), COALESCE(s.charging, NULL), COALESCE(s.screen_on, NULL),
 		        COALESCE(s.connectivity, ''), COALESCE(s.policy_version, 0), s.last_seen_at,
 		        COALESCE(s.app_version_name, ''), COALESCE(s.app_version_code, 0), s.usage_access,
@@ -166,7 +170,7 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 	for rows.Next() {
 		var d DeviceWithState
 		if err := rows.Scan(&d.ID, &d.ChildID, &d.Name, &d.Model, &d.OSVersion, &d.Locked,
-			&d.CriticalPackages, &d.EnrolledAt, &d.CreatedAt,
+			&d.CriticalPackages, &d.EnrolledAt, &d.CreatedAt, &d.LiveUntil, &d.LiveSince,
 			&d.State.BatteryLevel, &d.State.Charging, &d.State.ScreenOn,
 			&d.State.Connectivity, &d.State.PolicyVersion, &d.State.LastSeenAt,
 			&d.State.AppVersionName, &d.State.AppVersionCode, &d.State.UsageAccess,
@@ -307,6 +311,43 @@ func (s *Store) SetLocked(ctx context.Context, deviceID uuid.UUID, locked bool) 
 		return ErrNotFound
 	}
 	return nil
+}
+
+// StartLive begins or extends Live (FR-27.1) until the given instant. A session already running
+// keeps its start, so a guardian who extends it still sees the positions from the beginning.
+func (s *Store) StartLive(ctx context.Context, deviceID uuid.UUID, until time.Time) (*Device, error) {
+	return scanDevice(s.pool.QueryRow(ctx, `
+		UPDATE devices SET live_since = CASE WHEN live_until > NOW() THEN live_since ELSE NOW() END,
+		                   live_until = $2
+		 WHERE id = $1 RETURNING `+deviceCols, deviceID, until))
+}
+
+// StopLive ends Live now. live_since is kept: the positions of the session just ended stay readable
+// to whoever started it until the next one begins.
+func (s *Store) StopLive(ctx context.Context, deviceID uuid.UUID) (*Device, error) {
+	return scanDevice(s.pool.QueryRow(ctx, `
+		UPDATE devices SET live_until = LEAST(live_until, NOW()) WHERE id = $1 RETURNING `+deviceCols, deviceID))
+}
+
+// LocationsSince is the device's positions captured at or after from, newest first.
+func (s *Store) LocationsSince(ctx context.Context, deviceID uuid.UUID, from time.Time, limit int) ([]Location, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, device_id, latitude, longitude, accuracy_m, captured_at
+		   FROM locations WHERE device_id = $1 AND captured_at >= $2 ORDER BY captured_at DESC LIMIT $3`,
+		deviceID, from, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Location{}
+	for rows.Next() {
+		var l Location
+		if err := rows.Scan(&l.ID, &l.DeviceID, &l.Latitude, &l.Longitude, &l.AccuracyM, &l.CapturedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }
 
 // GetDeviceState reads the last known state with the derived online flag.

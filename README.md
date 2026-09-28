@@ -84,7 +84,7 @@ docker build -t familyguard-control-plane:dev backend/
 cd android-dpc && ./gradlew :app:assembleDebug
 ```
 
-The Gradle wrapper pins 9.7.1, on AGP 9.4.0 and Kotlin 2.4.10. `allWarningsAsErrors` is on, and it
+The Gradle wrapper pins 9.8.0, on AGP 9.4.1 and Kotlin 2.4.20. `allWarningsAsErrors` is on, and it
 is load-bearing rather than tidiness: a deprecation on a `DevicePolicyManager` call means the
 platform changed a contract underneath the app, which is exactly the class of change that surfaces
 as a real phone behaving differently from the emulator.

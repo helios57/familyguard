@@ -22,6 +22,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.PersistableBundle
+import android.location.Location
 import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
@@ -45,6 +46,7 @@ import io.github.helios57.familyguard.debug.RemoteDebug
 import io.github.helios57.familyguard.device.CriticalPackages
 import io.github.helios57.familyguard.device.PlatformInstalledAppReader
 import io.github.helios57.familyguard.enforce.AlarmBooking
+import io.github.helios57.familyguard.net.LocationRequest
 import io.github.helios57.familyguard.enforce.AlarmDecision
 import io.github.helios57.familyguard.enforce.DesiredState
 import io.github.helios57.familyguard.enforce.EarnedAttribution
@@ -123,6 +125,7 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -343,6 +346,116 @@ class ConnectionService : Service() {
     @Volatile
     private var resync: (suspend (String) -> Unit)? = null
 
+    // ---- FR-26.1 / FR-27: the modes, and Live -------------------------------------------------
+
+    /** ACTIVE while the stream should be open; see [PowerMode]. The stream's gate waits on it. */
+    private val mode = MutableStateFlow(PowerMode.ACTIVE)
+
+    /** When Live ends, epoch millis; 0 when the phone is not in Live. Written by every sync. */
+    private val liveUntil = AtomicLong(0)
+
+    /** `elapsedRealtime` when the screen last went off, or null while it is on. */
+    @Volatile private var screenOffAtElapsed: Long? = null
+
+    /** The running stream, so a phone going PASSIVE can close it. Null before the loop is up. */
+    @Volatile private var stream: EventStream? = null
+
+    /** How a Live position leaves this phone, or null before the loop is up. */
+    @Volatile private var reportLive: ((Location) -> Unit)? = null
+
+    private val pollAlarm by lazy { AlarmManagerPlatform.poll(this) }
+    private val modeAlarm by lazy { AlarmManagerPlatform.modeCheck(this) }
+    private val liveLocation by lazy { LiveLocation(this) { location -> reportLive?.invoke(location) } }
+
+    private fun screenIsOn(): Boolean = getSystemService(PowerManager::class.java)?.isInteractive ?: true
+
+    /**
+     * Decides the mode again and acts on a change (FR-26.1). Called on every fact that can move it:
+     * the screen going on or off, a sync that brought Live's end, and the alarm booked for the end of
+     * the grace or of Live — so the mode never waits on a coroutine `delay`, which stops while the
+     * phone sleeps.
+     */
+    @Synchronized
+    private fun reevaluate(why: String) {
+        val nowEpoch = System.currentTimeMillis()
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val on = screenIsOn()
+        if (on) screenOffAtElapsed = null
+        val live = liveUntil.get()
+        val next = PowerMode.decide(on, screenOffAtElapsed, nowElapsed, live, nowEpoch)
+        when (val at = PowerMode.nextChangeAtEpoch(on, screenOffAtElapsed, nowElapsed, live, nowEpoch)) {
+            null -> runCatching { modeAlarm.cancel() }
+            else -> if (modeAlarm.schedule(at) == AlarmBooking.REFUSED) {
+                Log.w(TAG, "mode check NOT booked (${modeAlarm.unavailableReason()}); the mode follows the next event instead")
+            }
+        }
+        live(live > nowEpoch)
+        EnergyMeter.process.modeChanged(next)
+        val previous = mode.value
+        if (next == previous) return
+        mode.value = next
+        Log.i(TAG, "mode $previous -> $next ($why)")
+        when (next) {
+            PowerMode.PASSIVE -> {
+                // Off the caller's thread: closing a TLS connection writes to it, and this can be
+                // called from a broadcast receiver on the main thread.
+                stream?.let { s -> scope.launch(Dispatchers.IO) { s.interrupt() } }
+                bookPoll()
+            }
+            PowerMode.ACTIVE -> runCatching { pollAlarm.cancel() }
+        }
+    }
+
+    @Volatile private var liveOn = false
+
+    /**
+     * Live's positions on or off (FR-27.2), with the foreground service's type to match: Android
+     * gives a background app a few positions an hour unless the service it runs in is of type
+     * `location`, and that type is declared only while Live runs.
+     */
+    private fun live(on: Boolean) {
+        if (on == liveOn) return
+        liveOn = on
+        if (on) {
+            runCatching { foreground(withLocation = true) }
+                .onFailure { Log.w(TAG, "Live: the service could not take the location type: ${it.message}") }
+            liveLocation.start()
+        } else {
+            liveLocation.stop()
+            runCatching { foreground(withLocation = false) }
+        }
+    }
+
+    private fun foreground(withLocation: Boolean) {
+        var type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        } else {
+            0
+        }
+        if (withLocation) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(), type)
+    }
+
+    /** The next safety poll of a PASSIVE phone (FR-26.2). */
+    private fun bookPoll() {
+        val at = System.currentTimeMillis() + POLL_PASSIVE_MILLIS
+        when (val booking = pollAlarm.schedule(at)) {
+            AlarmBooking.REFUSED -> Log.w(
+                TAG,
+                "poll NOT booked (${pollAlarm.unavailableReason()}); this phone hears of changes only when the screen comes on",
+            )
+            else -> Log.i(TAG, "next poll in ${POLL_PASSIVE_MILLIS / 60_000} min (${booking.name.lowercase()})")
+        }
+    }
+
+    /** The safety poll fired: sync once, and book the next one first so a failing sync cannot end the cadence. */
+    private fun onPollAlarm() {
+        if (mode.value != PowerMode.PASSIVE) return
+        bookPoll()
+        val sync = resync ?: return
+        scope.launch { sync("poll") }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -350,16 +463,7 @@ class ConnectionService : Service() {
         watchUsageAccess()
         // Then, before anything that can block: the platform kills a service that has not called
         // this within five seconds of being started in the foreground.
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            notification(),
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            } else {
-                0
-            },
-        )
+        foreground(withLocation = liveOn)
 
         intent?.let { i ->
             IntentCompat.getParcelableExtra(i, EXTRA_ADMIN_EXTRAS, PersistableBundle::class.java)
@@ -370,6 +474,8 @@ class ConnectionService : Service() {
         if (intent?.action == ACTION_UPDATE_CHECK) onUpdateAlarm()
         if (intent?.action == ACTION_STOP_SIREN) onStopSiren()
         if (intent?.action == ACTION_RECONNECT) onReconnectAlarm()
+        if (intent?.action == ACTION_POLL) onPollAlarm()
+        if (intent?.action == ACTION_MODE_CHECK) reevaluate("alarm")
 
         if (job?.isActive != true) {
             job = scope.launch { connect() }
@@ -457,6 +563,11 @@ class ConnectionService : Service() {
         // And the reconnect wake-up, for the same reason: the loop it releases dies with this
         // service, so a wake-up left booked restarts a service with nothing waiting on it.
         runCatching { reconnectAlarm.cancel() }
+        // And the two the modes book: a poll or a mode check that restarts a stopped service is a
+        // wake-up with nothing behind it.
+        runCatching { pollAlarm.cancel() }
+        runCatching { modeAlarm.cancel() }
+        runCatching { liveLocation.stop() }
         usageAccessWatcher?.let { watcher ->
             runCatching { getSystemService(AppOpsManager::class.java)?.stopWatchingMode(watcher) }
             usageAccessWatcher = null
@@ -585,6 +696,8 @@ class ConnectionService : Service() {
             dayPlans = io.github.helios57.familyguard.plan.EncryptedDayPlanStore(this),
             onAlarm = { io.github.helios57.familyguard.alarm.AlarmClock.update(this, it) },
             onAgenda = { io.github.helios57.familyguard.agenda.EncryptedAgendaStore(this).save(it) },
+            // FR-27: every sync carries Live's end; a change is a mode change.
+            onLive = { until -> if (liveUntil.getAndSet(until) != until) reevaluate("live") },
         )
         journal = recoveryJournal
         // Published before the first sync, so an alarm that fires during it waits on `syncLock`
@@ -600,13 +713,31 @@ class ConnectionService : Service() {
             return
         }
 
-        val stream = EventStream(api, wait = ::waitForReconnect) { event ->
+        reportLive = { location ->
+            scope.launch(Dispatchers.IO) {
+                runCatching {
+                    api.reportLocation(
+                        LocationRequest(
+                            latitude = location.latitude,
+                            longitude = location.longitude,
+                            accuracyM = if (location.hasAccuracy()) location.accuracy.toDouble() else null,
+                            capturedAt = rfc3339(location.time),
+                        )
+                    )
+                }.onFailure { Log.w(TAG, "Live: a position was not delivered: ${it.message}") }
+            }
+        }
+        // The grace starts now for a phone whose screen is already off — after a reboot in a pocket.
+        if (!screenIsOn()) screenOffAtElapsed = SystemClock.elapsedRealtime()
+        reevaluate("start")
+        val stream = EventStream(api, wait = ::waitForReconnect, gate = { mode.first { it == PowerMode.ACTIVE } }) { event ->
             // The event is a wake-up and nothing else — see EventStream. Its type is logged so a
             // stream that is delivering the wrong thing is visible, and never read as state.
             if (!syncAndDrain(synchronizer, reports, commands, "wake:${event.type}")) {
                 throw StopConnection()
             }
         }
+        this.stream = stream
         val installs = registerInstallWatcher(synchronizer, reports, commands)
         val screen = registerScreenWatcher(reports)
         val polling = scope.launch { pollWhileAwake(synchronizer, reports) }
@@ -620,6 +751,8 @@ class ConnectionService : Service() {
         } catch (_: StopConnection) {
             // A refused credential, surfaced from inside the wake handler.
         } finally {
+            this.stream = null
+            reportLive = null
             live = null
             journal = null
             polling.cancel()
@@ -688,9 +821,15 @@ class ConnectionService : Service() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 val at = SystemClock.elapsedRealtime()
                 when (intent?.action) {
-                    Intent.ACTION_SCREEN_ON -> reports.onScreenOn(at)
+                    Intent.ACTION_SCREEN_ON -> {
+                        reports.onScreenOn(at)
+                        screenOffAtElapsed = null
+                        reevaluate("screen-on")
+                    }
                     Intent.ACTION_SCREEN_OFF -> {
                         reports.onScreenOff(at)
+                        screenOffAtElapsed = at
+                        reevaluate("screen-off")
                         // Measured here rather than only at the next poll: the window that just
                         // ended is the one the child spent, and a phone that is put down for the
                         // night may not sync again before midnight moves it onto another day.
@@ -1932,6 +2071,18 @@ class ConnectionService : Service() {
          * to wait one second.
          */
         const val ACTION_RECONNECT = "io.github.helios57.familyguard.RECONNECT_STREAM"
+
+        /** FR-26.2: the safety poll of a PASSIVE phone. */
+        const val ACTION_POLL = "io.github.helios57.familyguard.POLL"
+
+        /** FR-26.1: the end of the screen-off grace or of Live. */
+        const val ACTION_MODE_CHECK = "io.github.helios57.familyguard.MODE_CHECK"
+
+        /**
+         * How often a PASSIVE phone syncs of its own accord (FR-26.2) — the owner's five minutes. Twelve
+         * wake-ups an hour where the stream's keepalive made 180.
+         */
+        const val POLL_PASSIVE_MILLIS = 5 * 60 * 1000L
 
         /** Not an alarm, so not in [AlarmManagerPlatform]'s block — but allocated against it. */
         private const val REQUEST_STOP_SIREN = 10

@@ -299,6 +299,10 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.GET("/devices/:id/usage/timeline", admins, s.deviceUsageTimeline)
 	p.GET("/devices/:id/locations", admins, s.deviceLocations)
 	p.GET("/devices/:id/energy", admins, s.deviceEnergy)
+	// FR-27: Live. Guardians too — the walk home is theirs as often as a parent's.
+	p.GET("/devices/:id/live", everyone, s.getLive)
+	p.POST("/devices/:id/live", everyone, s.startLive)
+	p.DELETE("/devices/:id/live", everyone, s.stopLive)
 	p.GET("/devices/:id/desired-state", everyone, s.deviceDesiredState)
 	p.GET("/devices/:id/commands", admins, s.listCommands)
 	p.POST("/devices/:id/commands", admins, s.createCommand)

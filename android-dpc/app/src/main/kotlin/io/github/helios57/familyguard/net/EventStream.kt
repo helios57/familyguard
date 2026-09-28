@@ -50,8 +50,29 @@ class EventStream(
     private val backoff: Backoff = Backoff(),
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val wait: suspend (Long) -> Unit = { delay(it) },
+    /**
+     * Returns when the phone may hold a stream open (FR-26.1), and suspends while it is PASSIVE. The
+     * default is always open, which is what the stream was before the modes existed.
+     */
+    private val gate: suspend () -> Unit = {},
     private val onWake: suspend (SseEvent) -> Unit,
 ) {
+    @Volatile private var current: java.net.HttpURLConnection? = null
+    @Volatile private var interrupted = false
+
+    /**
+     * Closes the stream that is open, if one is, because the phone has gone PASSIVE (FR-26.1).
+     *
+     * Not a dropped stream, so no backoff and no reconnect wake-up follow it: the loop goes straight
+     * back to [gate] and stays there until the phone is ACTIVE again. The read it ends is blocked in
+     * the socket, and closing the connection from here is the only way to end it — cancelling the
+     * coroutine does not reach a thread parked in `read()`.
+     */
+    fun interrupt() {
+        interrupted = true
+        current?.disconnect()
+    }
+
     /** Set when the server has refused this device's credential; the caller must re-enroll. */
     var lastFatal: ApiException? = null
         private set
@@ -67,6 +88,11 @@ class EventStream(
     suspend fun run() {
         while (true) {
             currentCoroutineContext().ensureActive()
+            // Cleared before the gate, not after: an interrupt that lands between the two must still
+            // stop the read below, or a phone that went PASSIVE at that instant would hold the
+            // stream open until the next event.
+            interrupted = false
+            gate()
             try {
                 readOnce()
             } catch (e: CancellationException) {
@@ -81,13 +107,17 @@ class EventStream(
                 // connection at fifteen minutes on purpose, and a phone changing networks closes
                 // them far more often than that.
             }
+            if (interrupted) continue
             wait(backoff.nextDelayMillis())
         }
     }
 
     private suspend fun readOnce() {
+        if (interrupted) return
         val connection = withContext(io) { api.openStream() }
+        current = connection
         try {
+            if (interrupted) return
             val parser = SseParser()
             val reader = withContext(io) {
                 BufferedReader(InputStreamReader(connection.inputStream, Charsets.UTF_8))
@@ -108,6 +138,7 @@ class EventStream(
                 onWake(event)
             }
         } finally {
+            current = null
             withContext(io) { connection.disconnect() }
         }
     }

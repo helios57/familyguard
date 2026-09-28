@@ -54,6 +54,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!--
+      FR-27.2: Live. While it runs, the connection service is also of type `location`, which is the
+      only way a background app gets a position every ten seconds rather than a few an hour. The type
+      is declared at run time only for the session; the rest of the time the service is `specialUse`.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!--
       Android 13 and up. The service grants this to itself as device owner; it is declared because a
       permission that is not declared cannot be granted at all, and an ungranted one means the
       foreground-service notification is suppressed while the service keeps running — a managed phone
@@ -318,7 +324,7 @@
         <service
             android:name=".sync.ConnectionService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|location">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Continuous device-policy enforcement for a fully managed device: holds

@@ -92,9 +92,10 @@ type deviceStateDTO struct {
 }
 
 type deviceViewDTO struct {
-	Device   deviceDTO       `json:"device"`
-	State    *deviceStateDTO `json:"state"`
-	Enrolled bool            `json:"enrolled"`
+	Device     deviceDTO       `json:"device"`
+	State      *deviceStateDTO `json:"state"`
+	Enrolled   bool            `json:"enrolled"`
+	StreamOpen bool            `json:"stream_open"`
 }
 
 type policyDTO struct {

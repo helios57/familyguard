@@ -791,7 +791,7 @@ A profile's agenda can include an existing calendar, read-only, from its iCalend
   calendar events and all-day ones. `fgctl calendar <child> [--set address | --remove]` and the MCP
   tools `get_calendar` and `set_calendar` (an empty address removes it) do the same.
 
-### FR-26 Energy: an active and a passive mode (proposed, 2026-09-28)
+### FR-26 Energy: an active and a passive mode (2026-09-28)
 The phone spends energy on its connection only while someone can benefit from it. Design:
 `docs/superpowers/specs/2026-09-28-energy-modes-design.md`.
 
@@ -799,7 +799,12 @@ The phone spends energy on its connection only while someone can benefit from it
   ACTIVE keeps the connection stream open as before; PASSIVE closes it.
 - FR-26.2 **In PASSIVE the phone wakes** for a push from the server, for a safety poll (every 30 minutes
   when push works, every 5 minutes when it does not), and for the screen coming on; each wake is one
-  sync, and the update check runs at most every 6 hours.
+  sync, and the update check runs at most every 6 hours. Built in 0.6.27 without push, so every poll is 5
+  minutes (an exact allow-while-idle alarm; measured in forced Doze on the emulator: a queued command
+  arrived in 5 min 11 s). The update check is every 6 hours in both modes — *Update app* is the
+  shortcut. The server says whether a phone holds its stream (`stream_open`); a phone is online while
+  it does, or within 11 minutes of its last check-in, and the console calls one that is online but
+  not listening *resting*, with what that means for Lock and Ring.
 - FR-26.3 **The push** carries no content (`{"t":"sync"}`), is sent only where the stream would have
   told an open connection, and is optional on the server: without its credentials every phone polls.
 - FR-26.4 **The ad filter** routes only DNS after 5 minutes of screen off (held while media audio
@@ -811,12 +816,18 @@ The phone spends energy on its connection only while someone can benefit from it
   the mode and route times follow with FR-26.1 and FR-26.4's screen-off route): `GET
   /devices/:id/energy`, `fgctl energy`, MCP `get_energy`, and the Activity tab's *Energy* card.
 
-### FR-27 Live mode (proposed, 2026-09-28)
+### FR-27 Live mode (2026-09-28)
 - FR-27.1 A parent or guardian starts Live for a device from the console (*Live 30 min*), fgctl or MCP,
   and can stop it; it is audited, and a push reaches a phone whose stream is closed.
 - FR-27.2 While Live runs the phone is ACTIVE whatever its screen does and reports its GPS location
   every 10 seconds; the console shows the position following the reports, with the time and accuracy
   of the last fix.
+- FR-27.3 `GET|POST|DELETE /devices/:id/live` (admins and guardians): default 30 minutes, at most 120;
+  extending keeps the session's start. A guardian reads the positions captured since the session
+  began and never the history before it (`/devices/:id/locations` stays an admin's). Audited as
+  `LIVE_STARTED` / `LIVE_STOPPED`. `fgctl live <device> [--start [--minutes N] | --stop]`, MCP
+  `get_live`, `start_live`, `stop_live`. Built in 0.6.27; the phone's service takes the `location`
+  type only for the session.
 ---
 
 ## 4. Non-functional requirements

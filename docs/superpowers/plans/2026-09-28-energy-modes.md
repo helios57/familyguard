@@ -121,3 +121,14 @@ After 5 min screen off and no media audio, re-establish with `RouteMode.DNS_ONLY
 - Phase 1: no pruning of `energy_samples` — one row per heartbeat is ~100 per phone per day, and the
   owner keeps data for at least a year. Cost if wrong: a few MB a year.
 - Phase 3 must also amend CONCEPT.md §7, which lists FCM as deliberately not built.
+- Phase 2: the update check is every 6 hours in both modes, not only in PASSIVE — its own wake-up was
+  the cost, a phone in use rides it along on any sync, and *Update app* is the shortcut. Cost if
+  wrong: a release reaches an idle phone up to 6 h later unless a parent presses *Update app*.
+- Phase 2: the device view gained `stream_open` (the hub's count) — the socket table could not be the
+  test's authority, because the HTTP client's idle keep-alive connection outlived the stream by 2 min.
+  "Online" became stream-open OR a heartbeat within 11 minutes (was 3); the console says *resting*
+  for online-without-stream. Cost if wrong: a phone that died shows online for up to 11 minutes.
+- Phase 2: the command and Live of the device test ride one poll, and device tests get a 30-minute Go
+  timeout — the first run spent 15 minutes and was killed on its last step.
+- Phase 2: the stream is not closed from a broadcast receiver's thread — closing TLS writes to the
+  socket, which Android refuses on the main thread.

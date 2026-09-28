@@ -416,11 +416,13 @@ run_package_test() {
 	wait_for_unlocked_user "before the enrollment instrumentation"
 
 	LOG="$(mktemp)" || result "NOT MEASURED" "could not create a log file"
+	# -timeout after run.sh's own 15m, so it wins: a device test that waits out a 5-minute poll in Doze
+	# (modes.sh) needs longer than the black-box suite ever does.
 	say "running $TEST_NAME"
 	E2E_ANDROID=1 \
 		E2E_ANDROID_ADB="$ADB" \
 		E2E_ANDROID_SERIAL="${ANDROID_SERIAL:-}" \
-		"$E2E" -run "^${TEST_NAME}\$" -v 2>&1 | tee "$LOG"
+		"$E2E" -timeout 30m -run "^${TEST_NAME}\$" -v 2>&1 | tee "$LOG"
 	rc="${PIPESTATUS[0]}"
 
 	if ! command grep -q -- "--- PASS: $TEST_NAME" "$LOG"; then

@@ -631,7 +631,66 @@ async function loadHome() {
     d.enrolled
       ? api('/devices/' + d.id + '/desired-state').then((r) => (r && r.desired) || null).catch(() => null)
       : Promise.resolve(null)));
-  return { devices: list, states };
+  // FR-27: the latest position of a phone in Live. Only for those, so a home screen with no Live
+  // session costs no extra request.
+  const lives = await Promise.all(list.map((d) =>
+    liveActive(d)
+      ? api('/devices/' + d.id + '/live?limit=1').catch(() => null)
+      : Promise.resolve(null)));
+  return { devices: list, states, lives };
+}
+
+function liveActive(dev) {
+  return !!(dev.live_until && new Date(dev.live_until).getTime() > Date.now());
+}
+
+/**
+ * Live (FR-27): a phone that stays connected and reports its position every 10 s for a while — a
+ * child walking home, a phone that has gone missing. A guardian may start it, which is the point:
+ * the walk home is theirs as often as a parent's.
+ *
+ * The position shown is the phone's own last report with its age and accuracy, because a dot with
+ * no time on it reads as "here now" when it may be ten minutes old.
+ */
+const LIVE_TEXT = {
+  en: { start: 'Live 30 min', until: 'Live until ', last: 'Last position ', more: '+30 min', stop: 'Stop Live',
+    waiting: 'Waiting for the first position \u2014 a phone that is asleep hears of Live within 5 minutes.' },
+  de: { start: 'Live 30 Min', until: 'Live bis ', last: 'Letzte Position ', more: '+30 Min', stop: 'Live beenden',
+    waiting: 'Warte auf die erste Position \u2014 ein schlafendes Handy erf\u00e4hrt es innert 5 Minuten.' },
+};
+
+function liveBlock(dev, live, lang) {
+  if (!dev.enrolled) return null;
+  const t = LIVE_TEXT[lang || 'en'];
+  const start = (minutes) => act('Live', async () => {
+    await api('/devices/' + dev.id + '/live', { method: 'POST', body: { minutes } });
+    refresh();
+  });
+  if (!liveActive(dev)) {
+    return el('div', { class: 'btn-grid', 'data-live': 'off' },
+      el('button', { class: 'btn', type: 'button', text: t.start, 'data-action': 'live-start', onclick: () => start(30) }));
+  }
+  const last = live && (live.locations || [])[0];
+  const until = new Date(dev.live_until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return el('div', { class: 'stack', 'data-live': 'on' },
+    el('p', {},
+      el('span', { class: 'badge ok', text: t.until + until }),
+      ' ',
+      last
+        ? el('span', { text: t.last + fmtTime(last.captured_at)
+          + (last.accuracy_m ? ' · ±' + Math.round(last.accuracy_m) + ' m' : '') + ' ' })
+        : el('span', { class: 'muted', text: 'Waiting for the first position — a phone that is asleep hears of Live within 5 minutes.' }),
+      last && el('a', {
+        class: 'btn btn-quiet', target: '_blank', rel: 'noreferrer noopener',
+        href: 'https://www.openstreetmap.org/?mlat=' + last.latitude + '&mlon=' + last.longitude + '#map=17/' + last.latitude + '/' + last.longitude,
+        text: 'Map',
+      })),
+    el('div', { class: 'btn-grid' },
+      el('button', { class: 'btn', type: 'button', text: t.more, 'data-action': 'live-more', onclick: () => start(Math.min(120, Math.ceil((new Date(dev.live_until).getTime() - Date.now()) / 60000) + 30)) }),
+      el('button', { class: 'btn', type: 'button', text: t.stop, 'data-action': 'live-stop', onclick: () => act(t.stop, async () => {
+        await api('/devices/' + dev.id + '/live', { method: 'DELETE' });
+        refresh();
+      }) })));
 }
 
 function renderHome(data) {
@@ -642,7 +701,7 @@ function renderHome(data) {
   // "is it all right", and a strip repeating it is decoration that costs a screenful.
   if (data.devices.length > 1) cards.push(statusStrip(data));
 
-  cards.push(...data.devices.map((dev, i) => deviceCard(dev, data.states[i])));
+  cards.push(...data.devices.map((dev, i) => deviceCard(dev, data.states[i], data.lives && data.lives[i])));
 
   cards.push(el('div', { class: 'card full' },
     el('div', { class: 'card-head' }, el('h2', { text: 'Add another phone' })),
@@ -729,13 +788,23 @@ function updateCurrent(st) {
   return hosted.version_code <= st.app_version_code;
 }
 
-function deviceCard(dev, desired) {
+/** Online, but not holding its stream: the screen is off and it checks in every 5 minutes (FR-26.2). */
+function resting(dev) {
+  return !!(dev.state && dev.state.online) && dev.stream_open === false;
+}
+
+function deviceCard(dev, desired, live) {
   const st = dev.state || {};
   const online = st.online;
   const behind = dev.enrolled ? updateBehind(st) : null;
   const head = el('div', { class: 'card-head' },
     el('h2', {}, el('span', { class: 'dot ' + (online ? 'online' : 'offline') }), ' ' + dev.name),
-    el('span', { class: 'badge' + (online ? ' ok' : ''), text: online ? 'online' : fmtTime(st.last_seen_at) }));
+    // FR-26.1: a phone that is online but not listening is resting between check-ins, and says so,
+    // because that is what decides how soon Lock or Ring reaches it.
+    el('span', {
+      class: 'badge' + (online ? ' ok' : ''), 'data-link': resting(dev) ? 'resting' : (online ? 'listening' : 'offline'),
+      text: online ? (resting(dev) ? 'resting' : 'online') : fmtTime(st.last_seen_at),
+    }));
 
   const facts = el('div', { class: 'wrap' },
     !dev.enrolled && el('span', { class: 'badge warn', text: 'not enrolled' }),
@@ -930,6 +999,13 @@ function deviceCard(dev, desired) {
       refresh();
     }),
   });
+
+  if (resting(dev)) {
+    body.push(el('p', { class: 'muted', 'data-resting': '',
+      text: 'The screen is off, so the phone rests to save battery and checks in every 5 minutes. '
+        + 'Lock, Ring and Locate reach it at its next check-in, or at once when someone turns the screen on.' }));
+  }
+  body.push(liveBlock(dev, live));
 
   body.push(el('div', { class: 'btn-grid' },
     dev.locked ? cmd('UNLOCK_DEVICE', 'Unlock') : cmd('LOCK_NOW', 'Lock now'),
@@ -2600,7 +2676,9 @@ async function loadGuardian() {
       // Tolerated as missing: a card that cannot show the tasks still has to show the time.
       api('/children/' + child.id + '/today').catch(() => null),
     ]);
-    return { child, today, devices: devices.map((dev, i) => ({ dev, desired: states[i] })) };
+    const lives = await Promise.all(devices.map((d) =>
+      liveActive(d) ? api('/devices/' + d.id + '/live?limit=1').catch(() => null) : Promise.resolve(null)));
+    return { child, today, devices: devices.map((dev, i) => ({ dev, desired: states[i], live: lives[i] })) };
   }));
 }
 
@@ -2697,9 +2775,12 @@ function renderGuardian(profiles) {
       return card;
     }
     let hasLimit = false;
-    for (const { dev, desired } of devices) {
+    for (const { dev, desired, live } of devices) {
+      // FR-27: Live is a guardian's as much as a parent's — the walk home.
+      const lb = liveBlock(dev, live, 'de');
       if (!desired) {
         card.append(el('p', { class: 'muted', text: dev.name + ': noch keine Angaben vom Handy.' }));
+        if (lb) card.append(lb);
         continue;
       }
       // Whether there is a limit comes from the plain limit, never from the quota: a day taken to
@@ -2711,6 +2792,7 @@ function renderGuardian(profiles) {
       if (desired.suspend_reason && desired.suspend_reason !== 'PAUSED') {
         card.append(el('p', { class: 'muted', text: 'Apps pausiert: ' + guardianReason(desired.suspend_reason) + '.' }));
       }
+      if (lb) card.append(lb);
     }
     if (child.paused) {
       card.append(el('p', { class: 'guardian-paused',

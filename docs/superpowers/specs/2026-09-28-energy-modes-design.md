@@ -81,8 +81,9 @@ decide(screenOn, screenOffSince, liveUntil, now) → ACTIVE | PASSIVE
 
 Starting and stopping it is FR-27.1; the location reports and the console map are FR-27.2.
 
-- **Console:** *Live 30 min* on the device card, with the remaining time and *Stop*. fgctl
-  `live <device> [--minutes N | --stop]`, MCP `start_live` / `stop_live`. Admins and guardians alike —
+- **Console:** *Live 30 min* on the device card (and on a guardian's profile card), with the time it
+  ends, *+30 min* and *Stop*. fgctl `live <device> [--start [--minutes N] | --stop]` (bare: read it),
+  MCP `get_live` / `start_live` / `stop_live`. Admins and guardians alike —
   a guardian walking a child home is the use case. Audited.
 - **Server:** `devices.live_until`; the desired state carries it; starting Live sends a push.
 - **Phone:** while `liveUntil > now` the mode is ACTIVE whatever the screen does, and the phone

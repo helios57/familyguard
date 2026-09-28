@@ -1,6 +1,7 @@
 package io.github.helios57.familyguard.net
 
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -231,5 +232,95 @@ class EventStreamTest {
     private companion object {
         /** Generous: it exists to fail the build rather than hang it, not to measure anything. */
         const val TIMEOUT = 15_000L
+    }
+
+    // ---- FR-26.1: the stream is open only while the phone is ACTIVE ----
+
+    @Test
+    fun `nothing is opened while the gate is shut`() = runBlocking {
+        body = "event: connected\ndata: {}\n\n"
+        val open = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val woken = Channel<SseEvent>(Channel.UNLIMITED)
+        val stream = EventStream(
+            ApiClient(server.baseUrl, token = { "device-token" }),
+            backoff = fastBackoff(),
+            gate = { open.await() },
+        ) { woken.send(it) }
+        val job = launch(kotlinx.coroutines.Dispatchers.IO) { stream.run() }
+        Thread.sleep(300)
+        assertEquals("a PASSIVE phone opened the stream", 0, server.requests.size)
+        open.complete(Unit)
+        withTimeout(TIMEOUT) { woken.receive() }
+        assertTrue("the gate opened and no stream followed", server.requests.isNotEmpty())
+        job.cancel()
+    }
+
+    /**
+     * A held connection, as the real server holds one: headers, a `connected` frame, then nothing
+     * until the client goes away. The loopback server closes every connection it answers, which
+     * cannot show that an interrupt is what ended one.
+     */
+    private class HeldStream : AutoCloseable {
+        val socket = java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress())
+        val accepted = java.util.concurrent.atomic.AtomicInteger()
+        val clientGone = java.util.concurrent.CountDownLatch(1)
+        private val thread = Thread {
+            while (!socket.isClosed) {
+                val s = runCatching { socket.accept() }.getOrNull() ?: break
+                accepted.incrementAndGet()
+                Thread {
+                    runCatching {
+                        val input = s.getInputStream().bufferedReader()
+                        while (true) { if (input.readLine().isNullOrEmpty()) break }
+                        s.getOutputStream().write(
+                            ("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n" +
+                                "event: connected\ndata: {}\n\n").toByteArray(),
+                        )
+                        s.getOutputStream().flush()
+                        // Blocks until the client closes its end.
+                        if (s.getInputStream().read() < 0) clientGone.countDown()
+                    }
+                    clientGone.countDown()
+                }.start()
+            }
+        }.apply { isDaemon = true; start() }
+
+        val baseUrl get() = "http://127.0.0.1:${socket.localPort}"
+
+        override fun close() {
+            socket.close()
+        }
+    }
+
+    @Test
+    fun `an interrupt closes the open stream and waits for the gate instead of reconnecting`() = runBlocking {
+        HeldStream().use { held ->
+            val active = kotlinx.coroutines.flow.MutableStateFlow(true)
+            val waits = java.util.concurrent.atomic.AtomicInteger()
+            val connected = Channel<SseEvent>(Channel.UNLIMITED)
+            val stream = EventStream(
+                ApiClient(held.baseUrl, token = { "device-token" }),
+                backoff = fastBackoff(),
+                wait = { waits.incrementAndGet() },
+                gate = { active.first { it } },
+            ) { connected.send(it) }
+            val job = launch(kotlinx.coroutines.Dispatchers.IO) { stream.run() }
+            withTimeout(TIMEOUT) { connected.receive() }
+
+            active.value = false
+            stream.interrupt()
+            assertTrue(
+                "the stream was interrupted and the server still holds the connection",
+                held.clientGone.await(5, java.util.concurrent.TimeUnit.SECONDS),
+            )
+            Thread.sleep(300)
+            assertEquals("a PASSIVE phone reconnected", 1, held.accepted.get())
+            assertEquals("an interrupt is not a dropped stream; nothing should have waited to retry", 0, waits.get())
+
+            active.value = true
+            withTimeout(TIMEOUT) { connected.receive() }
+            assertEquals("ACTIVE again and no new stream", 2, held.accepted.get())
+            job.cancel()
+        }
     }
 }

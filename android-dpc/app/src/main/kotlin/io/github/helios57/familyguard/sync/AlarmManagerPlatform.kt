@@ -113,6 +113,8 @@ class AlarmManagerPlatform(
         private const val REQUEST_ENFORCE = 1
         private const val REQUEST_UPDATE_CHECK = 2
         private const val REQUEST_RECONNECT = 3
+        private const val REQUEST_POLL = 4
+        private const val REQUEST_MODE_CHECK = 5
 
         /** The bedtime edge and the quota midnight (FR-4.2, NFR-10). */
         fun enforcement(context: Context): AlarmManagerPlatform =
@@ -134,6 +136,14 @@ class AlarmManagerPlatform(
          */
         fun reconnect(context: Context): AlarmManagerPlatform =
             AlarmManagerPlatform(context, ConnectionService.ACTION_RECONNECT, REQUEST_RECONNECT)
+
+        /** FR-26.2: the safety poll that wakes a PASSIVE phone to sync. */
+        fun poll(context: Context): AlarmManagerPlatform =
+            AlarmManagerPlatform(context, ConnectionService.ACTION_POLL, REQUEST_POLL)
+
+        /** FR-26.1: the end of the screen-off grace or of Live, when the mode changes with no event. */
+        fun modeCheck(context: Context): AlarmManagerPlatform =
+            AlarmManagerPlatform(context, ConnectionService.ACTION_MODE_CHECK, REQUEST_MODE_CHECK)
 
         /**
          * Whether this app may book an EXACT alarm right now, or null when the phone cannot say.
