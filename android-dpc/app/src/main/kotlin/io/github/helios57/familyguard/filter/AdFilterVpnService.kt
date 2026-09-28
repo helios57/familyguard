@@ -175,7 +175,11 @@ class AdFilterVpnService : VpnService() {
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
-            notification(getString(R.string.filter_starting)),
+            // What the shade last said, not "starting": every sync sends ACTION_POLICY_CHANGED, and a
+            // tunnel that already matches is kept without a word — so posting "starting" here left
+            // a running filter announcing that it was starting, for good (measured on a family
+            // phone, 2026-09-28, once 0.6.27 synced on every poll).
+            notification(shown ?: getString(R.string.filter_starting)),
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
             } else {
@@ -531,7 +535,11 @@ class AdFilterVpnService : VpnService() {
 
     // ---- the notification ------------------------------------------------------------------------
 
+    /** The text the filter's notification carries now; null before anything was said. */
+    @Volatile private var shown: String? = null
+
     private fun note(text: String) {
+        shown = text
         val manager = getSystemService(NotificationManager::class.java) ?: return
         manager.notify(NOTIFICATION_ID, notification(text))
     }

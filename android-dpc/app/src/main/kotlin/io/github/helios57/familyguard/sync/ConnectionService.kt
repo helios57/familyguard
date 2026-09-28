@@ -1667,7 +1667,17 @@ class ConnectionService : Service() {
             }
         }
 
+        val admin = AdminReceiver.component(this)
+        val missing = OwnPermissions.toGrant(
+            needed.map { it.first },
+            policyGranted = { p ->
+                runCatching { dpm.getPermissionGrantState(admin, packageName, p) }.getOrNull() ==
+                    DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
+            },
+            held = { p -> checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED },
+        ).toSet()
         for ((permission, cost) in needed) {
+            if (permission !in missing) continue
             val accepted = runCatching {
                 dpm.setPermissionGrantState(
                     AdminReceiver.component(this),

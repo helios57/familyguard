@@ -8239,3 +8239,33 @@ filter's tunnel, which relays every packet in user space — about 0.17 s of CPU
 nothing for it: the screen was on. It is a question for the owner, not a defect to fix quietly: the
 relay could be made cheaper, or the screen-on route could be DNS-only too, which gives up catching
 apps that resolve names themselves.
+
+## Phase 43 — Two notifications on a family phone (0.6.28)
+
+Reported by the owner on 2026-09-28, an hour after 0.6.27 reached the Galaxy S20 (Android 13):
+*"all 3 minutes it gets a notification that the admin allowed Standort -> very annoying, and it still
+says 'filter is starting'"*.
+
+**The location notification.** `grantOwnPermissions()` set every runtime permission's grant state on
+every start of the connection service. On Android 13 each location grant makes the permission
+controller post *"FamilyGuard has location access — your organisation allows FamilyGuard to access your
+location"* at alerting importance, and 0.6.27's poll and mode alarms start the service every few
+minutes. Now `OwnPermissions.toGrant` grants only what the policy does not already grant or the app
+does not hold — so a permission revoked by hand is still granted again.
+
+**The filter notification.** Every sync sends the filter service `ACTION_POLICY_CHANGED`; its
+`onStartCommand` re-posted the notification as *Starting the ad filter…* before deciding to keep the
+tunnel, and the kept tunnel never said anything again. The filter was running (the server's report
+said so, 175,487 rules) while the shade said it was starting. It now re-posts the text it last said.
+Both defects predate 0.6.27; 0.6.27 made them frequent by syncing on every poll.
+
+### 43.1 — tests and calibration
+
+- Kotlin unit `OwnPermissionsTest` (2). **The emulator cannot measure the first defect**: API 37 posted
+  the location notification once at enrolment and never again across later service starts, so a
+  device test there would pass on both builds. Probe H2 (grant every time): **RED**.
+- Real Android (`tests/android/energy.sh`, extended): after a `SYNC_POLICY` is acknowledged, the shade
+  says *Ad filter on* and not *Starting the ad filter*. Probe H1 (the old re-post), taken first:
+  **RED** on both assertions; the fix: **PASS**.
+
+Cumulative: **306 probes.**

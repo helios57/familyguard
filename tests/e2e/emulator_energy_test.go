@@ -90,6 +90,23 @@ func TestAdFreeAppsBypassTheFilterAndThePhoneReportsItsEnergy(t *testing.T) {
 		t.Errorf("Chrome (uid %d) is not carried by the tunnel — the bypass took more than it should. Uids: %s", u, m[1])
 	}
 
+	// ---- the filter's notification after a sync ----
+	// Every sync tells the filter service the policy again, and a tunnel that already matches is kept.
+	// Until 0.6.28 that path re-posted "Starting the ad filter…" and never took it back, so a running
+	// filter announced it was starting for good (measured on a family phone, 2026-09-28).
+	syncCmd := h.issueCommand(parent.Token, device.ID, "SYNC_POLICY", nil)
+	if c := awaitCommandSettled(t, h, parent.Token, device.ID, syncCmd.ID, 3*time.Minute); c.State != "ACKED" {
+		t.Fatalf("SYNC_POLICY ended %s", c.State)
+	}
+	time.Sleep(3 * time.Second)
+	shade, _ := d.run(30*time.Second, "shell", "dumpsys", "notification", "--noredact")
+	if !strings.Contains(shade, "Ad filter on") {
+		t.Errorf("after a sync the filter's notification does not say it is on")
+	}
+	if strings.Contains(shade, "Starting the ad filter") {
+		t.Errorf("after a sync the running filter's notification says it is starting")
+	}
+
 	// ---- the energy report, as the server holds it ----
 	// The policy change above woke the phone at least once more, so there are two reports of one run.
 	var e energyDTO
