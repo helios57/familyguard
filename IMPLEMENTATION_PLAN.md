@@ -8061,3 +8061,11 @@ The spin explains an idle phone at 100 % of a core whenever the filter had carri
 closed from both ends — i.e. after almost any browsing. It is not the whole energy story: the
 connection stream still wakes the radio every 20 s for its keepalive, and the update check runs every
 15 minutes. Those are the two-mode design the owner asked for, which is a separate change.
+
+### 40.4 — live
+
+Deployed 2026-09-28 as 0.6.25 (server unchanged but for the version): image
+`sha256:50acdaab…d68b` on one ready pod; `/dpc.apk` byte-identical to the signed
+`familyguard-0.6.25-versionCode-34.apk` (`e7377307…1d80`), readyz 200, no error logged after the
+rollout. The phones update themselves; **the battery effect on the family phones is not measured yet**
+— the emulator windows above are the evidence so far.
