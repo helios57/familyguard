@@ -323,19 +323,43 @@ class AppSuspensionManagerTest {
         assertTrue(outcome.missing.isEmpty())
     }
 
+    /**
+     * Android refuses to suspend the packages it protects — the Play Store as the package verifier,
+     * a device admin such as Google's Android Device Policy — and says so by name. Nothing a device
+     * owner does changes that, so it is reported apart and is not a failure: counted as one, every
+     * sync of a phone whose Play Store falls under a limit failed every night (measured on both
+     * family phones, 2026-09-28), and a failure that fires every night teaches a parent to skip them.
+     */
     @Test
-    fun `a refused package is a failure naming that package`() {
+    fun `a package Android refuses to suspend is named apart and is not a failure`() {
         val gateway = FakeAppGateway(
-            installed = setOf("com.game", "com.chat", OWN),
+            installed = setOf("com.android.vending", "com.chat", OWN),
+            refuse = setOf("com.android.vending"),
+        )
+
+        val outcome = manager(gateway).apply(listOf("com.android.vending", "com.chat"), emptyList())
+
+        assertTrue(outcome.toString(), outcome.ok)
+        assertEquals(listOf("com.android.vending"), outcome.keptByAndroid)
+        assertTrue("a refusal is not also a suspension that did not take", outcome.missing.isEmpty())
+        assertTrue(outcome.toString().contains("KEPT-BY-ANDROID=[com.android.vending]"))
+        // The rest of the batch still landed: one refusal must not cost the others.
+        assertEquals(setOf("com.chat"), gateway.suspended())
+    }
+
+    /** The other direction is a child who keeps losing an app, and that stays a failure. */
+    @Test
+    fun `a release Android refuses is a failure naming that package`() {
+        val gateway = FakeAppGateway(
+            installed = setOf("com.game", OWN),
+            suspended = setOf("com.game"),
             refuse = setOf("com.game"),
         )
 
-        val outcome = manager(gateway).apply(listOf("com.game", "com.chat"), emptyList())
+        val outcome = manager(gateway).apply(emptyList(), emptyList())
 
         assertFalse(outcome.ok)
-        assertEquals("suspend: the platform did not act on it", outcome.failures["com.game"])
-        // The rest of the batch still landed: one refusal must not cost the others.
-        assertEquals(setOf("com.chat"), gateway.suspended())
+        assertEquals("release: the platform did not act on it", outcome.failures["com.game"])
     }
 
     @Test

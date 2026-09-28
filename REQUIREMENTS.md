@@ -254,6 +254,10 @@ Applied at provisioning and re-applied on every boot:
   device in the policy input, so a change to it takes effect on the next sync rather than on the
   next app update. Two consequences are deliberate: bedtime does not reach these apps, and a BLOCK
   rule against one does nothing — the same way a BLOCK against the dialer already does nothing.
+  A third set is not ours to choose: Android refuses to let any device owner suspend the packages it
+  protects — on phones with Google Play the Play Store (the package verifier), and device-admin apps
+  such as Google's Android Device Policy. The phone names them (`KEPT-BY-ANDROID`) and does not count
+  the refusal as a failure (since 0.6.30); a refusal to *release* an app still is one.
 - FR-5.10 **Preinstalled apps a child can open are always free by default.** Camera, Gallery, Clock,
   Calculator, Contacts and the like are part of the phone: with no rule of the parent's, they stay
   usable at bedtime and when the daily limit is spent. The exceptions are the preinstalled apps that

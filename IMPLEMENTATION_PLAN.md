@@ -8417,3 +8417,37 @@ spent DNS-only — the mode times had been reported since 0.6.27 and shown nowhe
 Whether it saves what it should on the family phones: the Energy card's *DNS only* share and the
 battery rate per unplugged hour, a day before and a day after, are the measurement. The audio hold is
 unit-tested only; the emulator plays nothing.
+
+## Phase 46 — Android keeps the Play Store running, and every sync at night failed for it (0.6.30)
+
+Found reading the first real push back on 2026-09-28: a `SYNC_POLICY` reached the resting Android 13
+phone in 4.3 s — and ended **FAILED**, as had every sync on both family phones once a daily limit was
+spent: `apps/com.android.vending=suspend: the platform did not act on it` (and, on the Android 16
+phone, `com.google.android.apps.work.clouddpc` too). Android refuses to let any device owner suspend
+the packages it protects — the package verifier (the Play Store on a phone with Google Play), device
+admins, the installer — and there is no public API to ask which those are, so a list compiled here
+would be a guess per phone. The platform's own refusal is the authority: `setPackagesSuspended`
+returns exactly those names.
+
+So a named refusal to **suspend** is now reported apart (`AppOutcome.keptByAndroid`, printed as
+`KEPT-BY-ANDROID=[…]`) and is not a failure, and is not also reported as "accepted and not in effect".
+A refusal to **release** stays a failure — that is a child who keeps losing an app — and an exception
+names no package and stays a failure for the whole batch. The previous rule, *a refused package is a
+failure*, was a red that fired every night on both phones — and a red that is always on is one
+nobody reads, including on the night it means something.
+
+### 46.1 — tests and calibration
+
+`AppSuspensionManagerTest`: the old *a refused package is a failure* became *a package Android refuses
+to suspend is named apart and is not a failure* (the rest of the batch still lands), plus *a release
+Android refuses is a failure naming that package*.
+
+| # | the one value | measured |
+|---|---|---|
+| S1 | suspend refusals go to the failures again | **RED** |
+| S2 | a refusal also reported as not in effect | **RED** |
+| S3 | release refusals kept apart too | **RED**: *a release Android refuses is a failure* |
+
+**3 probes, 3 red.** Cumulative: **337 probes.** Not measured on a device: the emulator image carries
+no Play Store, so the refusal cannot be produced there; the family phones' next night is the read-back.
+

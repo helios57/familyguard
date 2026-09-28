@@ -58,6 +58,12 @@ data class AppOutcome(
     val failures: Map<String, String>,
     val missing: Map<String, String>,
     val stillRestrained: List<String>,
+    /**
+     * Packages Android refused to suspend: the ones it protects from any device owner — the Play
+     * Store as the package verifier, a device admin, the installer. Named, and not a failure: nothing
+     * this app does changes it, and a failure that fires on every sync is one nobody reads.
+     */
+    val keptByAndroid: List<String> = emptyList(),
 ) {
     val ok: Boolean get() = failures.isEmpty() && missing.isEmpty() && stillRestrained.isEmpty()
 
@@ -70,6 +76,7 @@ data class AppOutcome(
         if (failures.isNotEmpty()) append(" FAILED=").append(failures)
         if (missing.isNotEmpty()) append(" NOT-IN-EFFECT=").append(missing)
         if (stillRestrained.isNotEmpty()) append(" CRITICAL-RESTRAINED=").append(stillRestrained)
+        if (keptByAndroid.isNotEmpty()) append(" KEPT-BY-ANDROID=").append(keptByAndroid)
     }
 }
 
@@ -227,8 +234,9 @@ class AppSuspensionManager(
         // ordering decides whether the phone is left more restrained than intended or less. Here the
         // stake is concrete: a dialer that an older policy suspended is freed before anything else
         // is suspended.
+        val keptByAndroid = sortedSetOf<String>()
         carry(plan.release, suspended = false, failures)
-        carry(plan.suspend, suspended = true, failures)
+        carry(plan.suspend, suspended = true, failures, keptByAndroid)
         for (pkg in plan.reveal) hide(pkg, hidden = false, failures)
         for (pkg in plan.hide) hide(pkg, hidden = true, failures)
 
@@ -251,7 +259,7 @@ class AppSuspensionManager(
             if (pkg !in effectiveHidden) missing[pkg] = "hiding requested, accepted, and not in effect"
         }
         for (pkg in wantSuspended) {
-            if (pkg in wantHidden) continue
+            if (pkg in wantHidden || pkg in keptByAndroid) continue
             if (pkg !in effectiveSuspended) {
                 missing[pkg] = "suspension requested, accepted, and not in effect"
             }
@@ -271,6 +279,7 @@ class AppSuspensionManager(
             stillRestrained = protectedPackages
                 .filter { it in effectiveSuspended || it in effectiveHidden }
                 .sorted(),
+            keptByAndroid = keptByAndroid.toList(),
         )
     }
 
@@ -278,12 +287,20 @@ class AppSuspensionManager(
      * One call for the whole batch, because `setPackagesSuspended` is atomic per call in the sense
      * that matters: it reports which names it refused, so a single refusal does not cost the rest.
      */
-    private fun carry(packages: List<String>, suspended: Boolean, failures: MutableMap<String, String>) {
+    private fun carry(
+        packages: List<String>,
+        suspended: Boolean,
+        failures: MutableMap<String, String>,
+        keptByAndroid: MutableSet<String>? = null,
+    ) {
         if (packages.isEmpty()) return
         val verb = if (suspended) "suspend" else "release"
         try {
             gateway.setSuspended(packages, suspended).forEach { (pkg, reason) ->
-                failures[pkg] = "$verb: $reason"
+                // A named refusal to suspend is Android protecting the package; a refusal to release
+                // is a child losing an app, which stays a failure. An exception (below) names no
+                // package and stays a failure too.
+                if (keptByAndroid != null) keptByAndroid += pkg else failures[pkg] = "$verb: $reason"
             }
         } catch (e: RuntimeException) {
             // One exception for the batch names no package, so every package in it is charged. A
