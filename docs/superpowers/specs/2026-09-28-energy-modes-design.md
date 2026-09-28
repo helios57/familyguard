@@ -27,7 +27,7 @@ nothing until something happens.
 
 ## 2. The modes (FR-26)
 
-`PowerMode` is decided by one pure function of four facts:
+`PowerMode` is decided by one pure function of four facts (FR-26.1):
 
 ```
 decide(screenOn, screenOffSince, liveUntil, now) → ACTIVE | PASSIVE
@@ -39,7 +39,7 @@ decide(screenOn, screenOffSince, liveUntil, now) → ACTIVE | PASSIVE
 
 - **ACTIVE** is today's behaviour: the stream is open, changes arrive within a second. During Live it
   also reports the location (§4).
-- **PASSIVE** closes the stream. The phone wakes for three reasons only:
+- **PASSIVE** closes the stream. The phone wakes for three reasons only (FR-26.2):
   1. a **push** from the server (§3) — a parent did something that concerns this phone;
   2. a **safety poll**: every **30 min** when push works, every **5 min** when it does not (no Google
      Play services, no push configured on the server, or no push token yet);
@@ -52,7 +52,7 @@ decide(screenOn, screenOffSince, liveUntil, now) → ACTIVE | PASSIVE
 - The screen-on sync is what makes the passive delay harmless for the child's own actions: a child who
   asks for more time is looking at the phone, so the phone is ACTIVE and the answer arrives at once.
 
-## 3. The push wake-up — Firebase Cloud Messaging *(owner: chosen over a poll alone)*
+## 3. The push wake-up — Firebase Cloud Messaging *(owner: chosen over a poll alone)* (FR-26.3)
 
 - **What is sent:** a high-priority data message whose payload is `{"t":"sync"}` — no child, no
   command, no name. Google sees that the server woke the app, and when; nothing else. The phone
@@ -79,6 +79,8 @@ decide(screenOn, screenOffSince, liveUntil, now) → ACTIVE | PASSIVE
 
 ## 4. Live mode (FR-27)
 
+Starting and stopping it is FR-27.1; the location reports and the console map are FR-27.2.
+
 - **Console:** *Live 30 min* on the device card, with the remaining time and *Stop*. fgctl
   `live <device> [--minutes N | --stop]`, MCP `start_live` / `stop_live`. Admins and guardians alike —
   a guardian walking a child home is the use case. Audited.
@@ -92,7 +94,7 @@ decide(screenOn, screenOffSince, liveUntil, now) → ACTIVE | PASSIVE
 - A lost or stolen phone: Live from the console reaches it by push in seconds even with the screen
   off and the stream closed — that is the reason push was chosen.
 
-## 5. The ad filter
+## 5. The ad filter (FR-26.4)
 
 - **DNS only while the screen is off** *(owner)*. Nobody sees an ad with the screen off, so after
   **5 minutes** of screen off the tunnel is re-established with only the tunnel resolver routed
@@ -115,7 +117,7 @@ decide(screenOn, screenOffSince, liveUntil, now) → ACTIVE | PASSIVE
 ## 6. Knowing whether it worked
 
 Energy is only an improvement if it is measured on the family phones, and remote `adb` needs a
-pairing code each time. So the heartbeat gains a small **energy self-report**: the process's CPU time,
+pairing code each time. So the heartbeat gains a small **energy self-report** (FR-26.5): the process's CPU time,
 the wake-ups FamilyGuard caused by kind (push, poll, stream reconnect, screen-on sync), and the share
 of time in each mode and route. fgctl `energy <device>` and the device detail show it per hour. It
 ships **first**, so the family phones give a baseline on today's behaviour before anything else

@@ -790,6 +790,30 @@ A profile's agenda can include an existing calendar, read-only, from its iCalend
   and what the last read found (*n events in the coming 60 days, read …*, or the error); the week marks
   calendar events and all-day ones. `fgctl calendar <child> [--set address | --remove]` and the MCP
   tools `get_calendar` and `set_calendar` (an empty address removes it) do the same.
+
+### FR-26 Energy: an active and a passive mode (proposed, 2026-09-28)
+The phone spends energy on its connection only while someone can benefit from it. Design:
+`docs/superpowers/specs/2026-09-28-energy-modes-design.md`.
+
+- FR-26.1 **Two modes**, decided from the screen, a 60 s grace after it goes off, and Live (FR-27):
+  ACTIVE keeps the connection stream open as before; PASSIVE closes it.
+- FR-26.2 **In PASSIVE the phone wakes** for a push from the server, for a safety poll (every 30 minutes
+  when push works, every 5 minutes when it does not), and for the screen coming on; each wake is one
+  sync, and the update check runs at most every 6 hours.
+- FR-26.3 **The push** carries no content (`{"t":"sync"}`), is sent only where the stream would have
+  told an open connection, and is optional on the server: without its credentials every phone polls.
+- FR-26.4 **The ad filter** routes only DNS after 5 minutes of screen off (held while media audio
+  plays) and full traffic again when the screen comes on; the dialer, the SMS app, the carrier's IMS
+  service, Signal, Threema and Google Play services bypass it entirely.
+- FR-26.5 **The heartbeat reports the energy FamilyGuard spends**: its CPU time, the wake-ups it caused
+  by kind, and the time in each mode and filter route.
+
+### FR-27 Live mode (proposed, 2026-09-28)
+- FR-27.1 A parent or guardian starts Live for a device from the console (*Live 30 min*), fgctl or MCP,
+  and can stop it; it is audited, and a push reaches a phone whose stream is closed.
+- FR-27.2 While Live runs the phone is ACTIVE whatever its screen does and reports its GPS location
+  every 10 seconds; the console shows the position following the reports, with the time and accuracy
+  of the last fix.
 ---
 
 ## 4. Non-functional requirements
