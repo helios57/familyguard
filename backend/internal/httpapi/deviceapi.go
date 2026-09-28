@@ -173,6 +173,10 @@ type heartbeatRequest struct {
 	// from an older DPC, which records no sample — a sample of zeros would read as a phone that
 	// spends nothing.
 	Energy *energyReport `json:"energy"`
+
+	// PushToken is the phone's Firebase registration token (FR-26.3). Absent from an older DPC and
+	// from a phone that has none yet, which leaves what the server holds; "" clears it.
+	PushToken *string `json:"push_token"`
 }
 
 // energyReport is the phone's cumulative energy counters. The four mode and route times are
@@ -348,6 +352,24 @@ func (s *Server) heartbeat(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
+	if req.PushToken != nil {
+		token := strings.TrimSpace(*req.PushToken)
+		if len(token) > 4096 {
+			failWith(c, http.StatusBadRequest, "invalid_input", "push_token is too long")
+			return
+		}
+		changed, err := s.store.SetPushToken(c.Request.Context(), dev.ID, token)
+		if err != nil {
+			s.fail(c, err)
+			return
+		}
+		// A new address is pushed once at once: the phone relies on push, and polls only every 30
+		// minutes, from the first push that actually arrives — so a phone whose push never arrives
+		// keeps polling every 5.
+		if changed && token != "" {
+			s.pushWake(dev.ID)
+		}
+	}
 	if sample != nil {
 		if err := s.store.RecordEnergySample(c.Request.Context(), dev.ID, *sample); err != nil {
 			s.fail(c, err)
@@ -418,8 +440,9 @@ func (s *Server) devicePolicy(c *gin.Context) {
 	if dev.LiveUntil != nil && dev.LiveUntil.After(s.now()) {
 		live = dev.LiveUntil.UTC().Format(time.RFC3339)
 	}
+	// FR-26.3: where the phone registers for push, or null when this server sends none.
 	c.JSON(http.StatusOK, gin.H{"desired": state, "input": input, "today": today, "alarm": alarm, "agenda": agendaBlock,
-		"live_until": live})
+		"live_until": live, "push": s.pushOptions})
 }
 
 // deviceCommands hands over the queued commands and records that it did.

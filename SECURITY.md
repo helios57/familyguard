@@ -127,6 +127,23 @@ six packages is a phone; two hundred is a claim somebody made up, and before the
 grew. The built-in whitelist is the floor underneath all of it and is unaffected by any of this, so
 the worst case of refusing every reported entry is a device with the default exemptions.
 
+### Control plane → phone, through Google (push)
+
+Optional (FR-26.3), and built so that the hop through Google carries nothing worth having. The
+message is `{"t":"sync"}` — no command, no child, no name — so Google learns that this server woke
+this phone and when, and nothing about why. The phone treats it as a nudge exactly like a poll: it
+authenticates to the control plane with its own device token and fetches what changed, so a forged or
+replayed push can cost a phone one sync and can make it do nothing it would not do at its next poll.
+The push address the phone reports is its Firebase Installation ID; the server stores it, never shows
+it (the views carry only `push_registered`), and drops it when FCM says it is unregistered.
+
+The service-account key that sends pushes is a secret (`FCM_CREDENTIALS`, from a Secret, never in
+this repository); held by someone else, it can wake every phone of the project, which is the same
+nothing. The Firebase project's application id, API key and sender id are public by design — they
+ship inside every Firebase app — and reach the phone with its policy, so the repository names no
+Firebase project. Google Play services is on the ad filter's bypass list (FR-26.4) and is the only
+process that talks to FCM.
+
 ### Catalog → phone (managed applications)
 
 FR-16 lets a parent put an arbitrary APK on a child's phone. That is the largest new piece of
@@ -340,6 +357,10 @@ the moment history is rewritten, so it decays into a red nobody can reproduce; a
 over `*_test.go` clears one finding by blinding the scanner to every credential anyone ever pastes
 into a test. When a fixture trips the scanner, the fix is to make the fixture stop being
 secret-shaped — a test that asserts a token's *length* does not need a token's *entropy*.
+
+`FCM_CREDENTIALS`, the Firebase service-account key, is the one secret push adds; see *Control
+plane → phone, through Google*. Keep it in the secret store, base64 on one line, and delete the
+downloaded file.
 
 The DPC's signing keystore is the most valuable secret in the project. It is what makes an APK
 installable as Device Owner on an already-enrolled fleet; losing control of it is worse than losing

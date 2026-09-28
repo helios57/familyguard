@@ -77,9 +77,16 @@ func TestTheConsoleSaysWhenAPhoneIsResting(t *testing.T) {
 	h.issuer.setNextLogin(primaryParent)
 	b.waitFor("!document.getElementById('signin').hidden", 15*time.Second, "the sign-in screen")
 	b.eval("document.querySelector('#signin a.btn-primary').click()", nil)
-	b.waitFor(`!!document.querySelector('#view [data-link="resting"]') && !!document.querySelector('#view [data-resting]')`,
+	b.waitFor(`!!document.querySelector('#view [data-link="resting"]') && !!document.querySelector('#view [data-resting="poll"]')`,
 		15*time.Second, "the card to say the phone is resting and what that means")
 	b.measure(t, "home/resting").check(t, "home/resting")
+
+	// FR-26.3: with a push address the card says a change reaches it within seconds.
+	h.call(http.MethodPost, "/device/heartbeat", f.deviceToken(), map[string]any{"connectivity": "wifi", "push_token": "fid-1"}).
+		expect(http.StatusOK)
+	b.eval(`location.reload()`, nil)
+	b.waitFor(`!!document.querySelector('#view [data-resting="push"]') && document.querySelector('#view [data-resting="push"]').textContent.includes('by push')`,
+		15*time.Second, "the card to say a resting phone is woken by push")
 
 	stream := h.openStream("/device/stream", f.deviceToken())
 	defer stream.Close()

@@ -22,6 +22,7 @@ import (
 	"github.com/helios57/familyguard/backend/internal/fgctldist"
 	"github.com/helios57/familyguard/backend/internal/policy"
 	"github.com/helios57/familyguard/backend/internal/provisioning"
+	"github.com/helios57/familyguard/backend/internal/push"
 	"github.com/helios57/familyguard/backend/internal/store"
 )
 
@@ -59,6 +60,12 @@ type Deps struct {
 	// enough to serve it and not enough for a phone to decide, on a timer, whether to take it.
 	HostedAPK *apk.Info
 
+	// Push wakes a resting phone through FCM when an event reaches no open stream (FR-26.3); nil is
+	// push off, and every phone then polls. PushOptions is what phones need to register with the
+	// same Firebase project, sent with the policy; nil exactly when Push is.
+	Push        *push.Sender
+	PushOptions *push.Options
+
 	// FgctlCatalog is the CLI builds this deployment hosts, scanned at startup. Nil means it hosts
 	// none, which is reported as "hosted": false rather than as an error -- a control plane is
 	// perfectly usable without shipping a CLI.
@@ -67,6 +74,11 @@ type Deps struct {
 
 // Server holds the wired HTTP surface.
 type Server struct {
+	push        *push.Sender
+	pushOptions *push.Options
+	pushMu      sync.Mutex
+	pushLast    map[uuid.UUID]time.Time
+
 	cfg      *config.Config
 	store    *store.Store
 	verifier *auth.OIDCVerifier
@@ -113,7 +125,10 @@ func New(d Deps) (*Server, error) {
 	if d.HTTPClient == nil {
 		d.HTTPClient = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &Server{
+	srv := &Server{
+		push:              d.Push,
+		pushOptions:       d.PushOptions,
+		pushLast:          map[uuid.UUID]time.Time{},
 		cfg:               d.Config,
 		store:             d.Store,
 		verifier:          d.Verifier,
@@ -130,7 +145,9 @@ func New(d Deps) (*Server, error) {
 		packageChecksum:   d.PackageChecksum,
 		fgctl:             d.FgctlCatalog,
 		hostedAPK:         d.HostedAPK,
-	}, nil
+	}
+	srv.hub.onUnheard = srv.pushWake
+	return srv, nil
 }
 
 // Catalog exposes the app catalog so the caller can scan the directory at startup. Doing it there

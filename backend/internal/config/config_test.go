@@ -133,6 +133,9 @@ func TestLoadRejects(t *testing.T) {
 		// starts, looks configured, and fails the one action provisioning depends on.
 		{"apk url with no checksum source",
 			map[string]string{"APK_URL": "https://guard.example.ch/familyguard.apk"}, "APK_PATH"},
+		// FR-26.3: a key without the options phones need would send pushes nobody can receive.
+		{"push key without the phone's options",
+			map[string]string{"FCM_CREDENTIALS": `{"type":"service_account"}`, "FCM_API_KEY": "k", "FCM_SENDER_ID": "1"}, "FCM_APPLICATION_ID"},
 	}
 
 	for _, tc := range cases {

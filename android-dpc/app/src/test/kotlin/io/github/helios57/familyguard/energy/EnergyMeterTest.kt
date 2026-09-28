@@ -83,4 +83,23 @@ class EnergyMeterTest {
         clock.elapsed = 371_000
         assertEquals("telling it the same mode again changes nothing", 310_000L, meter.report().passiveMs)
     }
+
+    /** FR-26.4: time in each filter route; no tunnel is neither, and a meter never told reports null. */
+    @Test
+    fun `time in each filter route is counted, and no tunnel counts as neither`() {
+        val clock = FakeClock()
+        val meter = EnergyMeter(clock)
+        assertEquals(null, meter.report().routeFullMs)
+        clock.elapsed = 1_000
+        meter.routeChanged(io.github.helios57.familyguard.filter.RouteMode.FULL)
+        clock.elapsed = 301_000
+        meter.routeChanged(io.github.helios57.familyguard.filter.RouteMode.DNS_ONLY)
+        clock.elapsed = 1_501_000
+        meter.routeChanged(null)
+        clock.elapsed = 2_000_000
+        val r = meter.report()
+        assertEquals(300_000L, r.routeFullMs)
+        assertEquals(1_200_000L, r.routeDnsMs)
+        assertEquals("the mode clock is separate", null, r.activeMs)
+    }
 }

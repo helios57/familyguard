@@ -4024,6 +4024,15 @@ proven.
 | FR-16 managed applications | 12 | four layers, and the one that decided the design is the device. Server: `TestAnUploadedAPKIsReadRatherThanDescribed`, `TestMultipartAndRawBodyAgree`, `TestTwoVersionsOfOneAppBothLive`, `TestTheSameFileTwiceIsNotAConflict`, `TestAPackageSignedByAnotherKeyIsRefused`, `TestWhatIsNotAnAPKIsRefusedAsSuch`, `TestTheDirectoryOnTheNodeIsAlsoASource`, `TestADeploymentWithoutAnAPKDirSaysSo`, `TestDeletingAnAppRemovesItsFileToo`, `TestAManagedAppDownloadNeedsADeviceCredential`, plus `internal/apk`'s parser tests. Policy: `TestDeclaringAnAppReachesThePhoneAsSomethingItCanFetch`, `TestAnUpgradeIsANewVersionInTheSamePolicy`, `TestWithdrawingAnAppRemovesItFromThePolicy`, `TestDeclaringSomethingTheCatalogDoesNotHaveIsRefused`, `TestTheConsoleSeesADeclarationWithNothingBehindIt`; the shared vectors carry three new cases so both engines normalise a declared set identically. JVM: `ManagedAppApplierTest` (12) and `AppUpdaterTest`'s four new cases. **Device: `ManagedInstallTest`** — the restriction matrix in [12.1](#121--which-restrictions-bind-the-device-owner-measured-on-a-phone-rather-than-argued-from-the-source), the install→upgrade→withdraw lifecycle against a real second application, and `getInstallSourceInfo` as a real filter. **Calibrated 11/11** ([12.2](#122--the-jvm-calibration-including-one-break-that-proved-a-test-binds-to-nothing)), and the record includes one assertion that binds to nothing at the JVM layer and says so. **Not proven:** any of it on hardware rather than an emulator, and the API 29 floor |
 | FR-17 API keys | 12 | e2e `TestAnAPIKeyIsTheSameParent`, `TestTheTokenIsShownOnceAndNeverAgain`, `TestRevokingAKeyEndsItImmediately`, `TestAKeyCannotMintACredential`, `TestAKeyThatWasNeverIssuedIsNotDistinguishable`, `TestOnlyThePrimaryAdminMintsKeys`, `TestAKeyNeedsAName`, `TestTheAuditTrailTellsAScriptFromAPerson` — the last two of those are the ones that matter most: a key must not be able to mint a credential that outlives its own revocation, and an audit row must say a script acted rather than a person |
 | FR-18 family blocklist | 14 | e2e `TestTheCuratedBlocklistIsSeededAndReachesAPhone`, `TestTheBlocklistCoversAChildAddedAfterIt`, `TestAChildAllowExemptsOnlyThatChild`, `TestTheCriticalWhitelistOutranksTheBlocklist`, `TestDeletingACuratedEntryIsPermanent`, `TestABlocklistChangeBumpsEveryChildsPolicyVersion`, `TestTheBlocklistIsReachableByAPIKeyAndGuardedByRole`, `TestTheBlocklistRefusesWhatCanNeverMatchAnApp`, `TestTheBlocklistIsAudited`; three shared vectors replayed by **both** engines. The four that carry the requirement rather than the plumbing: the phone is told to hide packages **no inventory reported** (an implementation that blocks only what it can see leaves the installer stub that puts Facebook back); a child created *after* the entry is covered by it; one child's ALLOW exempts that child and a **second child is the control** that the entry did not simply vanish; and the device's own dialer, put on the list deliberately, is neither hidden nor suspended — with a non-critical package blocked in the same call, so an implementation that ignored the list entirely could not pass by doing nothing. `TestDeletingACuratedEntryIsPermanent` restarts the server, which is the only thing that separates "seeded once" from "re-applied on boot". **Calibrated 3/3 on the engine** (drop the union / drop the ALLOW carve-out / apply the list after the critical whitelist), each break red in the vector that owns the property and green on restore. **Not proven:** any of it on hardware — no phone has yet reported one of these packages back as hidden. `com.spotify.music` was added as a parent row on the live database in 16.7 and is in the same position: the app is not installed on the only enrolled phone, so the entry is pre-emptive by design |
+| FR-19 remote debugging | 31 | e2e `TestRemoteADBRelaysBytesBothWays`, `TestRemoteADBStreamBelongsToOnePhone`, `TestRemoteADBIsRefusedWhileDebuggingIsOff`, `TestRemoteADBCarriesThePhonesReason`, `TestRemoteADBOutlivesTheRequestTimeout`; JVM `CommandHandlersTest`. **Device:** `TestRemoteADBReachesARealPhonesAdbd` (`tests/android/remote-adb.sh`). Calibration in Phase 31 |
+| FR-20 roles and rights | 34 | e2e `TestEveryParentRouteDeclaresWhoMayCallIt`, `TestParentRoutesInstallTheRoleCheck`, `TestAGuardianMayCallExactlyTheGuardianAllowlist`, `TestAGuardianIsRefusedEverythingOutsideTheGuardianWindow`, `TestOnlyThePrimaryAdminChangesRolesAndNeverTheirOwn`, `TestARoleChangeTakesEffectOnTheNextRequest`, `TestADemotedParentsKeyIsDemotedWithThem`, `TestThePrimaryAdminPicksAndChangesRole`, `TestAnAdminHasTheGuardianWindowAsTheFirstTab`. Calibration in Phase 34 |
+| FR-21 pause and today's time | 35 | e2e `TestAGuardianPausesAndTakesTimeAway`, `TestAGuardianCanPauseAndBadRequestsSayWhy`, `TestTodaysTimeGoesDownAsWellAsUp`, `TestAReductionWithoutALimitSaysSo`, `TestFgctlPausesAndAdjustsTime`; the shared vectors (`TestAPauseTakesEverythingButCallsAndMessages`, `TestUnpausingDuringBedtimeLeavesBedtime`) replayed by both engines. **Device:** `TestAPauseSuspendsAppsOnARealPhone` (`tests/android/pause.sh`). Calibration in Phase 35 |
+| FR-22 daily plan and earned time | 36 | e2e `TestAConfirmedGroupEarnsTimeThatCarriesTheDay`, `TestACreditLastsSevenDaysCountingItsOwn`, `TestAnOverdraftIsADebtTheNextCreditSettles`, `TestAReportOutsideItsDaysIsRefusedAndDecisionsAreChecked`, `TestAGuardianConfirmsTasksAndSeesBonuszeit`, `TestABonusAppWithoutEarnedTimeSaysWhyItIsPaused`, `TestFgctlDrivesTheDailyPlan`, `TestEarnedTimeReachesTheEngine`; JVM `DayPlanTest`, `EarnedAccountTest`, `EarnedAttributionTest`. **Device:** `TestABonusAppOpensOnlyWithEarnedTimeOnARealPhone` (`tests/android/bonus.sh`). Calibration in Phase 36 |
+| FR-23 alarm clock | 37 | e2e `TestTheAlarmIsAWeekAndChangesForOneDay`, `TestAGuardianCannotChangeTheAlarm`, `TestTheAdminSetsTheAlarmInTheConsole`, `TestFgctlSetsTheAlarm`, `TestAPhoneThatCannotTakeOverTheScreenForTheAlarmSaysSo`; JVM `NextAlarmTest`, `AlarmBookingTest`. **Device:** `TestTheAlarmRingsOnARealPhoneOfflineAndInDoze` (`tests/android/alarm.sh`). **Not proven:** a real phone that lay unused, over a PIN lock screen |
+| FR-24 agenda and holidays | 38 | e2e `TestTheAgendaIsAWeekOfEntriesAndHolidaysSuspendTheRepeatingOnes`, `TestAGuardianCannotReadOrChangeTheAgenda`, `TestTheAdminKeepsTheAgendaAndHolidaysInTheConsole`, `TestFgctlKeepsTheAgendaAndHolidays`; JVM `AgendaNowTest`. **Device:** `TestTheHeuteScreenShowsTheAgendaOnARealPhone` (`tests/android/agenda.sh`). Calibration in Phase 38 |
+| FR-25 calendar import | 39 | e2e `TestACalendarIsReadIntoTheWeek`, `TestTheCalendarFenceRefusesLocalAddresses`, `TestTheAdminAddsACalendarInTheConsole`, `TestFgctlSetsTheCalendar`. **Not proven:** a real calendar read in production |
+| FR-26 energy: modes, push, route, self-report | 41, 42, 44, 45 | e2e `TestAPhoneReportsWhatFamilyGuardSpendsAndTheServerAnswersPerHour`, `TestFgctlAndMCPShowTheEnergyReport`, `TestTheConsoleShowsWhatFamilyGuardSpends`, `TestTheDeviceViewSaysWhetherThePhoneHoldsItsStream`, `TestTheConsoleSaysWhenAPhoneIsResting`, `TestARestingPhoneIsWokenByAPushAndOnlyThen`, `TestAServerWithoutPushSaysSoToThePhone`; JVM `PowerModeTest`, `EventStreamTest`, `UpdateScheduleTest`, `PushPolicyTest`, `ScreenRouteTest`, `FilterBypassTest`, `EnergyMeterTest`, `SynchronizerTest`. **Device:** `TestAdFreeAppsBypassTheFilterAndThePhoneReportsItsEnergy` (`energy.sh`), `TestAPhoneWithItsScreenOffLetsGoOfTheServerAndStillHearsOfChanges` (`modes.sh`), `TestARestingPhoneIsWokenByARealPush` (`push.sh`, the real FCM), `TestTheFilterCarriesOnlyDNSFiveMinutesAfterTheScreenGoesOff` (`route.sh`). **Not proven:** the battery saved on the family phones |
+| FR-27 Live | 42 | e2e `TestLiveKeepsAPhoneReportingForAWhileAndAGuardianSeesOnlyTheSession`, `TestAGuardianStartsLiveAndSeesThePosition`, `TestFgctlAndMCPStartAndStopLive`; JVM `LiveThrottleTest`. **Device:** `TestAPhoneWithItsScreenOffLetsGoOfTheServerAndStillHearsOfChanges` (`modes.sh`) — Live reached a dozing phone by its poll and streamed positions about every 10 s |
 | NFR-1/2 auth | 2.4, 3.x | e2e `TestBrowserSignInJourney`, `TestBrowserSignInFailureModes`, `TestIDTokenIsVerifiedNotTrusted`, `TestSessionTokensAreForgeryResistant`, `TestOneDeviceCannotActOnAnother`; `TestVerifyRejects`, `TestVerifyAcceptsGenuineToken`, `TestVerifyDoesNotFetchJWKSPerToken`, `TestUnknownKidRefreshIsRateLimited`, `TestRefreshKeepsCacheOnBadDocument`, `TestSessionRejects`, `TestSessionRoundTrip`, `TestSessionIssuerRefusesWeakKey`, `TestBearerToken` |
 | NFR-3 no fabricated success | 3.6, 5.3, 5.5 | `TestEveryReadFailureIsReported`; and the mutation sweeps — 5.3's 39 breaks and 5.5's 39, each one a place the code could have believed a return code instead of reading state back |
 | NFR-4 persistence | 2.2 | e2e `TestStateSurvivesRestart` |
@@ -8240,6 +8249,15 @@ nothing for it: the screen was on. It is a question for the owner, not a defect 
 relay could be made cheaper, or the screen-on route could be DNS-only too, which gives up catching
 apps that resolve names themselves.
 
+### 42.4 — live
+
+Deployed 2026-09-28, each server first on one ready pod, then the APK, `/dpc.apk` read back
+byte-identical to the signed build: **0.6.26** (image `sha256:f9491fad…5724`, APK `e350523a…bf37`,
+migration 0023) and **0.6.27** (image `sha256:dc30ebec…14e8`, APK `5b1c2cbd…6d56`, migration 0024,
+offline after 11 minutes). Both family phones took 0.6.27 on *Update app* — the update check is now
+every 6 hours, so every release is followed by that command. An hour later the owner reported two
+notifications on the Android 13 phone: Phase 43.
+
 ## Phase 43 — Two notifications on a family phone (0.6.28)
 
 Reported by the owner on 2026-09-28, an hour after 0.6.27 reached the Galaxy S20 (Android 13):
@@ -8269,3 +8287,133 @@ Both defects predate 0.6.27; 0.6.27 made them frequent by syncing on every poll.
   **RED** on both assertions; the fix: **PASS**.
 
 Cumulative: **306 probes.**
+
+### 43.2 — live
+
+Deployed 2026-09-28 as **0.6.28** (image `sha256:b10501b1…91e4`, APK `db0d8162…356c`, versionCode 37),
+server first, `/dpc.apk` read back byte-identical. The Android 16 phone took it on *Update app*. **The
+Android 13 phone refused it**: `INSTALL_FAILED_VERIFICATION_FAILURE: Install not allowed` — Play
+Protect, as for 0.6.20 on the same phone, and a refusal no device-owner API can lift. It
+stays on 0.6.27, and keeps posting the location notification on every poll, until someone at the
+phone installs the APK from the browser (*Install anyway*) or turns off Play Protect's app scanning.
+
+## Phase 44 — Energy, phase 3: the push wake-up (FR-26.3)
+
+A resting phone (FR-26.1) heard of a change only at its 5-minute poll. Now the server wakes it
+through Firebase Cloud Messaging whenever an event reaches none of its streams, and a phone that has
+seen a push arrive polls only every 30 minutes.
+
+- **Server.** `internal/push` sends FCM HTTP v1 with a service account (golang.org/x/oauth2): a
+  high-priority data message `{"t":"sync"}`, 5 minutes to live, nothing else. The hub calls
+  `pushWake` when `PublishDevice` finds no subscriber; at most one push per phone per 10 s, counted
+  from a push actually sent (an event for a phone with no address must not swallow the proof push its
+  first address is owed). Migration 0025 adds `device_state.push_token`; the heartbeat's
+  `push_token` sets it (absent leaves, "" clears) and a **new** address is pushed at once; FCM's
+  `UNREGISTERED`/`INVALID_ARGUMENT` drops exactly that address. The policy carries `push` — the
+  Firebase project's four public values, or null when the server sends none. Configured by
+  `FCM_CREDENTIALS` and three public values; a half configuration refuses to start. Views say only
+  `push_registered`; `fgctl device` says *reachable by push*, and a resting phone's card says Lock,
+  Ring and Locate wake it by push.
+- **Phone.** `firebase-messaging` 25.1.3 initialised at run time from the policy's options
+  (`PushRegistrar`; no `google-services.json`), and again in `Application.onCreate`, since a push can
+  be what starts the process. **The address is the Firebase Installation ID**: 25.1 deprecated
+  `getToken()`/`onNewToken()` for `register()`/`onRegistered()`, FCM's send API now takes `fid`, and
+  the build refuses deprecated calls. That registration is **opt-in by a manifest flag** — found on the
+  emulator, where it failed with *"API disabled"*. `PushWakeService` turns a push into a sync;
+  `PushPolicy.pollMillis` is 30 minutes only when a push has arrived for the address held, so a phone
+  whose pushes never arrive keeps polling every 5. The merged manifest gains
+  `c2dm.permission.RECEIVE`, `WAKE_LOCK` and firebase's receiver guarded by `c2dm.permission.SEND`,
+  each allowlisted with its reason.
+- **Setup.** A Firebase project with an Android app for the package; the service-account key in the
+  secret store (base64, one line); DEPLOYMENT.md *Push*. SECURITY.md gains the boundary.
+
+### 44.1 — tests
+
+- Go unit `push/fcm_test.go`: the message sent, the OAuth exchange, `UNREGISTERED` and
+  `INVALID_ARGUMENT` as `ErrUnregistered`, an outage as an error that keeps the address;
+  `config_test` refuses a half configuration.
+- e2e `push_test.go` (the real server binary, FCM and OAuth served in-process): no push to a phone
+  without an address; a new address pushed once; the same address again not; a command pushed; a
+  burst coalesced; a phone holding its stream not pushed; an unregistered address dropped; absent
+  leaves and "" clears; the list, the view and `fgctl device` say it. `TestAServerWithoutPush…`: the
+  policy says `push: null`. The console's resting text, both ways.
+- Kotlin unit `PushPolicyTest` (8), `SynchronizerTest` (+2).
+- **Real FCM, real Android** (`tests/android/push.sh`, `TestARestingPhoneIsWokenByARealPush`, the key
+  from the environment, NOT MEASURED without it): the phone registered **3 s** after enrolling, the
+  stream closed with the screen off, and a command queued for it in forced Doze was **acknowledged
+  after 6 s** — by the poll alone it took 5 min 11 s (Phase 42). The phone then booked its poll 30
+  minutes out.
+
+### 44.2 — calibration
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| P1 | `stream.go` | push even with a stream open | **RED**: *a phone holding its stream was pushed anyway* |
+| P2 | `push.go` | no coalescing | **RED**: *a burst … sent 3 pushes* |
+| P3 | `store/push.go` | a refused address kept | **RED** |
+| P4 | `fcm.go` | the push carries a reason | **RED**: *it must carry nothing but a wake-up* |
+| P5 | `deviceapi.go` | the policy says `push: null` | **RED** |
+| P6 | `deviceapi.go` | a heartbeat without `push_token` clears it | **RED** |
+| P7 | `store/devices.go` | the list never says registered | first **GREEN** — the test read only the single view; the list assertion was added, then **RED** |
+| P8 | `store/devices.go` | the view never says registered | **RED** |
+| Q1 | `deviceapi.go` | a new address not pushed | **RED**: *pushed 0 times, want 1* |
+| Q2 | `store/push.go` | every heartbeat a new address | **RED**: *an unchanged push address was pushed again* |
+| Q3 | `fcm.go` | sent as `token`, not `fid` | **RED**, in the unit test and the e2e |
+| Q4 | `push.go` | an address-less event starts the 10 s | **RED**: the proof push swallowed |
+| E3 | `app.js` | the resting card never says push | **RED** |
+| E4 | `fgctl` | *reachable by push* always false | **RED** |
+| K1–K5 | `Synchronizer.kt`, `PushPolicy.kt` | options not handed on; token not sent; a token trusted without a push; a token reported to a server without push; changed options kept | **RED**, each |
+| D-P1 | the manifest, device | without the opt-in flag | **RED**: *3 min after enrolling the server holds no push address* — the first run, taken before the flag existed |
+
+**This phase: 20 probes, 20 red** (P7 after its fix). Cumulative: **326 probes.**
+
+Versions: firebase-messaging 25.1.3 and golang.org/x/oauth2 v0.37.0 are the newest releases on the
+day; cloud.google.com/go/compute/metadata, which oauth2 pulls in, 0.3.0 → 0.10.0.
+
+## Phase 45 — Energy, phase 4: DNS only with the screen off (FR-26.4)
+
+Five minutes after the screen goes off, with no media playing and no call, a FULL tunnel is rebuilt
+with only its resolver routed; the screen coming on restores FULL at once. `ScreenRoute` decides
+(pure), `AdFilterVpnService` carries it out: a screen receiver, a playback callback that re-asks
+`isMusicActive` and the audio mode, and a **non-waking** `ELAPSED_REALTIME` alarm at the five-minute
+mark — a sleeping phone narrows the route the moment it next wakes, before the sync that woke it.
+Sound starting after the narrowing does not widen it again: that rebuild would cut the stream that
+just started, so the route narrows at most once per screen-off. The route a tunnel ran survives a
+rebuild for any other reason. The meter counts time in each route (`route_full_ms`, `route_dns_ms`),
+and `fgctl energy` and the Energy card now say the share of time resting and the share the filter
+spent DNS-only — the mode times had been reported since 0.6.27 and shown nowhere.
+
+### 45.1 — tests
+
+- Kotlin unit `ScreenRouteTest` (10), `EnergyMeterTest` (+1).
+- e2e: `fgctl energy` and the Energy card say *resting 75 %* and *DNS only 50 %* for a report that
+  says so.
+- Real Android (`tests/android/route.sh`, `TestTheFilterCarriesOnlyDNSFiveMinutesAfterTheScreenGoesOff`),
+  read from Android's own `dumpsys connectivity`: with the screen on the tunnel holds the default
+  route; 4 minutes after the screen went off it still does; it narrowed to the resolver's /32
+  **6 min 13 s** after (the non-waking alarm waits for a wake; 6 min 16 s on the second run); a minute
+  later it is still narrow; the default route came back **3 s** after the screen came on; and the
+  report holds **62 s** DNS-only beside 401 s full. The first green run showed the DNS-only time as
+  under a second (the test woke the screen at once), so it now holds the screen off for a minute and
+  requires 45 s.
+
+### 45.2 — calibration
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| R1 | `ScreenRoute.kt` | no five minutes | **RED**, two tests |
+| R2 | `ScreenRoute.kt` | sound widens a narrowed route | **RED** |
+| R3 | `ScreenRoute.kt` | sound ignored | **RED** |
+| R4 | `EnergyMeter.kt` | DNS time booked as full | **RED** |
+| R5 | `ScreenRoute.kt` | an alarm booked while sound plays | **RED** |
+| E1 | `fgctl/energy.go` | the share inverted | **RED** |
+| E2 | `app.js` | the share inverted | **RED** |
+| D-R1 | `ScreenRoute.kt`, device | an hour instead of five minutes | **RED**: *after 3m0s: the route narrowing to DNS … never happened*, the default route still there |
+
+**This phase: 8 probes, 8 red.** Cumulative: **334 probes.**
+
+### 45.3 — what it does not settle
+
+Whether it saves what it should on the family phones: the Energy card's *DNS only* share and the
+battery rate per unplugged hour, a day before and a day after, are the measurement. The audio hold is
+unit-tested only; the emulator plays nothing.

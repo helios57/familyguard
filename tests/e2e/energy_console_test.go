@@ -21,7 +21,8 @@ func TestTheConsoleShowsWhatFamilyGuardSpends(t *testing.T) {
 		h.call(http.MethodPost, "/device/heartbeat", f.enroll.DeviceToken, map[string]any{
 			"connectivity": "wifi", "battery_level": 80 - i, "charging": false,
 			"energy": map[string]any{"since": since, "cpu_ms": cpu, "rx_bytes": 0, "tx_bytes": 0,
-				"stream_opens": 1 + 2*i, "events": 0, "polls": 0, "pushes": 0, "other_syncs": 0},
+				"stream_opens": 1 + 2*i, "events": 0, "polls": 0, "pushes": 0, "other_syncs": 0,
+				"active_ms": 1000 * i, "passive_ms": 3000 * i, "route_full_ms": 2000 * i, "route_dns_ms": 2000 * i},
 		}).expect(http.StatusOK)
 	}
 	quiet := h.newDevice(f.parent.Token, f.child.ID, "The spare phone")
@@ -53,7 +54,8 @@ func TestTheConsoleShowsWhatFamilyGuardSpends(t *testing.T) {
 			none = c.Text
 		}
 	}
-	for _, want := range []string{f.device.Name, "per unplugged hour", "FamilyGuard CPU", "s per hour", "wake-ups per hour"} {
+	for _, want := range []string{f.device.Name, "per unplugged hour", "FamilyGuard CPU", "s per hour", "wake-ups per hour",
+		"Resting (screen off) 75 % of the time", "Ad filter DNS only 50 % of its time"} {
 		if !strings.Contains(reported, want) {
 			t.Errorf("the reporting phone's energy card lacks %q: %q", want, reported)
 		}

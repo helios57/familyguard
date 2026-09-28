@@ -1,10 +1,14 @@
 package io.github.helios57.familyguard.filter
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
@@ -13,8 +17,14 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.VpnService
+import android.media.AudioManager
+import android.media.AudioPlaybackConfiguration
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Telephony
 import android.telecom.TelecomManager
 import android.util.Log
@@ -23,6 +33,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import io.github.helios57.familyguard.BuildConfig
 import io.github.helios57.familyguard.R
+import io.github.helios57.familyguard.energy.EnergyMeter
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.DatagramSocket
@@ -74,6 +85,80 @@ class AdFilterVpnService : VpnService() {
     private val watchdog = TunnelWatchdog()
 
     @Volatile private var stoodDown = false
+
+    // ---- FR-26.4: the route follows the screen --------------------------------------------------
+
+    /** When the screen went off, `elapsedRealtime`; null while it is on or since before we knew. */
+    @Volatile private var screenOffAtElapsed: Long? = null
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            screenOffAtElapsed = if (intent.action == Intent.ACTION_SCREEN_OFF) SystemClock.elapsedRealtime() else null
+            reconsiderRoute(if (intent.action == Intent.ACTION_SCREEN_OFF) "screen off" else "screen on")
+        }
+    }
+
+    private val playbackCallback = object : AudioManager.AudioPlaybackCallback() {
+        override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>) {
+            reconsiderRoute("sound")
+        }
+    }
+
+    private fun screenOn(): Boolean = getSystemService(PowerManager::class.java)?.isInteractive ?: true
+
+    /**
+     * A call, or media playing — music, a podcast, a video's sound. `isMusicActive` is the media
+     * stream's own answer; the playback configurations the callback below hands over say which
+     * players exist, not which are playing (whether one is started is not public API), so they are
+     * the trigger to ask again and never the answer.
+     */
+    private fun audioActive(): Boolean {
+        val audio = getSystemService(AudioManager::class.java) ?: return false
+        if (audio.mode == AudioManager.MODE_IN_CALL || audio.mode == AudioManager.MODE_IN_COMMUNICATION) return true
+        return audio.isMusicActive
+    }
+
+    /** The route a running tunnel runs, or null when none is up. */
+    private fun runningRoute(): RouteMode? = live?.run?.mode?.takeIf { tunnelUp }
+
+    /** The parent's route as the screen lets it run now (FR-26.4), given the route running before. */
+    private fun effective(policy: FilterPolicy, running: RouteMode?): FilterPolicy {
+        val on = screenOn()
+        if (on) screenOffAtElapsed = null
+        return policy.copy(
+            mode = ScreenRoute.effective(
+                policy.mode, on, screenOffAtElapsed, SystemClock.elapsedRealtime(), audioActive(), running,
+            ),
+        )
+    }
+
+    private fun routeAlarm(): PendingIntent = PendingIntent.getForegroundService(
+        this,
+        REQUEST_ROUTE_CHECK,
+        Intent(this, AdFilterVpnService::class.java).setAction(ACTION_ROUTE_CHECK),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    /**
+     * Rebuilds the tunnel when the route it should run has changed, and books the moment it next can
+     * change on its own. The alarm does not wake the phone: a sleeping phone sends little, and the
+     * first thing it does on waking — before the sync that woke it — is narrow the route.
+     */
+    @Synchronized
+    private fun reconsiderRoute(why: String) {
+        val policy = FilterState.policy(this)
+        val on = screenOn()
+        if (on) screenOffAtElapsed = null
+        val alarms = getSystemService(AlarmManager::class.java)
+        val next = ScreenRoute.nextChangeAtElapsed(
+            policy.mode, on, screenOffAtElapsed, SystemClock.elapsedRealtime(), audioActive(),
+        )
+        runCatching {
+            if (next == null) alarms?.cancel(routeAlarm()) else alarms?.set(AlarmManager.ELAPSED_REALTIME, next, routeAlarm())
+        }.onFailure { Log.w(TAG, "the route check could not be booked: ${it.message}") }
+        val running = runningRoute() ?: return
+        if (running != effective(policy, running).mode) restart("route: $why")
+    }
 
     /**
      * Resolvers seen on the networks **underneath** the tunnel, one entry per network.
@@ -154,6 +239,18 @@ class AdFilterVpnService : VpnService() {
 
     override fun onCreate() {
         super.onCreate()
+        ContextCompat.registerReceiver(
+            this,
+            screenReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        runCatching {
+            getSystemService(AudioManager::class.java)?.registerAudioPlaybackCallback(playbackCallback, Handler(Looper.getMainLooper()))
+        }
         try {
             connectivity?.registerNetworkCallback(
                 NetworkRequest.Builder()
@@ -201,6 +298,10 @@ class AdFilterVpnService : VpnService() {
                 stopSelf()
                 return START_NOT_STICKY
             }
+            ACTION_ROUTE_CHECK -> {
+                reconsiderRoute("five minutes of screen off")
+                return START_STICKY
+            }
             ACTION_POLICY_CHANGED -> {
                 // Every sync sends this, changed or not. A tunnel already running the plan the
                 // policy now asks for is left alone — see TunnelPlan.keeps for what a rebuild costs.
@@ -244,6 +345,9 @@ class AdFilterVpnService : VpnService() {
         } catch (ignored: Exception) {
             // Never registered, or already gone. Nothing to do either way.
         }
+        runCatching { unregisterReceiver(screenReceiver) }
+        runCatching { getSystemService(AudioManager::class.java)?.unregisterAudioPlaybackCallback(playbackCallback) }
+        runCatching { getSystemService(AlarmManager::class.java)?.cancel(routeAlarm()) }
         super.onDestroy()
     }
 
@@ -258,7 +362,7 @@ class AdFilterVpnService : VpnService() {
         if (!tunnelUp) return false
         val state = FilterState.of(this)
         val next = TunnelPlan.decide(
-            policy = state.policy,
+            policy = effective(state.policy, running.run.mode),
             upstream = upstreamNow(),
             ruleCount = state.engine.ruleCount,
             stoodDown = false,
@@ -270,6 +374,8 @@ class AdFilterVpnService : VpnService() {
 
     @Synchronized
     private fun startTunnel() {
+        // Read before the stop below clears it: a narrowed route stays narrow through a rebuild.
+        val before = runningRoute()
         stopTunnel("restarting")
         // FR-6.11. Said before anything that can take time, and overwritten by every branch below. A
         // heartbeat that lands while the tunnel is being built reads "starting", which is true —
@@ -278,7 +384,7 @@ class AdFilterVpnService : VpnService() {
         standReason = getString(R.string.filter_off_starting)
         val state = FilterState.of(this)
         val decision = TunnelPlan.decide(
-            policy = state.policy,
+            policy = effective(state.policy, before),
             upstream = upstreamNow(),
             ruleCount = state.engine.ruleCount,
             stoodDown = stoodDown,
@@ -320,12 +426,15 @@ class AdFilterVpnService : VpnService() {
             return
         }
         tunnelUp = true
+        EnergyMeter.process.routeChanged(run.mode)
         // Cleared only here, where a tunnel is actually up. A reason left standing after the thing
         // it explained is over is how a console teaches a parent to ignore it (FR-6.11).
         standReason = ""
         watchdog.tunnelStarted(System.currentTimeMillis())
         note(getString(R.string.filter_running, state.engine.ruleCount))
         Log.i(TAG, "tunnel up: mode=${run.mode} rules=${state.engine.ruleCount}")
+        // FR-26.4: book the narrowing if the screen is already off.
+        reconsiderRoute("tunnel up")
     }
 
     private fun bypassPackages(): List<String> {
@@ -380,6 +489,7 @@ class AdFilterVpnService : VpnService() {
         // Ahead of the early return on purpose: the flag is what the heartbeat reports, and
         // "there is no tunnel" is exactly the state a caller that finds `live` already null is in.
         tunnelUp = false
+        EnergyMeter.process.routeChanged(null)
         val going = live ?: return
         live = null
         Log.i(TAG, "tunnel down: $why")
@@ -567,6 +677,12 @@ class AdFilterVpnService : VpnService() {
 
         const val ACTION_POLICY_CHANGED = "io.github.helios57.familyguard.AD_FILTER_POLICY_CHANGED"
         const val ACTION_STOP = "io.github.helios57.familyguard.AD_FILTER_STOP"
+
+        /** FR-26.4: five minutes of screen off have passed; narrow the route if nothing plays. */
+        const val ACTION_ROUTE_CHECK = "io.github.helios57.familyguard.AD_FILTER_ROUTE_CHECK"
+
+        /** Not in [io.github.helios57.familyguard.sync.AlarmManagerPlatform]'s block of request codes. */
+        private const val REQUEST_ROUTE_CHECK = 20
 
         /**
          * Inside 100.64.0.0/10, the shared address space reserved for carrier-grade NAT.

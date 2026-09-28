@@ -324,6 +324,7 @@ func cmdDevice(ctx context.Context, env *environment, args []string) error {
 		fmt.Fprintf(w, "usage access\t%s\n", tri(s.UsageAccess))
 		fmt.Fprintf(w, "battery unrestricted\t%s\n", tri(s.PowerExempt))
 		fmt.Fprintf(w, "exact alarms\t%s\n", tri(s.ExactAlarms))
+		fmt.Fprintf(w, "reachable by push\t%v\n", s.PushRegistered)
 		// What the PHONE says about its filter, which is a different question from whether a parent
 		// switched it on — that is in `fgctl policy`. Three states each, and "not reported" is the
 		// answer for an older DPC and for the Play build, which carries no filter to report on.

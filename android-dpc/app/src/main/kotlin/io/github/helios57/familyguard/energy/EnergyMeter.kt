@@ -51,6 +51,9 @@ data class EnergyReport(
     /** FR-26.1: time spent in each mode; null from a process that has not been told one. */
     @SerialName("active_ms") val activeMs: Long? = null,
     @SerialName("passive_ms") val passiveMs: Long? = null,
+    /** FR-26.4: time the ad filter's tunnel ran each route; null from a process never told one. */
+    @SerialName("route_full_ms") val routeFullMs: Long? = null,
+    @SerialName("route_dns_ms") val routeDnsMs: Long? = null,
 )
 
 /**
@@ -114,9 +117,35 @@ class EnergyMeter(private val clock: EnergyClock) {
         modeSinceElapsed = now
     }
 
+    private var routeTold = false
+    private var route: io.github.helios57.familyguard.filter.RouteMode? = null
+    private var routeSinceElapsed = 0L
+    private var routeFullMs = 0L
+    private var routeDnsMs = 0L
+
+    /** The ad filter's tunnel now runs [route], or none (null) (FR-26.4). */
+    @Synchronized
+    fun routeChanged(route: io.github.helios57.familyguard.filter.RouteMode?) {
+        if (routeTold && route == this.route) return
+        accrueRoute(clock.elapsedMillis())
+        this.route = route
+        routeTold = true
+    }
+
+    @Synchronized
+    private fun accrueRoute(now: Long) {
+        when (route) {
+            io.github.helios57.familyguard.filter.RouteMode.FULL -> routeFullMs += now - routeSinceElapsed
+            io.github.helios57.familyguard.filter.RouteMode.DNS_ONLY -> routeDnsMs += now - routeSinceElapsed
+            null -> Unit
+        }
+        routeSinceElapsed = now
+    }
+
     @Synchronized
     fun report(): EnergyReport {
         if (mode != null) accrue(clock.elapsedMillis())
+        if (routeTold) accrueRoute(clock.elapsedMillis())
         return snapshot()
     }
 
@@ -132,6 +161,8 @@ class EnergyMeter(private val clock: EnergyClock) {
         otherSyncs = otherSyncs.get(),
         activeMs = if (mode != null) activeMs else null,
         passiveMs = if (mode != null) passiveMs else null,
+        routeFullMs = if (routeTold) routeFullMs else null,
+        routeDnsMs = if (routeTold) routeDnsMs else null,
     )
 
     /**

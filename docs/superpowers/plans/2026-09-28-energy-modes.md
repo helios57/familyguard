@@ -98,7 +98,7 @@ audit, desired state; the console button and map follow; fgctl `live`, MCP `star
 phone location every 10 s during Live in a `location` foreground service. Emulator: forced Doze —
 the poll wakes it; Live started from the console reaches a dozing phone within the poll.
 
-## Phase 3 — push (outline)
+## Phase 3 — push (outline; built as IMPLEMENTATION_PLAN Phase 44, 0.6.29)
 
 Firebase project (owner approved), key in the secret store and mounted; server FCM HTTP v1 sender
 behind `FCM_CREDENTIALS_FILE`, coalesced 10 s per phone, sent where the stream would have told an
@@ -106,7 +106,7 @@ open connection; phone `firebase-messaging` initialised at runtime from options 
 token in the heartbeat; `UNREGISTERED` drops it; safety poll 30 min when push works. Emulator with
 Google APIs: push wakes a dozing phone.
 
-## Phase 4 — DNS only with the screen off (outline)
+## Phase 4 — DNS only with the screen off (outline; built as IMPLEMENTATION_PLAN Phase 45, 0.6.29)
 
 After 5 min screen off and no media audio, re-establish with `RouteMode.DNS_ONLY`; screen on →
 `FULL`; route time in the self-report.
@@ -132,3 +132,19 @@ After 5 min screen off and no media audio, re-establish with `RouteMode.DNS_ONLY
   timeout — the first run spent 15 minutes and was killed on its last step.
 - Phase 2: the stream is not closed from a broadcast receiver's thread — closing TLS writes to the
   socket, which Android refuses on the main thread.
+- Phase 3: the phone is addressed by its Firebase Installation ID, not a registration token —
+  firebase-messaging 25.1 deprecated the token API and FCM's send API takes `fid`; the build refuses
+  deprecated calls. Cost if wrong: a rename, if Google walks it back.
+- Phase 3: `FCM_CREDENTIALS` is an environment variable from a Secret, not a mounted file — how every
+  other secret reaches this server. Cost if wrong: none beyond style.
+- Phase 3: a phone polls every 30 minutes only once a push has **arrived** for the address it holds,
+  and the server pushes once for every new address so that proof comes in seconds. Cost if wrong: one
+  extra push per new address.
+- Phase 4: the five-minute mark is a non-waking alarm, so a sleeping phone narrows the route when it
+  next wakes (measured: 6 min 13 s). Cost if wrong: a few more minutes of the full route after the
+  screen goes off.
+- Phase 4: sound starting after the narrowing does not widen the route — the rebuild would cut the
+  stream that started — so a podcast started with the screen off plays unfiltered until the screen
+  comes on. Cost if wrong: audio adverts in that case.
+- Phase 4: "playing" is `isMusicActive` or a call; whether a player is started is not public API.
+  Cost if wrong: sound on another stream (a game's) does not delay the narrowing.

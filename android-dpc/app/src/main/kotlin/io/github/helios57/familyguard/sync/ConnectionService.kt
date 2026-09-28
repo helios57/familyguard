@@ -54,6 +54,7 @@ import io.github.helios57.familyguard.enforce.EnforcementAlarm
 import io.github.helios57.familyguard.enforce.EnforcementEngine
 import io.github.helios57.familyguard.enforce.Input
 import io.github.helios57.familyguard.energy.EnergyMeter
+import io.github.helios57.familyguard.push.PushRegistrar
 import io.github.helios57.familyguard.enroll.CredentialStore
 import io.github.helios57.familyguard.enroll.Credentials
 import io.github.helios57.familyguard.enroll.DeviceFacts
@@ -438,13 +439,15 @@ class ConnectionService : Service() {
 
     /** The next safety poll of a PASSIVE phone (FR-26.2). */
     private fun bookPoll() {
-        val at = System.currentTimeMillis() + POLL_PASSIVE_MILLIS
+        // FR-26.3: thirty minutes once a push has been seen to arrive, five until then.
+        val every = PushRegistrar.pollMillis(this)
+        val at = System.currentTimeMillis() + every
         when (val booking = pollAlarm.schedule(at)) {
             AlarmBooking.REFUSED -> Log.w(
                 TAG,
                 "poll NOT booked (${pollAlarm.unavailableReason()}); this phone hears of changes only when the screen comes on",
             )
-            else -> Log.i(TAG, "next poll in ${POLL_PASSIVE_MILLIS / 60_000} min (${booking.name.lowercase()})")
+            else -> Log.i(TAG, "next poll in ${every / 60_000} min (${booking.name.lowercase()})")
         }
     }
 
@@ -454,6 +457,16 @@ class ConnectionService : Service() {
         bookPoll()
         val sync = resync ?: return
         scope.launch { sync("poll") }
+    }
+
+    /**
+     * A push arrived (FR-26.3), or Firebase handed out a token the server has not heard of: sync once.
+     * A push is sent only for a phone with no open stream, but one can cross a stream opening, and a
+     * sync too many costs one round trip.
+     */
+    private fun onWake(why: String) {
+        val sync = resync ?: return
+        scope.launch { sync(why) }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -476,6 +489,8 @@ class ConnectionService : Service() {
         if (intent?.action == ACTION_RECONNECT) onReconnectAlarm()
         if (intent?.action == ACTION_POLL) onPollAlarm()
         if (intent?.action == ACTION_MODE_CHECK) reevaluate("alarm")
+        if (intent?.action == ACTION_PUSH) onWake("push")
+        if (intent?.action == ACTION_PUSH_TOKEN) onWake("token")
 
         if (job?.isActive != true) {
             job = scope.launch { connect() }
@@ -698,6 +713,8 @@ class ConnectionService : Service() {
             onAgenda = { io.github.helios57.familyguard.agenda.EncryptedAgendaStore(this).save(it) },
             // FR-27: every sync carries Live's end; a change is a mode change.
             onLive = { until -> if (liveUntil.getAndSet(until) != until) reevaluate("live") },
+            // FR-26.3: start, keep or stop Firebase; a new token is sent with a sync of its own.
+            onPush = { options -> PushRegistrar.configure(this, options) { onWake("token") } },
         )
         journal = recoveryJournal
         // Published before the first sync, so an alarm that fires during it waits on `syncLock`
@@ -1609,6 +1626,7 @@ class ConnectionService : Service() {
             adFilterReason = filter.reason,
             homePackages = CriticalPackages.homeScreen(this),
             energy = EnergyMeter.process.report(),
+            pushToken = PushRegistrar.reportedToken(this),
             connectivity = when {
                 capabilities == null -> "none"
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
@@ -2088,11 +2106,16 @@ class ConnectionService : Service() {
         /** FR-26.1: the end of the screen-off grace or of Live. */
         const val ACTION_MODE_CHECK = "io.github.helios57.familyguard.MODE_CHECK"
 
-        /**
-         * How often a PASSIVE phone syncs of its own accord (FR-26.2) — the owner's five minutes. Twelve
-         * wake-ups an hour where the stream's keepalive made 180.
-         */
-        const val POLL_PASSIVE_MILLIS = 5 * 60 * 1000L
+        /** FR-26.3: a push arrived; sync. */
+        const val ACTION_PUSH = "io.github.helios57.familyguard.PUSH"
+
+        /** FR-26.3: a new push token; sync so the heartbeat carries it. */
+        const val ACTION_PUSH_TOKEN = "io.github.helios57.familyguard.PUSH_TOKEN"
+
+        /** Starts the service for one of the wake-ups above. */
+        fun wake(context: Context, action: String) {
+            ContextCompat.startForegroundService(context, Intent(context, ConnectionService::class.java).setAction(action))
+        }
 
         /** Not an alarm, so not in [AlarmManagerPlatform]'s block — but allocated against it. */
         private const val REQUEST_STOP_SIREN = 10

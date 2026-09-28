@@ -183,6 +183,9 @@ type DeviceState struct {
 	// Android 14 and later can withhold it from an app that is not an alarm or calling app; the alarm
 	// then rings as a notification. Nil is a phone that has not said.
 	AlarmFullScreen *bool `json:"alarm_full_screen,omitempty"`
+	// PushRegistered is whether the phone has a push token the server can wake it with (FR-26.3).
+	// The token itself is never shown.
+	PushRegistered bool `json:"push_registered"`
 
 	// AdFilterRules, AdFilterFetchedAt and AdFilterRunning are what the PHONE says about its ad
 	// filter (FR-6.6), which is a different question from Policy.AdFilter — that one says a parent

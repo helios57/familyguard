@@ -65,6 +65,7 @@ class SynchronizerTest {
         onAlarm: (io.github.helios57.familyguard.alarm.AlarmSchedule) -> Unit = {},
         onAgenda: (io.github.helios57.familyguard.agenda.AgendaBlock) -> Unit = {},
         onLive: (Long) -> Unit = {},
+        onPush: (io.github.helios57.familyguard.push.PushOptions?) -> Unit = {},
     ) = Synchronizer(
         api,
         cache,
@@ -79,6 +80,7 @@ class SynchronizerTest {
         onAlarm = onAlarm,
         onAgenda = onAgenda,
         onLive = onLive,
+        onPush = onPush,
     )
 
     // ---- the happy path ---------------------------------------------------------------------
@@ -570,6 +572,46 @@ class SynchronizerTest {
         Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY }, now = { DEVICE_NOW }).sync()
         val without = server.requests.last { it.path.endsWith("/heartbeat") }.body
         assertFalse("no report was taken and one was sent: $without", without.contains("energy"))
+    }
+
+    /** FR-26.3: where to register for push reaches the phone with its policy; null is "this server sends none". */
+    @Test
+    fun `the push options are handed on, and their absence as none`() {
+        server.answerWith { request ->
+            if (request.path.endsWith("/heartbeat")) {
+                HttpResponse(200, body = """{"policy_version":99,"pending_commands":0}""")
+            } else {
+                HttpResponse(
+                    200,
+                    body = policyBody().dropLast(1) +
+                        ""","push":{"project_id":"p","application_id":"1:2:android:3","api_key":"k","sender_id":"2"}}""",
+                )
+            }
+        }
+        var got: io.github.helios57.familyguard.push.PushOptions? = null
+        var calls = 0
+        synchronizer(onPush = { got = it; calls++ }).sync() as SyncResult.Applied
+        assertEquals(io.github.helios57.familyguard.push.PushOptions("p", "1:2:android:3", "k", "2"), got)
+
+        server.answerWith { request ->
+            if (request.path.endsWith("/heartbeat")) HttpResponse(200, body = """{"policy_version":99,"pending_commands":0}""")
+            else HttpResponse(200, body = policyBody().dropLast(1) + ""","push":null}""")
+        }
+        synchronizer(onPush = { got = it; calls++ }).sync()
+        assertEquals("push:null must reach the phone as none", null, got)
+        assertEquals(2, calls)
+    }
+
+    /** FR-26.3: the token rides the heartbeat; a phone without one sends nothing, leaving the server's. */
+    @Test
+    fun `the heartbeat carries the push token when there is one`() {
+        Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY.copy(pushToken = "tok-9") }, now = { DEVICE_NOW }).sync()
+        val body = server.requests.last { it.path.endsWith("/heartbeat") }.body
+        assertTrue("the heartbeat does not carry the token: $body", body.contains("\"push_token\":\"tok-9\""))
+
+        Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY }, now = { DEVICE_NOW }).sync()
+        val without = server.requests.last { it.path.endsWith("/heartbeat") }.body
+        assertFalse("no token and one was sent: $without", without.contains("push_token"))
     }
 
     /** A heartbeat that fails does not undo an apply that worked. The phone is enforcing either way. */

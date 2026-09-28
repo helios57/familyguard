@@ -33,8 +33,9 @@ const emulatorADBDPort = 5555
 func androidDeviceFromEnv(t *testing.T) *androidDevice {
 	t.Helper()
 	if os.Getenv("E2E_ANDROID") != "1" {
-		t.Skip("no device: this test is driven by tests/android/remote-adb.sh, which installs the " +
-			"DPC and makes it the device owner. E2E_ANDROID=1 is how that script says it has done so.")
+		t.Skip("no device: this test is driven by a script in tests/android/ (the comment at the top of " +
+			"its file names it), which installs the DPC and makes it the device owner. E2E_ANDROID=1 is how " +
+			"that script says it has done so.")
 	}
 	d := &androidDevice{t: t, adb: os.Getenv("E2E_ANDROID_ADB"), serial: os.Getenv("E2E_ANDROID_SERIAL")}
 	if d.adb == "" {

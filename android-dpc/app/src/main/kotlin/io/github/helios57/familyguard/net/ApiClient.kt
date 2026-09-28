@@ -83,6 +83,8 @@ data class PolicyResponse(
     @SerialName("alarm") val alarm: io.github.helios57.familyguard.alarm.AlarmSchedule? = null,
     /** FR-24.3: today and tomorrow of the agenda, kept for the Heute screen offline. */
     @SerialName("agenda") val agenda: io.github.helios57.familyguard.agenda.AgendaBlock? = null,
+    /** FR-26.3: where to register for push; null is a server that sends none. */
+    @SerialName("push") val push: io.github.helios57.familyguard.push.PushOptions? = null,
 )
 
 @Serializable
@@ -152,6 +154,8 @@ data class HeartbeatRequest(
     @SerialName("home_packages") val homePackages: List<String>? = null,
     /** FR-26.5: what FamilyGuard spent since this process started. Null sends nothing. */
     @SerialName("energy") val energy: io.github.helios57.familyguard.energy.EnergyReport? = null,
+    /** FR-26.3: this phone's push token. Null sends nothing and leaves what the server holds. */
+    @SerialName("push_token") val pushToken: String? = null,
 )
 
 @Serializable

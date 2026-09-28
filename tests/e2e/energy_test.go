@@ -26,6 +26,8 @@ type energyTotalsDTO struct {
 	OtherSyncs       int64   `json:"other_syncs"`
 	ActiveMs         *int64  `json:"active_ms"`
 	PassiveMs        *int64  `json:"passive_ms"`
+	RouteFullMs      *int64  `json:"route_full_ms"`
+	RouteDNSMs       *int64  `json:"route_dns_ms"`
 }
 
 type energyDTO struct {
@@ -134,12 +136,16 @@ func TestFgctlAndMCPShowTheEnergyReport(t *testing.T) {
 		h.call(http.MethodPost, "/device/heartbeat", f.enroll.DeviceToken, map[string]any{
 			"connectivity": "wifi", "battery_level": 80 - i, "charging": false,
 			"energy": map[string]any{"since": since, "cpu_ms": cpu, "rx_bytes": 0, "tx_bytes": 0,
-				"stream_opens": 1 + 2*i, "events": 0, "polls": 0, "pushes": 0, "other_syncs": 0},
+				"stream_opens": 1 + 2*i, "events": 0, "polls": 0, "pushes": 0, "other_syncs": 0,
+				"active_ms": 1000 * i, "passive_ms": 3000 * i, "route_full_ms": 2000 * i, "route_dns_ms": 2000 * i},
 		}).expect(http.StatusOK)
 	}
 	r := fgctlRun(t, home, env, "energy", f.device.ID)
 	if r.code != 0 || !strings.Contains(r.stdout, "3.6 s") || !strings.Contains(r.stdout, "per unplugged hour") {
 		t.Errorf("fgctl energy: exit %d, %q; want the hour's 3.6 s of CPU and the battery rate", r.code, r.stdout)
+	}
+	if !strings.Contains(r.stdout, "resting 75 % of the time") || !strings.Contains(r.stdout, "ad filter DNS only 50 % of its time") {
+		t.Errorf("fgctl energy does not say how the time was spent (75 %% resting, 50 %% DNS only): %q", r.stdout)
 	}
 	if r := fgctlRun(t, home, env, "energy", f.device.ID, "--json"); !strings.Contains(r.stdout, `"cpu_ms": 3600`) {
 		t.Errorf("fgctl energy --json does not carry cpu_ms 3600: %q", r.stdout)

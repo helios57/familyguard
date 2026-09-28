@@ -59,7 +59,23 @@ func energySummary(t energy.Totals) string {
 	} else {
 		line = "battery not measured (charging throughout); " + line
 	}
+	// FR-26.1 and FR-26.4: whether the savings are happening at all. Absent from a phone that does not
+	// report them, rather than drawn as 0 %.
+	if p, ok := share(t.PassiveMs, t.ActiveMs); ok {
+		line += fmt.Sprintf("; resting %.0f %% of the time", p)
+	}
+	if p, ok := share(t.RouteDNSMs, t.RouteFullMs); ok {
+		line += fmt.Sprintf("; ad filter DNS only %.0f %% of its time", p)
+	}
 	return line
+}
+
+// share is part as a percentage of part+rest, when both were reported and add up to something.
+func share(part, rest *int64) (float64, bool) {
+	if part == nil || rest == nil || *part+*rest <= 0 {
+		return 0, false
+	}
+	return 100 * float64(*part) / float64(*part+*rest), true
 }
 
 func battery(h energy.Totals) string {

@@ -138,6 +138,9 @@ class Synchronizer(
 
     /** FR-27: when Live ends, epoch millis, or 0 when the phone is not in Live. */
     private val onLive: (Long) -> Unit = {},
+
+    /** FR-26.3: where to register for push, or null when the server sends none. */
+    private val onPush: (io.github.helios57.familyguard.push.PushOptions?) -> Unit = {},
 ) {
 
     /** Per package, the larger of the two. See [localUsedMinutesByPackage] for why it is a max. */
@@ -167,6 +170,7 @@ class Synchronizer(
             response.agenda?.let(onAgenda)
             // Unparseable is not live: a phone that cannot read the end must not stay awake forever.
             onLive(runCatching { java.time.Instant.parse(response.liveUntil).toEpochMilli() }.getOrDefault(0L))
+            onPush(response.push)
             // Stamped here — on receipt — and nowhere else. Not in `applyFrom`, which also runs for
             // a cached policy and would then report a phone that has not seen the server in a week
             // as having reached it a minute ago; and not after the apply, because a policy that
@@ -319,6 +323,7 @@ class Synchronizer(
                 adFilterReason = t.adFilterReason,
                 homePackages = t.homePackages,
                 energy = t.energy,
+                pushToken = t.pushToken,
             )
         ).pendingCommands
     }
@@ -405,4 +410,6 @@ data class DeviceTelemetry(
     val homePackages: List<String>? = null,
     /** FR-26.5: what FamilyGuard spent since this process started, or null when not taken. */
     val energy: io.github.helios57.familyguard.energy.EnergyReport? = null,
+    /** FR-26.3: the push token while the server sends push; null sends nothing. */
+    val pushToken: String? = null,
 )

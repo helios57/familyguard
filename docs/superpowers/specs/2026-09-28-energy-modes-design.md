@@ -1,7 +1,9 @@
 # Energy: an active and a passive mode, a push wake-up, and a lighter ad filter — design
 
-**Status:** design, awaiting the owner's review. Decisions below marked *(owner)* were taken by the
-owner on 2026-09-28; everything else is proposed.
+**Status:** approved by the owner on 2026-09-28 (*"Looks good, go"*) and built: the self-report and
+the bypass in 0.6.26, the modes and Live in 0.6.27, the push and the screen-off route in 0.6.29
+(IMPLEMENTATION_PLAN Phases 41, 42 and 44). Decisions marked *(owner)* were the owner's; where the
+build departed from this text, the paragraph says so.
 
 ## 1. Why
 
@@ -60,14 +62,24 @@ decide(screenOn, screenOffSince, liveUntil, now) → ACTIVE | PASSIVE
 - **When:** whenever the server already notifies a phone over the stream — a command queued (Locate,
   Siren, Lock …), the policy, plan, time grant, alarm or agenda changed, Live started — and the phone
   has no open stream. Coalesced to at most one push per phone per 10 s.
-- **Server:** FCM HTTP v1 with a service account. Configured by `FCM_CREDENTIALS_FILE` (a mounted
-  secret) — absent, push is off and every phone polls every 5 min; nothing else changes.
+- **Server:** FCM HTTP v1 with a service account. Configured by `FCM_CREDENTIALS` (the key, from a
+  Secret, JSON or base64 of it) and the Android app's three public values — absent, push is off and
+  every phone polls every 5 min; nothing else changes. *(Built as an environment variable rather than
+  a mounted file: it is how every other secret reaches this server.)*
 - **Phone:** `firebase-messaging`, initialised **at runtime** from options the server hands out with
   the desired state (`project_id`, `application_id`, `api_key`, `sender_id`). The public repository
   therefore carries no `google-services.json` and no project of anyone's; a self-hoster configures
-  their own project on the server. The phone reports its push token in the heartbeat; a token that FCM
-  answers `UNREGISTERED` is dropped and the phone falls back to the 5-minute poll until it reports a
-  new one.
+  their own project on the server. The phone reports its push address in the heartbeat
+  (`push_token`); an address that FCM answers `UNREGISTERED` is dropped and the phone falls back to
+  the 5-minute poll until it reports a new one.
+  - *As built:* the address is the **Firebase Installation ID**, not the registration token —
+    firebase-messaging 25.1 deprecated `getToken()`/`onNewToken()` for `register()`/`onRegistered()`,
+    and FCM's send API addresses a phone by `fid`. That registration is opt-in by a manifest flag,
+    found only on the emulator (*"API disabled"* without it).
+  - *As built:* the phone polls every 30 minutes only once a push has **arrived** for the address it
+    holds, and the server pushes once whenever it receives a new address — so a phone whose pushes
+    never arrive (Play services disabled, a network that drops its connection) keeps polling every 5
+    minutes instead of hearing of changes half an hour late.
 - **Honest limits:** FCM needs Google Play services (both family phones have it). Android may
   deprioritise high-priority messages from an app that never shows a notification; a sync that
   changed nothing the child can see shows none, so the safety poll stays as the floor, not as an
@@ -104,6 +116,11 @@ Starting and stopping it is FR-27.1; the location reports and the console map ar
   - Re-establishing the tunnel cuts connections that were carried by it. So the switch waits while
     media audio is playing (`AudioManager.isMusicActive`) — music with the screen off must not stop
     every time — and it never happens more than once per screen-off.
+  - *As built:* "playing" is media on the music stream (`isMusicActive`: music, podcasts, a video's
+    sound) or a call (the audio mode), re-asked whenever a player starts or stops — and sound starting after the narrowing
+    does not widen the route again, since that rebuild would cut the stream that just started. The
+    five-minute mark is a non-waking alarm: a sleeping phone narrows the route the moment it next
+    wakes, before the sync that woke it.
 - **Traffic that bypasses the filter entirely** *(owner)* — `addDisallowedApplication`, installed
   packages only:
   - the default dialer, the default SMS app and the carrier's IMS service (VoLTE, Wi-Fi calling);

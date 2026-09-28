@@ -68,6 +68,13 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
+      FR-26.3. firebase-messaging declares it too; authored here because the push wake-up depends on
+      it directly: it keeps a sleeping phone awake for the moment it takes to hand a push to
+      PushWakeService.
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!--
       Suspending an app requires knowing it is there. From Android 11 an app sees only the packages
       it declares an interest in, and the failure that causes here is silent in exactly the way this
       project keeps guarding against: `getInstalledApplications` returns a short list, every blocked
@@ -330,6 +337,29 @@
                 android:value="Continuous device-policy enforcement for a fully managed device: holds
                     the control-plane event stream open so a parent's change takes effect in seconds
                     rather than at the next background window." />
+        </service>
+
+        <!--
+          FR-26.3. The push wake-up. Not exported: Google Play services hands the message to
+          firebase-messaging's own receiver, which is guarded by a permission only Play services holds,
+          and that receiver starts this service from inside the app.
+        -->
+        <!--
+          FR-26.3. Registering the Firebase Installation ID (firebase-messaging 25.1's register() and
+          onRegistered, replacing the deprecated registration token) is opt-in. Without this flag the
+          registration fails with "API disabled", measured on the emulator on 2026-09-28, and the phone
+          would poll every 5 minutes for ever with push configured.
+        -->
+        <meta-data
+            android:name="firebase_messaging_installation_id_enabled"
+            android:value="true" />
+
+        <service
+            android:name=".push.PushWakeService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
         </service>
 
         <!--

@@ -1001,9 +1001,15 @@ function deviceCard(dev, desired, live) {
   });
 
   if (resting(dev)) {
-    body.push(el('p', { class: 'muted', 'data-resting': '',
-      text: 'The screen is off, so the phone rests to save battery and checks in every 5 minutes. '
-        + 'Lock, Ring and Locate reach it at its next check-in, or at once when someone turns the screen on.' }));
+    // FR-26.3: a phone the server can push to hears of Lock, Ring and Locate within seconds; the
+    // check-in is then the fallback, not the route.
+    body.push(st.push_registered
+      ? el('p', { class: 'muted', 'data-resting': 'push',
+        text: 'The screen is off, so the phone rests to save battery. Lock, Ring and Locate wake it by push '
+          + 'within seconds; should a push not arrive, it picks them up at its next check-in.' })
+      : el('p', { class: 'muted', 'data-resting': 'poll',
+        text: 'The screen is off, so the phone rests to save battery and checks in every 5 minutes. '
+          + 'Lock, Ring and Locate reach it at its next check-in, or at once when someone turns the screen on.' }));
   }
   body.push(liveBlock(dev, live));
 
@@ -2974,8 +2980,16 @@ function energyCard(dev, e) {
       : 'Battery not measured (charging throughout)',
     'FamilyGuard CPU ' + (t.cpu_ms / 1000 / hours).toFixed(1) + ' s per hour',
     (wakes / hours).toFixed(1) + ' wake-ups per hour',
-    'over the last ' + hours.toFixed(1) + ' h measured',
   ];
+  // FR-26.1 and FR-26.4: whether the savings happen at all. Left out for a phone that does not report
+  // them, rather than drawn as 0 %.
+  const share = (part, rest) => (part == null || rest == null || part + rest <= 0) ? null
+    : Math.round(100 * part / (part + rest));
+  const resting = share(t.passive_ms, t.active_ms);
+  if (resting != null) facts.push('Resting (screen off) ' + resting + ' % of the time');
+  const dnsOnly = share(t.route_dns_ms, t.route_full_ms);
+  if (dnsOnly != null) facts.push('Ad filter DNS only ' + dnsOnly + ' % of its time');
+  facts.push('over the last ' + hours.toFixed(1) + ' h measured');
   return el('div', { class: 'card', 'data-energy': 'reported' }, head,
     el('ul', { class: 'list' }, facts.map((f) => el('li', { text: f }))));
 }

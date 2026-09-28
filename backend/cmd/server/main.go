@@ -26,6 +26,7 @@ import (
 	"github.com/helios57/familyguard/backend/internal/fgctldist"
 	"github.com/helios57/familyguard/backend/internal/httpapi"
 	"github.com/helios57/familyguard/backend/internal/provisioning"
+	"github.com/helios57/familyguard/backend/internal/push"
 	"github.com/helios57/familyguard/backend/internal/store"
 )
 
@@ -122,6 +123,28 @@ func run() error {
 
 	cli := fgctlCatalog(cfg, log)
 
+	// FR-26.3: push is on exactly when a service-account key is configured. A key that will not load
+	// refuses to start rather than running with push silently off — every phone would then poll every
+	// five minutes and nothing would say why.
+	var sender *push.Sender
+	var pushOptions *push.Options
+	if cfg.FCMCredentials != "" {
+		creds, err := push.DecodeCredentials(cfg.FCMCredentials)
+		if err != nil {
+			return fmt.Errorf("push: %w", err)
+		}
+		if sender, err = push.New(ctx, creds, cfg.FCMEndpoint); err != nil {
+			return fmt.Errorf("push: %w", err)
+		}
+		pushOptions = &push.Options{
+			ProjectID: sender.ProjectID(), ApplicationID: cfg.FCMApplicationID,
+			APIKey: cfg.FCMAPIKey, SenderID: cfg.FCMSenderID,
+		}
+		log.Info("push: on", "project", sender.ProjectID())
+	} else {
+		log.Info("push: off (no FCM_CREDENTIALS); phones poll every 5 minutes")
+	}
+
 	srv, err := httpapi.New(httpapi.Deps{
 		Config:            cfg,
 		Store:             st,
@@ -132,6 +155,8 @@ func run() error {
 		PackageChecksum:   packageSum,
 		HostedAPK:         hosted,
 		FgctlCatalog:      cli,
+		Push:              sender,
+		PushOptions:       pushOptions,
 	})
 	if err != nil {
 		return fmt.Errorf("server: %w", err)

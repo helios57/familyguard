@@ -146,6 +146,17 @@ type Config struct {
 	// cluster.
 	CalendarMaxAge     time.Duration
 	CalendarAllowLocal bool
+
+	// FR-26.3: the push wake-up. FCMCredentials is a service-account key (JSON or base64 of it) and
+	// is the switch: absent, push is off and every phone polls every 5 minutes. The other three are
+	// what a phone needs to register with the same Firebase project; none of them is secret, and
+	// all three are required once the key is set, so a half configuration refuses to start rather
+	// than handing phones options they cannot use. FCMEndpoint is for benches.
+	FCMCredentials   string
+	FCMApplicationID string
+	FCMAPIKey        string
+	FCMSenderID      string
+	FCMEndpoint      string
 }
 
 // Load reads and validates configuration from the environment. It returns every problem it finds,
@@ -205,6 +216,15 @@ func Load() (*Config, error) {
 		if c.CalendarAllowLocal, err = strconv.ParseBool(v); err != nil {
 			fail("CALENDAR_ALLOW_LOCAL must be true or false, got %q", v)
 		}
+	}
+
+	c.FCMCredentials = os.Getenv("FCM_CREDENTIALS")
+	c.FCMApplicationID = os.Getenv("FCM_APPLICATION_ID")
+	c.FCMAPIKey = os.Getenv("FCM_API_KEY")
+	c.FCMSenderID = os.Getenv("FCM_SENDER_ID")
+	c.FCMEndpoint = envOr("FCM_ENDPOINT", "https://fcm.googleapis.com")
+	if c.FCMCredentials != "" && (c.FCMApplicationID == "" || c.FCMAPIKey == "" || c.FCMSenderID == "") {
+		fail("FCM_CREDENTIALS is set, so FCM_APPLICATION_ID, FCM_API_KEY and FCM_SENDER_ID are required too")
 	}
 
 	if c.DatabaseURL == "" {

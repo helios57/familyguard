@@ -138,6 +138,10 @@ class ManifestAndPlatformCallsTest {
             // bound — so this component has to be exported, and this permission is what makes that
             // mean "the system, and nothing else on the phone".
             "android.permission.BIND_VPN_SERVICE" to "platform only",
+            // Signature-level, held by Google Play services. firebase-messaging's own receiver, through
+            // which Play services hands over a push (FR-26.3); it starts the non-exported
+            // PushWakeService and nothing else.
+            "com.google.android.c2dm.permission.SEND" to "Google Play services only",
         )
 
         val components = componentsIn(merged)
@@ -664,6 +668,12 @@ class ManifestAndPlatformCallsTest {
             // — but it ships, so it is listed rather than discovered later.
             "io.github.helios57.familyguard.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" to
                 "androidx.core, for the non-exported install watcher",
+            // Not authored here: firebase-messaging declares both (FR-26.3). RECEIVE is what lets
+            // Google Play services deliver a push to this app; WAKE_LOCK keeps the phone awake for the
+            // moment it takes to hand the push to PushWakeService, which is the whole point of a push
+            // to a sleeping phone.
+            "com.google.android.c2dm.permission.RECEIVE" to "receiving the push wake-up",
+            "android.permission.WAKE_LOCK" to "firebase-messaging, handing a push over while asleep",
         )
 
         val shipped = usesPermissionsIn(merged)

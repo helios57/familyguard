@@ -931,6 +931,45 @@ cluster. Two settings, both optional:
 | `CALENDAR_MAX_AGE` | `30m` | how old the kept copy may be before a read fetches it again (in the background; the read answers from the copy) |
 | `CALENDAR_ALLOW_LOCAL` | `false` | lifts the fence and allows `http://` — for a bench whose calendars are served locally. **Never in a deployment.** |
 
+## Push: waking a resting phone (FR-26.3)
+
+With the screen off a phone lets go of its connection and checks in every 5 minutes (FR-26.2). With
+push configured, the server wakes it through Firebase Cloud Messaging when something changes for it,
+and a phone that has seen a push arrive checks in only every 30 minutes. Push is optional: without it
+everything works, a change just reaches a resting phone within 5 minutes instead of seconds.
+
+What Google sees: that this server woke this phone, and when. The message carries `{"t":"sync"}` and
+nothing else — no command, no name — and the phone then asks the control plane what changed. Google
+Play services must be on the phone (it is on every phone with the Play Store).
+
+1. In the [Firebase console](https://console.firebase.google.com/) create a project (Analytics off),
+   and add an **Android app** with package `io.github.helios57.familyguard`. Do **not** download
+   `google-services.json` into the app: the app is configured at run time from the server.
+2. Note the Android app's three values — `firebase apps:sdkconfig ANDROID <app-id> --project
+   <project>` prints them: `mobilesdk_app_id` (the application id), `current_key` (the API key) and
+   `project_number` (the sender id). None of them is secret; they ship inside every app that uses
+   Firebase.
+3. Create a service-account key for the project (*Project settings → Service accounts → Generate new
+   private key*). **This is the secret**: it can send to every phone of the project. Store it in the
+   cluster's secret store as base64 on one line (`base64 -w0 key.json`), and delete the file.
+4. Give the control plane the four variables:
+
+| variable | |
+|---|---|
+| `FCM_CREDENTIALS` | the service-account key, JSON or base64 of it — from a Secret. The switch: absent, push is off. |
+| `FCM_APPLICATION_ID` | the Android app's application id (`1:…:android:…`) |
+| `FCM_API_KEY` | the Android app's API key |
+| `FCM_SENDER_ID` | the project number |
+
+With the key set and any of the other three missing, the server refuses to start rather than hand
+phones options they cannot use; a key that does not parse refuses too. The pod needs outbound HTTPS to
+`oauth2.googleapis.com` and `fcm.googleapis.com` (world:443 is enough). The start-up log says
+`push: on` with the project, or `push: off (no FCM_CREDENTIALS)`.
+
+Read it back: the device view's `push_registered` turns true within a minute of a phone's next sync
+(`fgctl device <id>` or `GET /devices/:id`), and the phone's *Energy* card counts `pushes`. A phone
+without Google Play services never registers and keeps polling every 5 minutes — nothing else changes.
+
 ## `fgctl` — the command line, and the MCP server
 
 `fgctl` is the same API from a terminal, and the same binary serves it over MCP. It authenticates

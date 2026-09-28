@@ -59,6 +59,10 @@ type Hub struct {
 	parents map[*subscriber]struct{}
 	closed  bool
 	log     *slog.Logger
+
+	// onUnheard is called when a device event reached no open stream — the phone is resting, and a
+	// push is the only way it hears of it before its next poll (FR-26.3). Nil does nothing.
+	onUnheard func(id uuid.UUID)
 }
 
 func NewHub(log *slog.Logger) *Hub {
@@ -130,8 +134,12 @@ func (h *Hub) PublishDevice(id uuid.UUID, ev Event) {
 	for sub := range h.devices[id] {
 		subs = append(subs, sub)
 	}
+	unheard := h.onUnheard
 	h.mu.Unlock()
 	h.deliver(subs, ev)
+	if len(subs) == 0 && unheard != nil {
+		unheard(id)
+	}
 }
 
 // PublishParents wakes every open console stream.

@@ -155,7 +155,7 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 		        COALESCE(s.app_version_name, ''), COALESCE(s.app_version_code, 0), s.usage_access,
 		        COALESCE(s.update_error, ''), s.update_error_at, s.power_exempt, s.exact_alarms,
 		        s.ad_filter_rules, s.ad_filter_fetched_at, s.ad_filter_running,
-		        COALESCE(s.ad_filter_reason, ''), s.alarm_full_screen
+		        COALESCE(s.ad_filter_reason, ''), s.alarm_full_screen, COALESCE(s.push_token, '') <> ''
 		   FROM devices d
 		   LEFT JOIN device_state s ON s.device_id = d.id
 		  WHERE ($1::uuid IS NULL OR d.child_id = $1)
@@ -177,7 +177,7 @@ func (s *Store) ListDevices(ctx context.Context, childID *uuid.UUID, offlineAfte
 			&d.State.UpdateError, &d.State.UpdateErrorAt,
 			&d.State.PowerExempt, &d.State.ExactAlarms,
 			&d.State.AdFilterRules, &d.State.AdFilterFetchedAt, &d.State.AdFilterRunning,
-			&d.State.AdFilterReason, &d.State.AlarmFullScreen); err != nil {
+			&d.State.AdFilterReason, &d.State.AlarmFullScreen, &d.State.PushRegistered); err != nil {
 			return nil, err
 		}
 		d.State.DeviceID = d.ID
@@ -357,13 +357,13 @@ func (s *Store) GetDeviceState(ctx context.Context, deviceID uuid.UUID, offlineA
 		`SELECT device_id, battery_level, charging, screen_on, connectivity, policy_version, last_seen_at,
 		        app_version_name, app_version_code, usage_access, update_error, update_error_at,
 		        power_exempt, exact_alarms, ad_filter_rules, ad_filter_fetched_at, ad_filter_running,
-		        COALESCE(ad_filter_reason, ''), alarm_full_screen
+		        COALESCE(ad_filter_reason, ''), alarm_full_screen, push_token <> ''
 		   FROM device_state WHERE device_id = $1`, deviceID).
 		Scan(&st.DeviceID, &st.BatteryLevel, &st.Charging, &st.ScreenOn, &st.Connectivity,
 			&st.PolicyVersion, &st.LastSeenAt, &st.AppVersionName, &st.AppVersionCode,
 			&st.UsageAccess, &st.UpdateError, &st.UpdateErrorAt, &st.PowerExempt, &st.ExactAlarms,
 			&st.AdFilterRules, &st.AdFilterFetchedAt, &st.AdFilterRunning, &st.AdFilterReason,
-			&st.AlarmFullScreen)
+			&st.AlarmFullScreen, &st.PushRegistered)
 	if err != nil {
 		return nil, mapErr(err)
 	}

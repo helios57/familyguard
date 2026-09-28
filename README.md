@@ -32,9 +32,9 @@ person can read all of it, and — above all — **never be able to brick the ph
 
 | Piece | Where | State |
 |---|---|---|
-| Control plane (Go 1.26) | `backend/` | API, event stream, policy compiler, console — running and tested |
+| Control plane (Go 1.27) | `backend/` | API, event stream, policy compiler, console — running and tested |
 | Parent console (vanilla JS, mobile-first) | `backend/internal/console/assets/` | served by the same binary at `/` |
-| Android DPC (Kotlin, Device Owner) | `android-dpc/` | provisioning, enrollment, sync, hardening, app/Chrome/DNS policy, screen time, instant commands, the offline recovery hatch, the status block the phone shows for itself, and replacing itself when the control plane hosts a newer build |
+| Android DPC (Kotlin, Device Owner) | `android-dpc/` | provisioning, enrollment, sync, hardening, app/Chrome/DNS policy, screen time, instant commands, the offline recovery hatch, the status block the phone shows for itself, replacing itself when the control plane hosts a newer build, and resting with the screen off — woken by an optional content-free push, the ad filter narrowed to DNS, Live on demand, and a report of what it all costs (FR-26, FR-27) |
 | Test layers | `tests/` | secret-scan, backend, manifests, image, e2e, android-unit, android-instrumented, android-self-update |
 | Kubernetes manifests | `deploy/` | a complete worked example — `kubectl kustomize deploy` renders it; nothing is deployed |
 

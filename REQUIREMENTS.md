@@ -799,26 +799,37 @@ The phone spends energy on its connection only while someone can benefit from it
   ACTIVE keeps the connection stream open as before; PASSIVE closes it.
 - FR-26.2 **In PASSIVE the phone wakes** for a push from the server, for a safety poll (every 30 minutes
   when push works, every 5 minutes when it does not), and for the screen coming on; each wake is one
-  sync, and the update check runs at most every 6 hours. Built in 0.6.27 without push, so every poll is 5
+  sync, and the update check runs at most every 6 hours. Built in 0.6.27 without push, so every poll was 5
   minutes (an exact allow-while-idle alarm; measured in forced Doze on the emulator: a queued command
-  arrived in 5 min 11 s). The update check is every 6 hours in both modes — *Update app* is the
+  arrived in 5 min 11 s); since 0.6.29 a phone polls every 30 minutes once a push has arrived for the
+  address it holds, and every 5 until then. The update check is every 6 hours in both modes — *Update app* is the
   shortcut. The server says whether a phone holds its stream (`stream_open`); a phone is online while
   it does, or within 11 minutes of its last check-in, and the console calls one that is online but
   not listening *resting*, with what that means for Lock and Ring.
 - FR-26.3 **The push** carries no content (`{"t":"sync"}`), is sent only where the stream would have
   told an open connection, and is optional on the server: without its credentials every phone polls.
+  Built in 0.6.29: FCM HTTP v1, the phone addressed by its Firebase Installation ID (`push_token` in
+  the heartbeat; the device view says only `push_registered`), at most one push per phone per 10 s,
+  one push at once when the server receives a new address (the proof the phone waits for before it
+  stretches its poll), and an address FCM calls unregistered dropped. The Firebase project is
+  configured on the server (`FCM_CREDENTIALS` and three public values) and handed to the phone with its
+  policy. Measured on the emulator against the real FCM: registered 3 s after enrolling, and a command
+  queued for the phone in forced Doze acknowledged after 6 s.
 - FR-26.4 **The ad filter** routes only DNS after 5 minutes of screen off (held while media audio
   plays) and full traffic again when the screen comes on; the dialer, the SMS app, the carrier's IMS
   service, Signal, Threema and Google Play services bypass it entirely. The bypass is built in 0.6.26; the default
-  dialer and SMS app bypass only when they shipped with the phone.
+  dialer and SMS app bypass only when they shipped with the phone. The screen-off route is built in
+  0.6.29; "media audio" is the music stream or a call, and sound starting after the narrowing does not
+  widen it again (the rebuild would cut the stream), so it narrows at most once per screen-off.
 - FR-26.5 **The heartbeat reports the energy FamilyGuard spends**: its CPU time, the wake-ups it caused
-  by kind, and the time in each mode and filter route. Built in 0.6.26 (CPU, data, wake-ups by kind;
-  the mode and route times follow with FR-26.1 and FR-26.4's screen-off route): `GET
+  by kind, and the time in each mode and filter route. Built in 0.6.26 (CPU, data, wake-ups by kind),
+  the mode times in 0.6.27 and the route times in 0.6.29: `GET
   /devices/:id/energy`, `fgctl energy`, MCP `get_energy`, and the Activity tab's *Energy* card.
 
 ### FR-27 Live mode (2026-09-28)
 - FR-27.1 A parent or guardian starts Live for a device from the console (*Live 30 min*), fgctl or MCP,
-  and can stop it; it is audited, and a push reaches a phone whose stream is closed.
+  and can stop it; it is audited, and a push reaches a phone whose stream is closed (since 0.6.29; before
+  that, its next poll).
 - FR-27.2 While Live runs the phone is ACTIVE whatever its screen does and reports its GPS location
   every 10 seconds; the console shows the position following the reports, with the time and accuracy
   of the last fix.

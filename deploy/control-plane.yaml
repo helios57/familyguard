@@ -63,7 +63,7 @@ spec:
           #   kubectl get pod -n familyguard -o jsonpath='{..imageID}'
           # — and never against the tag it says it was pulled by, which is a label a registry can be
           # made to move.
-          image: ghcr.io/helios57/familyguard-control-plane:0.6.28
+          image: ghcr.io/helios57/familyguard-control-plane:0.6.29
           securityContext:
             allowPrivilegeEscalation: false
             # Proven, not assumed: tests/image/smoke.sh runs this image with --read-only,
@@ -160,6 +160,22 @@ spec:
                 secretKeyRef:
                   name: familyguard-secret
                   key: OAUTH_CLIENT_SECRET
+            # FR-26.3, optional: the push that wakes a resting phone (DEPLOYMENT.md, "Push"). Without
+            # the key the server sends none and a phone with its screen off checks in every 5 minutes.
+            # With it, set the Firebase Android app's three public values below too — the server
+            # refuses to start on a half configuration.
+            - name: FCM_CREDENTIALS
+              valueFrom:
+                secretKeyRef:
+                  name: familyguard-secret
+                  key: FCM_CREDENTIALS
+                  optional: true
+            # - name: FCM_APPLICATION_ID
+            #   value: "1:000000000000:android:0000000000000000000000"
+            # - name: FCM_API_KEY
+            #   value: "REPLACE_ME"
+            # - name: FCM_SENDER_ID
+            #   value: "000000000000"
           ports:
             - name: http
               containerPort: 8080

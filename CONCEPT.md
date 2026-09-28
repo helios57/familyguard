@@ -20,8 +20,8 @@ control-plane (Go)  ──REST + SSE over TLS──  android-dpc (Kotlin, Device
 deploy/                        (kustomize manifests for the cluster)
 ```
 
-One server binary. One database. One Android app. No message broker, no push provider, no second
-container for the UI.
+One server binary. One database. One Android app. No message broker and no second container for the
+UI. A push provider (FCM) is optional and carries only a content-free wake-up (§2.2).
 
 ## 2. The three decisions that shape everything
 
@@ -119,10 +119,20 @@ So a dropped event, a proxy that buffered, a phone in a tunnel — none of them 
 they cost latency until the next heartbeat and nothing else. Had the event itself been the delivery,
 every one of those would be a silent loss reported as a success.
 
-The tradeoff versus FCM: a held connection survives Doze less well. Mitigation is a
-Device-Owner-granted battery-optimisation exemption plus a foreground service, and a 15-minute
-`SYNC_POLICY` pull as a floor. If a command is undeliverable, the console says so instead of lying.
-Because the channel is ours, all of it is exercisable end to end on this machine.
+The tradeoff versus FCM was that a held connection survives Doze less well — and, measured on the
+family's phones in 2026-09, that it costs energy: the stream's keepalive held the radio up about half
+the time. So since 0.6.27 the stream is held only while it helps (FR-26.1): with the screen on, for a
+minute after, and during Live. A resting phone hears of a change by an exact allow-while-idle poll,
+and since 0.6.29 by an **FCM push** first (FR-26.3). The push does not break the rule above: it
+carries `{"t":"sync"}` and nothing else, so Google learns that this server woke this phone and when,
+never what for; the phone then fetches exactly as after a poll, and a push that is lost costs
+latency until the next poll and nothing else. It is optional — a server without a Firebase key sends
+none, and every phone polls every 5 minutes — and a phone trusts it (stretching its poll to 30
+minutes) only once a push has actually arrived for the address it holds. The Firebase project is
+configured on the server and handed to the phone with its policy, so the app carries no
+`google-services.json`. If a command is undeliverable, the console says so instead of lying, and
+everything except Google's hop is exercisable end to end on this machine; that hop is measured on
+the emulator against the real FCM (`tests/android/push.sh`).
 
 ### 2.3 Enforcement is a pure function, applied as a diff
 
@@ -143,7 +153,7 @@ different result from the same function, and the applier un-suspends because the
 
 ## 3. Control plane
 
-Go 1.26, Gin, `pgx` against PostgreSQL. Layout:
+Go 1.27, Gin, `pgx` against PostgreSQL. Layout:
 
 ```
 backend/
@@ -466,6 +476,7 @@ omitting it from the count. [CONTRIBUTING.md](CONTRIBUTING.md) is the operating 
 
 ## 7. What this concept deliberately does not build
 
-Multi-tenancy, iOS, TLS interception, a self-hosted DNS resolver, FCM, Redis, gRPC, horizontal
-autoscaling, and the draft's performance claims. Each is either a non-goal in the requirements or
+Multi-tenancy, iOS, TLS interception, a self-hosted DNS resolver, Redis, gRPC, horizontal
+autoscaling, and the draft's performance claims. (FCM was on this list until 2026-09-28; it came off
+as a content-free wake-up only, for the energy work — §2.2.) Each is either a non-goal in the requirements or
 buys nothing for one family on one node.
