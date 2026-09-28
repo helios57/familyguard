@@ -8370,6 +8370,19 @@ seen a push arrive polls only every 30 minutes.
 Versions: firebase-messaging 25.1.3 and golang.org/x/oauth2 v0.37.0 are the newest releases on the
 day; cloud.google.com/go/compute/metadata, which oauth2 pulls in, 0.3.0 → 0.10.0.
 
+### 44.3 — live
+
+Deployed 2026-09-28 as **0.6.29**: the key into the synced Secret first (read back from the cluster by
+length, never by value), then image `sha256:af6364da…e527` on one ready pod, whose log says
+`push: on`; `/dpc.apk` byte-identical to the signed `familyguard-0.6.29-versionCode-38.apk`
+(`bbdae291…d060`). Both family phones took it on *Update app* and registered within their first sync
+— the minified release build included, which no emulator run had exercised. FCM accepted the proof
+push for each, and **each phone's own report counted one push**: delivered over the family's
+networks, so both now poll every 30 minutes. A `SYNC_POLICY` to the Android 13 phone resting with
+its screen off was **delivered after 4.3 s**; 0.6.30's *Update app* reached the resting Android 16
+phone after **14 s**. (That `SYNC_POLICY` ended FAILED for a reason that had nothing to do with push:
+Phase 46.)
+
 ## Phase 45 — Energy, phase 4: DNS only with the screen off (FR-26.4)
 
 Five minutes after the screen goes off, with no media playing and no call, a FULL tunnel is rebuilt
@@ -8450,4 +8463,14 @@ Android refuses is a failure naming that package*.
 
 **3 probes, 3 red.** Cumulative: **337 probes.** Not measured on a device: the emulator image carries
 no Play Store, so the refusal cannot be produced there; the family phones' next night is the read-back.
+
+### 46.2 — live
+
+Deployed 2026-09-28 as **0.6.30** (image `sha256:6c49201d…95e5`, APK `835d6dbc…01eb`, versionCode 39),
+server first, `/dpc.apk` read back byte-identical. The Android 16 phone took it 14 s after *Update
+app* was queued, by push, resting. **The Android 13 phone refused it** — Play Protect again
+(`INSTALL_FAILED_VERIFICATION_FAILURE: Install not allowed`), after letting 0.6.29 through an hour
+earlier; a retry reached the phone by push in 33 s and installed nothing. It runs 0.6.29 — push and
+the screen-off route included — until someone at the phone installs 0.6.30 or turns off Play
+Protect's scanning; until then its syncs keep reporting the Play Store at night.
 
