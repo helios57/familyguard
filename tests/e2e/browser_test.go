@@ -263,6 +263,13 @@ func startBrowser(t *testing.T) *browser {
 		"--disable-component-update",
 		"--disable-sync",
 		"--disable-dev-shm-usage",
+		// A test browser keeps no passwords, so it needs no keyring. Without this Chrome asks the
+		// desktop's keyring over D-Bus on its first navigation, and on a machine whose session bus is
+		// up but whose keyring never answers it waits out D-Bus's 25 s call timeout — every browser
+		// test, every run: measured 25.8 s against 0.76 s for one local page (2026-09-28), 987 s
+		// against CI's 169 s for the suite, which then hit its 15 m limit. CI has no session bus and
+		// never saw it.
+		"--password-store=basic",
 		// Overlay scrollbars come with the mobile emulation below; this keeps a classic scrollbar
 		// from stealing width before the override is applied, which would make the very first
 		// measurement disagree with every later one for a reason nothing reports.
