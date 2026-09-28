@@ -132,6 +132,21 @@ class NioUpstreamPool(
         }
     }
 
+    /**
+     * How many sockets the selector holds open — the pool's own count of live upstream connections.
+     * Read on the selector's thread, where its key set may be iterated.
+     */
+    fun openSockets(): Int {
+        val answer = java.util.concurrent.atomic.AtomicInteger(-1)
+        val done = java.util.concurrent.CountDownLatch(1)
+        submit {
+            answer.set(selector.keys().count { it.isValid && it.channel().isOpen })
+            done.countDown()
+        }
+        done.await(2, java.util.concurrent.TimeUnit.SECONDS)
+        return answer.get()
+    }
+
     private fun submit(work: () -> Unit) {
         pending.add(work)
         selector.wakeup()
@@ -179,6 +194,9 @@ class NioUpstreamPool(
         private var connected = false
         private var sendClosed = false
         private var closed = false
+
+        /** The destination has finished sending (a read returned end of stream). Selector thread only. */
+        private var readEnded = false
 
         /** Set from the router's thread, read on the selector's. See [Upstream.pauseReading]. */
         @Volatile private var readPaused = false
@@ -235,8 +253,10 @@ class NioUpstreamPool(
                 if (read < 0) {
                     // A clean close from the far end. The app is told the same way, as a FIN, so a
                     // finished response reads as finished rather than as a broken connection.
+                    readEnded = true
                     key.interestOps(key.interestOps() and SelectionKey.OP_READ.inv())
                     listener.onClosed()
+                    closeIfFinished()
                     return
                 }
                 if (read > 0) listener.onData(buffer.array(), 0, read)
@@ -277,6 +297,27 @@ class NioUpstreamPool(
                 channel.shutdownOutput()
             } catch (ignored: Exception) {
                 // Half-close is a courtesy; the connection still works without it.
+            }
+            closeIfFinished()
+        }
+
+        /**
+         * Both directions are done: close the channel, which takes it out of the selector.
+         *
+         * Leaving it registered is what spun the pool's thread at a full core with the screen off
+         * (measured 2026-09-28): Android's selector is poll(2)-based, and poll(2) reports a hang-up
+         * on a socket shut in both directions at once, whatever events were asked for — so `select()`
+         * returned immediately, forever, until the router happened to forget the flow. The flow's
+         * later close() is then a no-op.
+         */
+        private fun closeIfFinished() {
+            if (!readEnded || !sendClosed || closed) return
+            if (synchronized(outgoing) { outgoing.isNotEmpty() }) return
+            closed = true
+            try {
+                channel.close()
+            } catch (ignored: Exception) {
+                // Closing is all that was wanted.
             }
         }
 

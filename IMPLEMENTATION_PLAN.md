@@ -8010,3 +8010,54 @@ The same code reported `true` from the API 37 emulator through the real sync.
 
 **The daily-plan design is built, all six phases (Phases 34–39, 0.6.18–0.6.24).** Still open, and the
 owner's to take: the alarm on the family phone after it has lain unused, over a PIN lock screen.
+
+## Phase 40 — The ad filter's upstream thread spinning with the screen off
+
+The owner reported the battery draining with the phone idle. An energy audit on the API 37 emulator,
+screen off, 12-minute windows, `dumpsys batterystats` per uid:
+
+| window | what ran | packets in/out | FamilyGuard CPU |
+|---|---|---|---|
+| A | the connection stream, no ad filter | 40 / 40 | 1.2 s |
+| B | the ad filter, just started | 107 / 105 | 35.8 s |
+| C | the ad filter, settled after some browsing | 101 / 100 | **10 min 48 s** |
+| D | the fixed build, after the same browsing (10 min) | 8 / 3 | 1.4 s |
+
+Window C is one core pinned at 100 % with nothing to do. Per-thread CPU named `fg-dns-upstream`, the
+`NioUpstreamPool` selector; a diagnostic build counted **734,654 loop iterations in 10 seconds**, each
+`select()` returning at once with keys whose interest set was **0**.
+
+**Cause.** A TCP connection whose destination had closed (read end of stream → read interest dropped)
+and whose app had sent its FIN (`shutdownOutput`) stayed registered in the selector until the packet
+router forgot the flow. Android's selector is poll(2)-based, and poll(2) reports `POLLHUP` on a socket
+shut in both directions whatever events were asked for, so the selector never slept again. The desktop
+JDK leaves interest-0 keys out of poll(2), which is why no JVM test could reproduce the spin itself.
+
+**Fix.** A connection closes its channel the moment both directions are done — read ended, send shut,
+nothing left to write — which takes it out of the selector. The router's later `close()` is a no-op.
+A half-closed connection (far end done, app may still send) stays open: poll(2) reports nothing for it.
+
+### 40.1 — tests
+
+- Kotlin unit `NioUpstreamPoolTest` (3), against real loopback sockets: far end closes then our side →
+  no socket left; our side then the far end → no socket left; control: far end closed, app still able
+  to send → the socket stays. The pool gained `openSockets()`, counted on the selector's thread.
+  Suite 915 in 91 classes, run with `--rerun`.
+- Real Android, the emulator: window D above — the same browsing that produced window C, then 10
+  minutes screen off, `fg-dns-upstream` at 0 s CPU.
+
+### 40.2 — calibration
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| 1 | `NioUpstreamPool.kt`, before the fix | — | **RED**: both close-order tests, *expected 0 but was 1*; the control green |
+| 2 | `NioUpstreamPool.kt` | `!readEnded` → `readEnded` | **RED**: both close-order tests |
+
+Cumulative: **253 probes.**
+
+### 40.3 — what it does not settle
+
+The spin explains an idle phone at 100 % of a core whenever the filter had carried a connection that
+closed from both ends — i.e. after almost any browsing. It is not the whole energy story: the
+connection stream still wakes the radio every 20 s for its keepalive, and the update check runs every
+15 minutes. Those are the two-mode design the owner asked for, which is a separate change.
