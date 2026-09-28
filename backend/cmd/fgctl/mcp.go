@@ -103,6 +103,11 @@ type deviceArgs struct {
 	DeviceID string `json:"device_id" jsonschema:"the device's UUID, as returned by list_devices"`
 }
 
+type energyArgs struct {
+	DeviceID string `json:"device_id" jsonschema:"the device's UUID, as returned by list_devices"`
+	Hours    int    `json:"hours,omitempty" jsonschema:"how many hours back, 1 to 744; default 24"`
+}
+
 type commandsArgs struct {
 	DeviceID string `json:"device_id" jsonschema:"the device's UUID"`
 	Limit    int    `json:"limit,omitempty" jsonschema:"how many to return, 1-200, default 50"`
@@ -565,6 +570,22 @@ func registerTools(server *mcp.Server, client *fgclient.Client) {
 				return nil, err
 			}
 			return body.Locations, nil
+		})
+
+	add(server, client, "get_energy",
+		"What FamilyGuard spends on a phone per hour as the phone measured it (FR-26.5): its CPU time, "+
+			"the wake-ups it caused by kind, its data, and the battery drop over unplugged intervals.",
+		func(ctx context.Context, c *fgclient.Client, in energyArgs) (any, error) {
+			hours := ""
+			if in.Hours > 0 {
+				hours = fmt.Sprint(in.Hours)
+			}
+			body, err := getEnergy(ctx, c, in.DeviceID, hours)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"hours": body.Hours, "total": body.Total, "samples": body.Samples,
+				"summary": energySummary(body.Total)}, nil
 		})
 
 	add(server, client, "list_audit",

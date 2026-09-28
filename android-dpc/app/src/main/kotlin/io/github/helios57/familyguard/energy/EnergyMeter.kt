@@ -1,0 +1,122 @@
+package io.github.helios57.familyguard.energy
+
+import android.net.TrafficStats
+import android.os.Process
+import android.os.SystemClock
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+/** What the meter reads from the platform. An interface so the arithmetic is tested without Android. */
+interface EnergyClock {
+    /** When this process started, on the wall clock. Fixed for the life of the process. */
+    val processStartEpochMillis: Long
+
+    /** CPU time this process has used, in milliseconds. */
+    fun cpuMillis(): Long
+
+    /** Bytes this app's uid has received and sent since boot, or [UNSUPPORTED]. */
+    fun rxBytes(): Long
+    fun txBytes(): Long
+
+    companion object {
+        /** `TrafficStats.UNSUPPORTED`, repeated so this interface does not load an Android class. */
+        const val UNSUPPORTED = -1L
+    }
+}
+
+/**
+ * What FamilyGuard spent on this phone since its process started (FR-26.5), sent with every heartbeat.
+ *
+ * Counters only grow while the process lives, and [since] names the process: the server turns two
+ * reports with the same [since] into a difference and never subtracts across two different ones.
+ */
+@Serializable
+data class EnergyReport(
+    @SerialName("since") val since: String = "",
+    @SerialName("cpu_ms") val cpuMs: Long = 0,
+    @SerialName("rx_bytes") val rxBytes: Long = 0,
+    @SerialName("tx_bytes") val txBytes: Long = 0,
+    @SerialName("stream_opens") val streamOpens: Long = 0,
+    @SerialName("events") val events: Long = 0,
+    @SerialName("polls") val polls: Long = 0,
+    @SerialName("pushes") val pushes: Long = 0,
+    @SerialName("other_syncs") val otherSyncs: Long = 0,
+)
+
+/**
+ * Counts what FamilyGuard does that costs energy, and reads what it cost.
+ *
+ * One per process ([process]), not one per service: the connection service can be recreated inside a
+ * process that keeps running, and a meter rebuilt with it would restart its counters under the same
+ * [EnergyReport.since] — which the server would read as a phone that did less than it did.
+ */
+class EnergyMeter(private val clock: EnergyClock) {
+
+    private val since: String = RFC3339.format(Instant.ofEpochMilli(clock.processStartEpochMillis))
+    private val rxAtStart = clock.rxBytes()
+    private val txAtStart = clock.txBytes()
+
+    private val streamOpens = AtomicLong()
+    private val events = AtomicLong()
+    private val polls = AtomicLong()
+    private val pushes = AtomicLong()
+    private val otherSyncs = AtomicLong()
+
+    /**
+     * One sync, classified by the reason the connection service gives it: `wake:connected` is the
+     * event stream (re)opening, any other `wake:` is an event on it, `poll` and `push` are the passive
+     * mode's wake-ups (FR-26.2), and everything else — a start, an installed package, an alarm — is
+     * counted as other.
+     */
+    fun countSync(why: String) {
+        when {
+            why == "wake:connected" -> streamOpens.incrementAndGet()
+            why.startsWith("wake:") -> events.incrementAndGet()
+            why.startsWith("poll") -> polls.incrementAndGet()
+            why.startsWith("push") -> pushes.incrementAndGet()
+            else -> otherSyncs.incrementAndGet()
+        }
+    }
+
+    fun report(): EnergyReport = EnergyReport(
+        since = since,
+        cpuMs = clock.cpuMillis(),
+        rxBytes = grown(rxAtStart, clock.rxBytes()),
+        txBytes = grown(txAtStart, clock.txBytes()),
+        streamOpens = streamOpens.get(),
+        events = events.get(),
+        polls = polls.get(),
+        pushes = pushes.get(),
+        otherSyncs = otherSyncs.get(),
+    )
+
+    /**
+     * Bytes since the process started. A counter the platform does not support reads zero: the field
+     * is required, the server refuses a negative one, and a phone without per-uid accounting is not
+     * one this project supports (API 29+ always has it) — so this is the defensive branch only.
+     */
+    private fun grown(atStart: Long, now: Long): Long =
+        if (atStart == EnergyClock.UNSUPPORTED || now == EnergyClock.UNSUPPORTED) 0 else maxOf(0, now - atStart)
+
+    companion object {
+        private val RFC3339: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'").withZone(ZoneOffset.UTC)
+
+        /** This process's meter. */
+        val process: EnergyMeter by lazy { EnergyMeter(AndroidEnergyClock) }
+    }
+}
+
+/** The platform's answers for this process and this app's uid. */
+object AndroidEnergyClock : EnergyClock {
+    override val processStartEpochMillis: Long =
+        System.currentTimeMillis() - (SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime())
+
+    override fun cpuMillis(): Long = Process.getElapsedCpuTime()
+    override fun rxBytes(): Long = TrafficStats.getUidRxBytes(Process.myUid())
+    override fun txBytes(): Long = TrafficStats.getUidTxBytes(Process.myUid())
+}

@@ -313,6 +313,7 @@ class Synchronizer(
                 adFilterRunning = t.adFilterRunning,
                 adFilterReason = t.adFilterReason,
                 homePackages = t.homePackages,
+                energy = t.energy,
             )
         ).pendingCommands
     }
@@ -397,4 +398,6 @@ data class DeviceTelemetry(
     val adFilterReason: String? = null,
     /** What this phone resolves as its home screen now; its time is not counted as use (FR-3.8). */
     val homePackages: List<String>? = null,
+    /** FR-26.5: what FamilyGuard spent since this process started, or null when not taken. */
+    val energy: io.github.helios57.familyguard.energy.EnergyReport? = null,
 )

@@ -516,6 +516,27 @@ class SynchronizerTest {
         assertTrue("the heartbeat does not carry alarm_full_screen=false: $body", body.contains("\"alarm_full_screen\":false"))
     }
 
+    /**
+     * FR-26.5: what FamilyGuard spent reaches the server with the heartbeat, and a build or a call
+     * that has no report sends none — a report of zeros would read as a phone that spends nothing.
+     */
+    @Test
+    fun `the heartbeat carries the energy report when there is one`() {
+        val report = io.github.helios57.familyguard.energy.EnergyReport(
+            since = "2026-09-28T10:00:00Z", cpuMs = 4_321, streamOpens = 3,
+        )
+        Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY.copy(energy = report) }, now = { DEVICE_NOW }).sync()
+        val body = server.requests.last { it.path.endsWith("/heartbeat") }.body
+        assertTrue("the heartbeat does not carry the report: $body", body.contains("\"energy\":{"))
+        assertTrue("the report lost its since: $body", body.contains("\"since\":\"2026-09-28T10:00:00Z\""))
+        assertTrue("the report lost its cpu: $body", body.contains("\"cpu_ms\":4321"))
+        assertTrue("the report lost its stream count: $body", body.contains("\"stream_opens\":3"))
+
+        Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY }, now = { DEVICE_NOW }).sync()
+        val without = server.requests.last { it.path.endsWith("/heartbeat") }.body
+        assertFalse("no report was taken and one was sent: $without", without.contains("energy"))
+    }
+
     /** A heartbeat that fails does not undo an apply that worked. The phone is enforcing either way. */
     @Test
     fun `a heartbeat that cannot be sent does not undo the apply`() {

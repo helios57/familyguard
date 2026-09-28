@@ -51,6 +51,7 @@ import io.github.helios57.familyguard.enforce.EarnedAttribution
 import io.github.helios57.familyguard.enforce.EnforcementAlarm
 import io.github.helios57.familyguard.enforce.EnforcementEngine
 import io.github.helios57.familyguard.enforce.Input
+import io.github.helios57.familyguard.energy.EnergyMeter
 import io.github.helios57.familyguard.enroll.CredentialStore
 import io.github.helios57.familyguard.enroll.Credentials
 import io.github.helios57.familyguard.enroll.DeviceFacts
@@ -790,6 +791,8 @@ class ConnectionService : Service() {
         commands: CommandQueue?,
         why: String,
     ): Boolean {
+        // Counted before the sync, so a sync that fails still counts: it woke the phone all the same.
+        EnergyMeter.process.countSync(why)
         val tick = runSync(synchronizer, reports, why) ?: return false
         if (tick.pending > 0) drain(commands, tick.pending, why)
         // Outside the lock, like the drain and for the same reason: the check takes [syncLock] for
@@ -1466,6 +1469,7 @@ class ConnectionService : Service() {
             adFilterRunning = filter.running,
             adFilterReason = filter.reason,
             homePackages = CriticalPackages.homeScreen(this),
+            energy = EnergyMeter.process.report(),
             connectivity = when {
                 capabilities == null -> "none"
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"

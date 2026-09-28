@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.LinkProperties
@@ -14,6 +15,8 @@ import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.provider.Telephony
+import android.telecom.TelecomManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -321,6 +324,17 @@ class AdFilterVpnService : VpnService() {
         Log.i(TAG, "tunnel up: mode=${run.mode} rules=${state.engine.ruleCount}")
     }
 
+    private fun bypassPackages(): List<String> {
+        val pm = packageManager
+        fun info(pkg: String) = runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull()
+        return FilterBypass.packages(
+            isInstalled = { info(it) != null },
+            isSystem = { (info(it)?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM != 0 },
+            defaultDialer = runCatching { getSystemService(TelecomManager::class.java)?.defaultDialerPackage }.getOrNull(),
+            defaultSms = runCatching { Telephony.Sms.getDefaultSmsPackage(this) }.getOrNull(),
+        )
+    }
+
     private fun establish(mode: RouteMode): ParcelFileDescriptor? {
         val builder = Builder()
             .setSession(getString(R.string.app_name))
@@ -345,6 +359,15 @@ class AdFilterVpnService : VpnService() {
         } catch (e: Exception) {
             Log.w(TAG, "could not exclude this app from its own tunnel: ${e.message}")
         }
+        // FR-26.4: traffic guaranteed to carry no ads goes around the tunnel, so the filter spends
+        // nothing reading it. One at a time: a package uninstalled between the lookup and this call
+        // throws, and must cost only its own exclusion — never the tunnel.
+        val bypassed = bypassPackages().filter { pkg ->
+            runCatching { builder.addDisallowedApplication(pkg) }
+                .onFailure { Log.w(TAG, "could not let $pkg bypass the filter: ${it.message}") }
+                .isSuccess
+        }
+        Log.i(TAG, "bypassing the filter: ${bypassed.joinToString().ifEmpty { "nothing" }}")
         return builder.establish()
     }
 

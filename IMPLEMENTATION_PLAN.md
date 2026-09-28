@@ -8069,3 +8069,76 @@ Deployed 2026-09-28 as 0.6.25 (server unchanged but for the version): image
 `familyguard-0.6.25-versionCode-34.apk` (`e7377307…1d80`), readyz 200, no error logged after the
 rollout. The phones update themselves; **the battery effect on the family phones is not measured yet**
 — the emulator windows above are the evidence so far.
+
+## Phase 41 — Energy, phase 1: the self-report and the filter bypass (FR-26.4, FR-26.5)
+
+Phase 1 of the energy design (`docs/superpowers/specs/2026-09-28-energy-modes-design.md`, plan
+`docs/superpowers/plans/2026-09-28-energy-modes.md`), approved by the owner 2026-09-28. It ships first
+so that the family phones give a baseline on today's connection behaviour before the modes change it.
+
+**The self-report (FR-26.5).** Every heartbeat carries `energy`: when the process started (`since`),
+its CPU time, the bytes its uid sent and received since then, and the syncs it made by kind — stream
+opens, events on the stream, polls, pushes, other. The counters are cumulative, so the server stores
+one row per heartbeat (`energy_samples`, migration 0023) and `internal/energy.Hourly` turns
+consecutive rows of the same `since` into differences, per hour: a restart starts a new run and is
+never subtracted across, a counter that went backwards drops its interval, and battery is counted
+only over intervals unplugged at both ends. The mode and route times are columns now and NULL until
+the builds that measure them — "not measured", never zero. `GET /devices/:id/energy?hours=N`
+(admins), `fgctl energy`, MCP `get_energy`, and an *Energy* card per phone in the Activity tab. The
+meter is one per process, not per service, because the connection service can be rebuilt inside a
+process that keeps its `since`.
+
+**The bypass (FR-26.4).** `FilterBypass`: IMS (Samsung's and Google's), Signal, Threema's four
+packages, Google Play services (the owner's decision, with the ads-SDK risk written beside it), and
+the default dialer and SMS app only when they shipped with the phone. Excluded one by one, so a
+package that vanishes between the lookup and the call costs only itself.
+
+**Dropped, with its reason:** the plan's *filter threads sleep when idle*. Their timeouts carry no
+wake lock and so never wake a sleeping phone, and after 0.6.25 the emulator measured them at 0 s.
+
+### 41.1 — tests
+
+- Go unit `internal/energy` (8): one run's difference; a restart with lower counters; a restart with
+  HIGHER counters (the case only `since` can tell); charging; hour attribution; order; mode times nil
+  until measured; a counter going backwards.
+- e2e: an older heartbeat records nothing; two reports give the difference; a restart changes
+  nothing; malformed reports refused and not recorded; a guardian refused. fgctl (the table, *not
+  reported (0 samples…)*, `--json`) and MCP `get_energy` against the real binary. Chrome at 360 px:
+  a reporting phone's card with its rate, a silent phone's *Not reported yet*; layout guard.
+- Kotlin unit: `EnergyMeterTest` (4), `FilterBypassTest` (4), `SynchronizerTest` +1 (the report in
+  the heartbeat, and none when not taken).
+- Real Android (`tests/android/energy.sh`): with the filter on, Android's own VPN record
+  (`dumpsys vpn_management`) excludes the uids of Play services, the default dialer and FamilyGuard
+  while still carrying Chrome (the control); the server holds two reports of one run with CPU and
+  wake-ups. Measured alongside by hand: Messages (system SMS app) excluded as well.
+
+### 41.2 — calibration
+
+| # | where | the one value | measured |
+|---|---|---|---|
+| 1 | `energy.go` | CPU not subtracted | **RED**: three unit tests |
+| 2 | `energy.go` | runs paired across a restart | **GREEN** at first — both restart tests had lower counters, so the negative guard caught it too; the higher-counters test was added, then **RED** |
+| 3 | `energy.go` | charging at one end counted | **RED**: the charging test |
+| 4 | `energy.go` | an unmeasured time as 0 | **RED**: *not measured is nil* |
+| 5 | `energy.go`, e2e | CPU not subtracted | **RED**: the difference and the restart |
+| 6 | `energy.go`, e2e | runs paired across a restart | **GREEN, expected**: the e2e restart has lower counters; the unit test binds it |
+| 7 | `deviceapi.go` | negatives accepted | **RED**: 500 from the table's CHECK, not the 400 |
+| 8 | `deviceapi.go` | charging not passed | **RED**: *battery 0* |
+| 9 | `energy.go` (handler) | the window inverted | **RED**: *hours 0* |
+| 10 | `deviceapi.go` | a sample from an older DPC | **RED**: *recorded 1 samples* |
+| 11 | `fgctl/energy.go` | a table over nothing | **RED** |
+| 12 | `fgctl/energy.go` | CPU in tenths | **RED** |
+| 13 | `fgctl/mcp.go` | the hours argument mangled | **GREEN** — the MCP test does not bind `hours`; recorded, not claimed |
+| 13b | `fgctl/mcp.go` | totals dropped | **RED** |
+| 14–16 | `app.js` | reported drawn as silent; rate unsaid; never fetched | **RED**, each |
+| K1–K3 | `EnergyMeter.kt` | stream opens misread; bytes since boot; unsupported unguarded | **RED**, each |
+| K4 | `Synchronizer.kt` | report dropped | **RED** |
+| K5–K6 | `FilterBypass.kt` | a third-party default; an uninstalled name | **RED**, each |
+| 17 | `httpapi/energy.go` | `hours` as null on a fresh system | **RED**: the emptiness guard, which had also caught the endpoint missing from its list on the first full run |
+| D1 | `AdFilterVpnService.kt`, device | nothing bypassed | **RED**: Play services and the dialer carried |
+| D2 | `ConnectionService.kt`, device | no report | **RED**: *0 energy samples* |
+
+Every probe a value change, restored with `cp` and verified with `cmp`. The device probes needed two
+emulator restarts first: one probe's run crashed the enrolment and left the device-owner state
+inconsistent (NOT MEASURED, retaken), and one hung on reboot (retaken). **This phase: 26 probes, 24 red,
+2 green and explained (#6, #13); #2 went red once its test existed.** Cumulative: **279 probes.**

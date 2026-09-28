@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/helios57/familyguard/backend/internal/auth"
+	"github.com/helios57/familyguard/backend/internal/energy"
 	"github.com/helios57/familyguard/backend/internal/enforce"
 	"github.com/helios57/familyguard/backend/internal/store"
 )
@@ -166,6 +168,53 @@ type heartbeatRequest struct {
 	// every heartbeat because a child can change launchers; absent from an older DPC, which leaves
 	// the stored list alone. Time on these is not counted as use.
 	HomePackages []string `json:"home_packages"`
+
+	// Energy is what FamilyGuard spent on the phone since its process started (FR-26.5). Absent
+	// from an older DPC, which records no sample — a sample of zeros would read as a phone that
+	// spends nothing.
+	Energy *energyReport `json:"energy"`
+}
+
+// energyReport is the phone's cumulative energy counters. The four mode and route times are
+// pointers because a build without the modes cannot measure them, and zero would claim it did.
+type energyReport struct {
+	Since       string `json:"since"`
+	CPUMs       int64  `json:"cpu_ms"`
+	RxBytes     int64  `json:"rx_bytes"`
+	TxBytes     int64  `json:"tx_bytes"`
+	StreamOpens int64  `json:"stream_opens"`
+	Events      int64  `json:"events"`
+	Polls       int64  `json:"polls"`
+	Pushes      int64  `json:"pushes"`
+	OtherSyncs  int64  `json:"other_syncs"`
+	ActiveMs    *int64 `json:"active_ms"`
+	PassiveMs   *int64 `json:"passive_ms"`
+	RouteFullMs *int64 `json:"route_full_ms"`
+	RouteDNSMs  *int64 `json:"route_dns_ms"`
+}
+
+// sample validates the report into an energy.Sample, or says what is wrong with it.
+func (r energyReport) sample(battery *int, charging *bool) (energy.Sample, error) {
+	since, err := time.Parse(time.RFC3339, strings.TrimSpace(r.Since))
+	if err != nil {
+		return energy.Sample{}, fmt.Errorf("energy.since must be an RFC 3339 timestamp")
+	}
+	for _, v := range []int64{r.CPUMs, r.RxBytes, r.TxBytes, r.StreamOpens, r.Events, r.Polls, r.Pushes, r.OtherSyncs} {
+		if v < 0 {
+			return energy.Sample{}, fmt.Errorf("energy counters must not be negative")
+		}
+	}
+	for _, v := range []*int64{r.ActiveMs, r.PassiveMs, r.RouteFullMs, r.RouteDNSMs} {
+		if v != nil && *v < 0 {
+			return energy.Sample{}, fmt.Errorf("energy times must not be negative")
+		}
+	}
+	return energy.Sample{
+		Since: since, BatteryLevel: battery, Charging: charging,
+		CPUMs: r.CPUMs, RxBytes: r.RxBytes, TxBytes: r.TxBytes,
+		StreamOpens: r.StreamOpens, Events: r.Events, Polls: r.Polls, Pushes: r.Pushes, OtherSyncs: r.OtherSyncs,
+		ActiveMs: r.ActiveMs, PassiveMs: r.PassiveMs, RouteFullMs: r.RouteFullMs, RouteDNSMs: r.RouteDNSMs,
+	}, nil
 }
 
 // maxHomePackages bounds what one phone may add to the uncounted list. A phone resolves one home
@@ -259,6 +308,15 @@ func (s *Server) heartbeat(c *gin.Context) {
 		failWith(c, http.StatusBadRequest, "invalid_input", "battery_level must be 0..100")
 		return
 	}
+	var sample *energy.Sample
+	if req.Energy != nil {
+		e, err := req.Energy.sample(req.BatteryLevel, req.Charging)
+		if err != nil {
+			failWith(c, http.StatusBadRequest, "invalid_input", err.Error())
+			return
+		}
+		sample = &e
+	}
 
 	if err := s.store.TouchDevice(c.Request.Context(), dev.ID, store.DeviceState{
 		BatteryLevel:  req.BatteryLevel,
@@ -289,6 +347,12 @@ func (s *Server) heartbeat(c *gin.Context) {
 	if err := s.store.SetHomePackages(c.Request.Context(), dev.ID, sanitizeHomePackages(req.HomePackages)); err != nil {
 		s.fail(c, err)
 		return
+	}
+	if sample != nil {
+		if err := s.store.RecordEnergySample(c.Request.Context(), dev.ID, *sample); err != nil {
+			s.fail(c, err)
+			return
+		}
 	}
 	pol, err := s.store.GetPolicy(c.Request.Context(), dev.ChildID)
 	if err != nil {

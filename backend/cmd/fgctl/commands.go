@@ -62,6 +62,7 @@ func commands() []command {
 		{"blocklist", "", "the family-wide blocked packages", true, cmdBlocklist},
 		{"usage", "<device-id>", "reported screen time", true, cmdUsage},
 		{"locations", "<device-id>", "reported locations", true, cmdLocations},
+		{"energy", "<device-id> [--hours N]", "what FamilyGuard spends on the phone per hour, and the battery's rate", true, cmdEnergy},
 		{"audit", "[--limit n]", "the audit log, newest first", true, cmdAudit},
 		{"keys", "", "the API keys of this family", true, cmdKeys},
 		{"rm-device", "<device-id> --yes", "delete a device (not exposed over MCP)", true, cmdRemoveDevice},

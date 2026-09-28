@@ -148,6 +148,8 @@ data class HeartbeatRequest(
     @SerialName("ad_filter_reason") val adFilterReason: String? = null,
     /** FR-3.8. Null from a build that does not report it, which leaves the server's list alone. */
     @SerialName("home_packages") val homePackages: List<String>? = null,
+    /** FR-26.5: what FamilyGuard spent since this process started. Null sends nothing. */
+    @SerialName("energy") val energy: io.github.helios57.familyguard.energy.EnergyReport? = null,
 )
 
 @Serializable

@@ -804,9 +804,12 @@ The phone spends energy on its connection only while someone can benefit from it
   told an open connection, and is optional on the server: without its credentials every phone polls.
 - FR-26.4 **The ad filter** routes only DNS after 5 minutes of screen off (held while media audio
   plays) and full traffic again when the screen comes on; the dialer, the SMS app, the carrier's IMS
-  service, Signal, Threema and Google Play services bypass it entirely.
+  service, Signal, Threema and Google Play services bypass it entirely. The bypass is built in 0.6.26; the default
+  dialer and SMS app bypass only when they shipped with the phone.
 - FR-26.5 **The heartbeat reports the energy FamilyGuard spends**: its CPU time, the wake-ups it caused
-  by kind, and the time in each mode and filter route.
+  by kind, and the time in each mode and filter route. Built in 0.6.26 (CPU, data, wake-ups by kind;
+  the mode and route times follow with FR-26.1 and FR-26.4's screen-off route): `GET
+  /devices/:id/energy`, `fgctl energy`, MCP `get_energy`, and the Activity tab's *Energy* card.
 
 ### FR-27 Live mode (proposed, 2026-09-28)
 - FR-27.1 A parent or guardian starts Live for a device from the console (*Live 30 min*), fgctl or MCP,

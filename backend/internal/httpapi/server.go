@@ -298,6 +298,7 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.GET("/devices/:id/usage", admins, s.deviceUsage)
 	p.GET("/devices/:id/usage/timeline", admins, s.deviceUsageTimeline)
 	p.GET("/devices/:id/locations", admins, s.deviceLocations)
+	p.GET("/devices/:id/energy", admins, s.deviceEnergy)
 	p.GET("/devices/:id/desired-state", everyone, s.deviceDesiredState)
 	p.GET("/devices/:id/commands", admins, s.listCommands)
 	p.POST("/devices/:id/commands", admins, s.createCommand)

@@ -111,8 +111,10 @@ Starting and stopping it is FR-27.1; the location reports and the console map ar
     Play services, so ads *fetched on behalf of other apps* through it are no longer filtered. It is
     also the package that carries push, which is a reason of its own to keep it off the tunnel.
   - WhatsApp is deliberately **not** on the list: it has shown ads in Status since 2025.
-- **Idle cost of the filter's threads:** the upstream selector sleeps until there is work (no 500 ms
-  timeout), the DNS forwarder likewise; housekeeping runs only while flows exist.
+- **Idle cost of the filter's threads — dropped when building phase 1.** The 500 ms selector timeout
+  and the 1 s forwarder timeout are timers without a wake lock: they cost CPU only while the CPU is
+  already awake and never wake a sleeping phone. After the 0.6.25 fix the emulator measured those
+  threads at 0 s of CPU over 10 screen-off minutes, so there was nothing left to take.
 
 ## 6. Knowing whether it worked
 

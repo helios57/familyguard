@@ -304,6 +304,8 @@ func allCollections(childID, deviceID string) []collection {
 		{"/children/" + childID + "/blocked-domains", "domains", "ListBlockedDomains", stageCreated},
 		{"/devices/" + deviceID + "/apps", "apps", "ListInstalledApps", stageCreated},
 		{"/devices/" + deviceID + "/locations", "locations", "ListLocations", stageCreated},
+		// FR-26.5: a phone that has never reported answers an empty list of hours, not null.
+		{"/devices/" + deviceID + "/energy", "hours", "EnergySamples", stageCreated},
 		{"/devices/" + deviceID + "/recovery-events", "events", "ListRecoveryEvents", stageCreated},
 		{"/devices/" + deviceID + "/commands", "commands", "ListCommands", stageCreated},
 		{"/devices/" + deviceID + "/usage", "packages", "UsageForDay", stageCreated},

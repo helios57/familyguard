@@ -2369,9 +2369,10 @@ async function loadActivity() {
   // One request per phone for the whole tab. The timeline endpoint answers for ONE day in the
   // child's timezone and carries both halves of this page — the hours and the app totals — so the
   // separate /usage and /audit calls this used to make are gone rather than merely unread.
-  const [timelines, locations] = await Promise.all([
+  const [timelines, locations, energy] = await Promise.all([
     Promise.all(list.map((d) => api('/devices/' + d.id + '/usage/timeline' + day).catch(() => null))),
     Promise.all(list.map((d) => api('/devices/' + d.id + '/locations?limit=5').catch(() => null))),
+    Promise.all(list.map((d) => api('/devices/' + d.id + '/energy?hours=24').catch(() => null))),
   ]);
   // The server decides what "today" is, in the child's timezone. Asked once, on the first load that
   // did not name a day, and never overwritten — a parent who has stepped back three days must not
@@ -2380,7 +2381,7 @@ async function loadActivity() {
     const answered = timelines.find((t) => t && t.day);
     if (answered) state.timelineToday = answered.day;
   }
-  return { devices: list, timelines, locations };
+  return { devices: list, timelines, locations, energy };
 }
 
 /**
@@ -2869,6 +2870,34 @@ function packageHue(name) {
   return 'hsl(' + h + ' 58% 48%)';
 }
 
+/**
+ * What FamilyGuard spends on the phone over the last 24 hours, as the phone measured it (FR-26.5).
+ *
+ * The battery's own rate is shown beside FamilyGuard's share because the question a parent asks is
+ * "why is the battery empty", and the answer can be "not us". A phone that has not reported says so
+ * rather than drawing zeros: zero CPU is a claim, and an older build never made it.
+ */
+function energyCard(dev, e) {
+  const head = el('div', { class: 'card-head' }, el('h2', { text: 'Energy · ' + dev.name }));
+  const t = e && e.total;
+  if (!t || !(t.minutes > 0)) {
+    return el('div', { class: 'card', 'data-energy': 'none' }, head,
+      el('p', { class: 'muted', text: 'Not reported yet. A phone reports what FamilyGuard spends once it runs 0.6.26 or later, with each heartbeat.' }));
+  }
+  const hours = t.minutes / 60;
+  const wakes = t.stream_opens + t.events + t.polls + t.pushes + t.other_syncs;
+  const facts = [
+    t.unplugged_minutes > 0
+      ? 'Battery −' + (t.battery_used / (t.unplugged_minutes / 60)).toFixed(1) + ' % per unplugged hour'
+      : 'Battery not measured (charging throughout)',
+    'FamilyGuard CPU ' + (t.cpu_ms / 1000 / hours).toFixed(1) + ' s per hour',
+    (wakes / hours).toFixed(1) + ' wake-ups per hour',
+    'over the last ' + hours.toFixed(1) + ' h measured',
+  ];
+  return el('div', { class: 'card', 'data-energy': 'reported' }, head,
+    el('ul', { class: 'list' }, facts.map((f) => el('li', { text: f }))));
+}
+
 function renderActivity(data) {
   if (!data.devices.length) {
     return [emptyCard('◔', 'Nothing recorded yet',
@@ -2879,6 +2908,8 @@ function renderActivity(data) {
 
   data.devices.forEach((dev, i) => {
     cards.push(dayActivityCard(dev, data.timelines[i]));
+
+    cards.push(energyCard(dev, data.energy && data.energy[i]));
 
     const locs = data.locations[i];
     if (locs && (locs.locations || []).length) {
