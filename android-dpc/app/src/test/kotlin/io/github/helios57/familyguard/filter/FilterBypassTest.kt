@@ -36,6 +36,18 @@ class FilterBypassTest {
     }
 
     @Test
+    fun `the Jellyfin clients bypass the filter — video through the tunnel is the most expensive traffic`() {
+        val jellyfin = listOf("org.jellyfin.mobile", "dev.jdtech.jellyfin", "com.unicornsonlsd.finamp")
+        val got = FilterBypass.packages(
+            isInstalled = { it in installed || it in jellyfin },
+            isSystem = { it in system },
+            defaultDialer = null,
+            defaultSms = null,
+        )
+        for (p in jellyfin) assertTrue("$p talks only to the family's own server and does not bypass: $got", p in got)
+    }
+
+    @Test
     fun `WhatsApp never bypasses — it shows ads in Status`() {
         assertFalse("com.whatsapp" in bypass("com.whatsapp", "com.whatsapp"))
     }

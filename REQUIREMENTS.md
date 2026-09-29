@@ -821,7 +821,7 @@ The phone spends energy on its connection only while someone can benefit from it
   queued for the phone in forced Doze acknowledged after 6 s.
 - FR-26.4 **The ad filter** routes only DNS after 5 minutes of screen off (held while media audio
   plays) and full traffic again when the screen comes on; the dialer, the SMS app, the carrier's IMS
-  service, Signal, Threema and Google Play services bypass it entirely. The bypass is built in 0.6.26; the default
+  service, Signal, Threema, Google Play services and the Jellyfin clients (0.6.31) bypass it entirely. The bypass is built in 0.6.26; the default
   dialer and SMS app bypass only when they shipped with the phone. The screen-off route is built in
   0.6.29; "media audio" is the music stream or a call, and sound starting after the narrowing does not
   widen it again (the rebuild would cut the stream), so it narrows at most once per screen-off.

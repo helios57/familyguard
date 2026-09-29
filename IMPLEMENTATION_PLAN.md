@@ -8474,3 +8474,23 @@ earlier; a retry reached the phone by push in 33 s and installed nothing. It run
 the screen-off route included — until someone at the phone installs 0.6.30 or turns off Play
 Protect's scanning; until then its syncs keep reporting the Play Store at night.
 
+
+## Phase 47 — Jellyfin goes around the filter (0.6.31)
+
+The owner's decision of 2026-09-29, taken on the measured cost of screen-on video through the filter
+(~0.17 s CPU per MB, every packet read, parsed and re-sent by this process): *"if videos are that
+expensive, add jellyfin to the whitelist as well"*. `FilterBypass.NAMED` gains the three Jellyfin
+clients — the official `org.jellyfin.mobile`, Findroid (`dev.jdtech.jellyfin`) and Finamp
+(`com.unicornsonlsd.finamp`). The guarantee is structural like the rest of the list: a Jellyfin
+client talks only to the Jellyfin server it is pointed at, here the family's own, and all three are
+open source with no anti-feature on F-Droid (checked against their F-Droid pages 2026-09-29, with
+NewPipe as the positive control that the page does show anti-features). Each name was resolved
+against F-Droid and Play (200 each; an invented name 404 on both).
+
+### 47.1 — tests and calibration
+
+`FilterBypassTest`: *the Jellyfin clients bypass the filter*. Written first and run against the
+unchanged list: **RED** on its own message (*"org.jellyfin.mobile talks only to the family's own
+server and does not bypass"*). Cumulative: **338 probes.** Kotlin unit total 963. Not measured on a
+device: the exclusion call itself is the one `TestAdFreeAppsBypassTheFilterAndThePhoneReportsItsEnergy`
+already proves per package, and the emulator image carries no Jellyfin client.

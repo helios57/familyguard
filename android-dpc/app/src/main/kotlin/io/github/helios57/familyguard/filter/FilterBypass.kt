@@ -29,6 +29,12 @@ object FilterBypass {
         "ch.threema.app.libre",
         "ch.threema.app.work",
         "ch.threema.app.onprem",
+        // Jellyfin — the owner's decision of 2026-09-29: video is the most expensive traffic the filter
+        // carries, and a Jellyfin client talks only to the family's own media server. The official
+        // client, Findroid and Finamp: open source, and F-Droid lists no anti-feature for any of them.
+        "org.jellyfin.mobile",
+        "dev.jdtech.jellyfin",
+        "com.unicornsonlsd.finamp",
         // Google Play services — the owner's decision of 2026-09-28, taken with its risk stated: Google's
         // ads SDK runs inside Play services, so ads it fetches on behalf of other apps are no longer
         // filtered. It is also the package that carries push (FR-26.3).

@@ -128,6 +128,9 @@ Starting and stopping it is FR-27.1; the location reports and the console map ar
   - Google Play services — **the owner's decision, with its risk stated**: Google's ads SDK runs inside
     Play services, so ads *fetched on behalf of other apps* through it are no longer filtered. It is
     also the package that carries push, which is a reason of its own to keep it off the tunnel.
+  - the Jellyfin clients (the official one, Findroid, Finamp) — **the owner's decision of 2026-09-29**,
+    after the screen-on video cost was measured: they talk only to the family's own media server, and
+    F-Droid lists no anti-feature for any of them. Added in 0.6.31.
   - WhatsApp is deliberately **not** on the list: it has shown ads in Status since 2025.
 - **Idle cost of the filter's threads — dropped when building phase 1.** The 500 ms selector timeout
   and the 1 s forwarder timeout are timers without a wake lock: they cost CPU only while the CPU is
