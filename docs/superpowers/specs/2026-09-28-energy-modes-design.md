@@ -1,8 +1,8 @@
 # Energy: an active and a passive mode, a push wake-up, and a lighter ad filter — design
 
 **Status:** approved by the owner on 2026-09-28 (*"Looks good, go"*) and built: the self-report and
-the bypass in 0.6.26, the modes and Live in 0.6.27, the push and the screen-off route in 0.6.29
-(IMPLEMENTATION_PLAN Phases 41, 42 and 44). Decisions marked *(owner)* were the owner's; where the
+the bypass in 0.6.26, the modes and Live in 0.6.27, the push and the screen-off route in 0.6.29, the
+Jellyfin clients on the bypass list in 0.6.31 (IMPLEMENTATION_PLAN Phases 41, 42, 44, 45 and 47). Decisions marked *(owner)* were the owner's; where the
 build departed from this text, the paragraph says so.
 
 ## 1. Why
