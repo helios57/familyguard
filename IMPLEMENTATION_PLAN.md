@@ -8494,3 +8494,12 @@ unchanged list: **RED** on its own message (*"org.jellyfin.mobile talks only to 
 server and does not bypass"*). Cumulative: **338 probes.** Kotlin unit total 963. Not measured on a
 device: the exclusion call itself is the one `TestAdFreeAppsBypassTheFilterAndThePhoneReportsItsEnergy`
 already proves per package, and the emulator image carries no Jellyfin client.
+
+### 47.2 — live
+
+Deployed 2026-09-29 as **0.6.31** (image `sha256:5a48f16e…9f1b`, APK `55523078…a53f`, versionCode 40),
+server first, `/dpc.apk` read back byte-identical. *Update app* was acknowledged by both phones, at
+rest, by push: the Android 13 phone in 21 s, the Android 16 phone in 1 min 35 s, and both report
+0.6.31 with no update error. **Play Protect let this build through on the Android 13 phone**, which
+had refused 0.6.30 — so it now carries the Play Store fix of Phase 46 too. Whether a Jellyfin client
+is installed on either phone is not measured: the phones report usage, not their installed packages.
