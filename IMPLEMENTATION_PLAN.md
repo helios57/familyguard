@@ -8646,3 +8646,11 @@ preinstalled, update, ad filter. The Go source tests read every console script, 
 **20 probes counted, 20 red; two greens recorded and not counted. Cumulative: 362 probes.** Not
 measured: the console on a real phone in the family's hands — the owner's read — and the alarm on an
 Android 10/11 phone (no such phone or emulator image here; lint is the evidence).
+
+### 49.2 — live
+
+Deployed 2026-09-30 as **0.6.33** (image `sha256:2d7fed4f…54f7`, APK `77c2f6ee…3549`, versionCode 42),
+server first, `/dpc.apk` read back byte-identical, the five view scripts served 200. CI ran the new
+Android lint step and it passed. Both phones took the update by push — the Android 16 phone in 3 s,
+the Android 13 phone in 49 s — and report 0.6.33 with no update error; they now show their own
+screens in German. Not measured: the family's read of the new console.
