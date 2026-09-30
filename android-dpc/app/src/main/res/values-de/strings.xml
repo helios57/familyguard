@@ -1,15 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- German for what a CHILD reads (FR-3.10). Only these strings: everything else falls back to the
-     English in values/, which is what an administrator reads. -->
+<!-- German, for everything on the phone: what a child reads (FR-3.10) and, since 2026-09-30, what a
+     parent reads there too — the status screen, recovery and re-linking. The console is German, and
+     it tells a parent to tap buttons by the names this file gives them («Einstellungen öffnen»).
+     Swiss spelling: ss, never ß. -->
 <resources>
-    <string name="why_paused">Deine Eltern haben dein Handy gesperrt. Anrufen und Nachrichten gehen weiter.</string>
+    <string name="why_paused">Deine Eltern haben dein Handy pausiert. Anrufen und Nachrichten gehen weiter.</string>
     <string name="why_quota">Tageslimit erreicht: %1$d von %2$d Minuten benutzt. Ab Mitternacht sind deine Apps wieder frei. Frag deine Eltern, wenn du mehr Zeit brauchst.</string>
-    <string name="why_bedtime">Nachtruhe bis %1$s. Bis dann sind deine Apps pausiert.</string>
+    <string name="why_bedtime">Schlafenszeit bis %1$s. Bis dann sind deine Apps pausiert.</string>
     <string name="why_app">Diese App ist von deinen Eltern gesperrt, hat ihr eigenes Limit aufgebraucht oder wartet auf ihre Freigabe. In FamilyGuard siehst du, was davon.</string>
     <string name="limits_channel">Bildschirmzeit</string>
-    <string name="limits_title_paused">Handy gesperrt</string>
+    <string name="limits_title_paused">Handy pausiert</string>
     <string name="limits_title_quota">Tageslimit erreicht</string>
-    <string name="limits_title_bedtime">Nachtruhe</string>
+    <string name="limits_title_bedtime">Schlafenszeit</string>
     <string name="today_heading">Heute</string>
     <string name="today_used">Bildschirmzeit: %1$d von %2$d Min.</string>
     <string name="today_used_bonus">Bildschirmzeit: %1$d von %2$d Min. (inkl. %3$d Min. extra)</string>
@@ -24,9 +26,9 @@
     <string name="rule_counts">Zählt zum Tageslimit</string>
     <string name="rule_not_counted">Zählt nicht</string>
     <string name="rule_blocked">Von deinen Eltern gesperrt</string>
-    <string name="block_paused">Gesperrt von deinen Eltern</string>
+    <string name="block_paused">Pausiert von deinen Eltern</string>
     <string name="block_quota">Pausiert: Tageslimit erreicht</string>
-    <string name="block_bedtime">Pausiert: Nachtruhe</string>
+    <string name="block_bedtime">Pausiert: Schlafenszeit</string>
     <string name="block_app_limit">Pausiert: eigenes Limit aufgebraucht</string>
     <string name="block_blocked">Von deinen Eltern gesperrt</string>
     <string name="block_pending">Wartet auf die Freigabe deiner Eltern</string>
@@ -68,4 +70,69 @@
     <string name="agenda_optional">(freiwillig)</string>
     <string name="agenda_today_all_day">Heute: %1$s</string>
     <string name="agenda_all_day">(ganztägig)</string>
+
+    <!-- The rest of the phone, for the parent holding it (2026-09-30). -->
+    <string name="admin_description">Wendet die Einstellungen an, die ein Elternteil für dieses Handy gewählt hat. Das Handy lässt sich im Wiederherstellungsmenü jederzeit zurücksetzen.</string>
+    <string name="connection_channel">Verbindung</string>
+    <string name="connection_running">Mit den Familien-Einstellungen verbunden</string>
+    <string name="setup_channel">Einrichtung nötig</string>
+    <string name="siren_channel">Klingeln</string>
+    <string name="siren_title">FamilyGuard lässt dieses Handy klingeln</string>
+    <string name="siren_text">Jemand hat dieses Handy klingeln lassen, damit es gefunden wird. Es hört nach fünf Minuten von selbst auf.</string>
+    <string name="siren_stop">Klingeln stoppen</string>
+    <string name="usage_access_title">Die Bildschirmzeit wird nicht gemessen</string>
+    <string name="usage_access_text">FamilyGuard braucht den Nutzungsdatenzugriff, um zu sehen, wie lange Apps benutzt werden. Ohne ihn zeigt die Bildschirmzeit null und Tageslimits greifen nie. Tippe, um die Einstellung zu öffnen, und schalte FamilyGuard ein.</string>
+    <string name="recovery_title">Dieses Handy entsperren</string>
+    <string name="recovery_explanation">Gib den Wiederherstellungscode aus den Familien-Einstellungen ein. Das Handy wendet die Regeln nicht mehr an, bis es die Familien-Einstellungen das nächste Mal erreicht — dann gilt wieder, was dort eingestellt ist.</string>
+    <string name="recovery_code_hint">Wiederherstellungscode</string>
+    <string name="recovery_submit">Entsperren</string>
+    <string name="recovery_footer">Dieses Handy lässt sich jederzeit in den Einstellungen von Android oder im Wiederherstellungsmodus auf die Werkseinstellungen zurücksetzen. Nichts hier kann das verhindern.</string>
+    <string name="recovery_checking">Wird geprüft…</string>
+    <string name="recovery_released">Entsperrt. Die Regeln sind aus, bis dieses Handy die Familien-Einstellungen das nächste Mal erreicht.</string>
+    <string name="recovery_released_with_problems">Entsperrt, aber nicht alles liess sich ausschalten: %1$s</string>
+    <string name="recovery_already_released">Schon entsperrt. Die Regeln sind aus, bis dieses Handy die Familien-Einstellungen das nächste Mal erreicht.</string>
+    <string name="recovery_empty">Gib zuerst den Code ein.</string>
+    <string name="recovery_rejected_wait">Dieser Code stimmt nicht (%1$d falsch hintereinander). Versuche es in %2$s wieder.</string>
+    <string name="recovery_locked_out">Zu viele falsche Codes. Versuche es in %1$s wieder.</string>
+    <string name="status_heading">Dieses Handy</string>
+    <string name="status_loading">Wird geprüft…</string>
+    <string name="status_row_description_attention">Braucht Aufmerksamkeit. %1$s: %2$s</string>
+    <string name="status_unavailable">Dieses Handy konnte seinen eigenen Zustand nicht lesen.</string>
+    <string name="status_fix">Einstellungen öffnen</string>
+    <string name="status_fix_description">Einstellungen für %1$s öffnen</string>
+    <string name="status_fix_unavailable">Dieses Handy hat für diese Einstellung keinen Bildschirm.</string>
+    <string name="unlinked_title">Dieses Handy ist nicht mehr verbunden</string>
+    <string name="unlinked_text">Family Guard kann nicht mehr an die Familien-Konsole melden, weil sein Einrichtungscode ersetzt wurde. Öffne die Konsole, wähle dieses Handy, tippe auf «Handy ersetzen» und gib den Einrichtungscode hier ein. Auf dem Handy muss nichts zurückgesetzt werden.</string>
+    <string name="relink_heading">Dieses Handy neu verbinden</string>
+    <string name="relink_hint">Einrichtungscode aus der Konsole</string>
+    <string name="relink_explain_linked">Dieses Handy ist verbunden. Hat die Konsole einen neuen Einrichtungscode dafür ausgegeben — nach «Handy ersetzen» oder weil es sich nicht mehr meldet —, tippe diesen Code hier ein, um es neu zu verbinden. Es ändert sich nichts, bis ein Code angenommen wurde.</string>
+    <string name="relink_submit">Handy verbinden</string>
+    <string name="relink_working">Wird verbunden…</string>
+    <string name="relink_done">Verbunden. Das Handy meldet sich wieder bei der Konsole.</string>
+    <string name="relink_refused">Dieser Einrichtungscode wurde nicht angenommen. Ein Code gilt nur einmal und läuft nach 30 Minuten ab — erstelle in der Konsole einen neuen.</string>
+    <string name="relink_deferred">Der Server war nicht erreichbar. Prüfe, ob das Handy online ist, und versuche es nochmals.</string>
+    <string name="filter_channel">Werbefilter</string>
+    <string name="filter_starting">Werbefilter startet…</string>
+    <string name="filter_running">Werbefilter an · %1$d Regeln</string>
+    <string name="filter_off_because">Werbefilter aus — %1$s</string>
+    <string name="filter_not_permitted">dieses Handy hat die Verbindung noch nicht erlaubt</string>
+    <string name="filter_carried_nothing">er hat keinen Verkehr getragen und wurde deshalb ausgeschaltet</string>
+    <string name="filter_off_starting">der Filter startet auf diesem Handy</string>
+    <string name="filter_off_not_started">das Handy sollte den Filter starten und hat es nicht getan</string>
+    <string name="filter_off_refused">Android hat den Start des Filterdienstes abgelehnt (%1$s)</string>
+    <string name="filter_off_revoked">die Verbindung wurde auf dem Handy ausgeschaltet</string>
+    <string name="filter_off_service_stopped">der Filter hat auf dem Handy angehalten</string>
+    <string name="filter_off_no_forwarder">der Filter konnte den Socket nicht öffnen, über den er Anfragen weiterleitet</string>
+    <plurals name="recovery_rejected">
+        <item quantity="one">Dieser Code stimmt nicht (%1$d Mal falsch).</item>
+        <item quantity="other">Dieser Code stimmt nicht (%1$d Mal falsch hintereinander).</item>
+    </plurals>
+    <plurals name="recovery_wait_minutes">
+        <item quantity="one">%d Minute</item>
+        <item quantity="other">%d Minuten</item>
+    </plurals>
+    <plurals name="recovery_wait_seconds">
+        <item quantity="one">%d Sekunde</item>
+        <item quantity="other">%d Sekunden</item>
+    </plurals>
 </resources>

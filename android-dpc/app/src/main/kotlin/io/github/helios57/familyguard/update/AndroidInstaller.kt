@@ -1,5 +1,6 @@
 package io.github.helios57.familyguard.update
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -163,7 +164,11 @@ class AndroidInstaller(private val context: Context) {
      * Removes a package and waits for the platform to say what happened.
      *
      * @return null when the platform reported success, otherwise what it said.
+     *
+     * No DELETE_PACKAGES: a device owner's PackageInstaller may uninstall without it, which is the
+     * only way this app ever runs. Lint cannot know the app is the device owner.
      */
+    @SuppressLint("MissingPermission")
     fun uninstallAwaiting(packageName: String): String? =
         awaitStatus(ACTION_MANAGED_UNINSTALL, packageName) { sender ->
             context.packageManager.packageInstaller.uninstall(packageName, sender)

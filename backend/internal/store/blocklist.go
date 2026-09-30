@@ -13,6 +13,8 @@ import (
 // DefaultBlockedPackages is the curated set: software that arrives on a phone without anybody
 // choosing it, and that no child in a family running this needs.
 //
+// The reasons are German because the console that shows them is (2026-09-30).
+//
 // It ships in the binary rather than as seeded rows, next in kind to policy.DefaultCriticalPackages
 // and policy.YouTubePackages. Migration 0005 records why in full; the short version is that a
 // deployable schema plants no rows (NFR-5), and a list in code reaches the deployment that already
@@ -46,19 +48,19 @@ import (
 //	                           the category is safe: the guard is a backstop, not a licence.
 var DefaultBlockedPackages = []FamilyBlockedPackage{
 	{PackageName: "com.facebook.appmanager", Label: "Meta App Manager",
-		Reason: "Second half of the Meta preinstall machinery."},
+		Reason: "Zweiter Teil der vorinstallierten Meta-Software."},
 	{PackageName: "com.facebook.katana", Label: "Facebook",
-		Reason: "Social network, preinstalled by the vendor."},
+		Reason: "Soziales Netzwerk, vom Hersteller vorinstalliert."},
 	{PackageName: "com.facebook.services", Label: "Meta Services",
-		Reason: "Background Meta service shipped with the preinstall."},
+		Reason: "Meta-Hintergrunddienst, mit der Vorinstallation geliefert."},
 	{PackageName: "com.facebook.system", Label: "Meta App Installer",
-		Reason: "Reinstalls Facebook. Blocking the app without this one does not hold."},
+		Reason: "Installiert Facebook wieder. Ohne diesen Eintrag hält die Sperre der App nicht."},
 	{PackageName: "com.microsoft.appmanager", Label: "Link to Windows",
-		Reason: "Vendor preinstall that mirrors the phone to a PC."},
+		Reason: "Vorinstalliert vom Hersteller, spiegelt das Handy auf einen PC."},
 	{PackageName: "com.microsoft.skydrive", Label: "OneDrive",
-		Reason: "Vendor preinstall. Nothing on this phone depends on it."},
+		Reason: "Vorinstalliert vom Hersteller. Nichts auf dem Handy braucht es."},
 	{PackageName: "com.mygalaxy.service", Label: "My Galaxy",
-		Reason: "Samsung promotional service."},
+		Reason: "Werbedienst von Samsung."},
 }
 
 // IsDefaultBlocked reports whether a package belongs to the curated set.

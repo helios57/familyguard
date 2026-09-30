@@ -444,6 +444,16 @@ a device offline when it stops reporting.
   and the provisioning QR legible on a phone. Desktop is the widened case, not the design target.
 - FR-13.3 The console must be installable to the home screen and work over a mobile connection —
   no dependency on a desktop-only input (hover, right-click, keyboard shortcuts).
+- FR-13.5 **One language: German**, Swiss spelling (ss, never ß), 24-hour times — the console and
+  the phone alike, including the phone's screens for the parent holding it (status, recovery,
+  re-linking). The console names a phone's controls by the words the phone shows. Built in 0.6.33.
+- FR-13.6 **What a parent does most is one or two taps from opening the console.** Übersicht shows
+  every child: the state in one word (*Frei*, *Limit erreicht*, *Schlafenszeit*, *Pausiert*), today's
+  time against the limit with the Bonuszeit, **+15 min**, **Pausieren** and **Live** as its buttons,
+  the tasks waiting, and one row per phone; a phone's row opens its sheet with Orten, Klingeln and
+  Bildschirm sperren first. Apps waiting for a decision offer Erlauben and Sperren on the row. Forms
+  that are documents (plan, alarm week, agenda) save through one bar that appears only while
+  something is unsaved, and leaving with unsaved changes asks. Built in 0.6.33.
 - FR-13.4 **The phone states its own condition**, on the recovery screen, to whoever is holding it:
   what it measured today, which policy version it has actually applied, and when it last reached the
   control plane. The console knows only what it sent; a phone that never applied a policy, has not
@@ -639,9 +649,10 @@ child.
   `PARENT_ROLE_CHANGED` with `from` and `to`.
 - FR-20.3 The console offers People & rights to the primary admin: add a person with a role
   (Guardian by default), change a role, remove a person; their own row offers neither. A `GUARDIAN`
-  who signs in sees only the guardian window, in German, whatever link they arrived on: one card per
-  profile with today's time against the limit, why apps are paused, and +15/+30/+60 where there is a
-  limit. The page requests nothing a guardian may not read.
+  who signs in sees only the guardian window — since 0.6.33 that is Übersicht (FR-13.6), without its
+  phone commands — whatever link they arrived on: one card per profile with today's time against the
+  limit, why apps are paused, and +15 (−15, +30, +60 in its sheet) where there is a limit. The page
+  requests nothing a guardian may not read.
 
 ### FR-21 Pause and today's time (phase 2)
 - FR-21.1 A parent or guardian can **pause** a profile's phones: every app the child can open is
@@ -657,10 +668,10 @@ child.
   minutes of extra time is refused; taking more than the day has leaves the day at zero minutes, and
   zero with a limit is a limit reached, never "no limit" — the engine reports the plain limit beside
   the day's quota so no screen can confuse the two. Audited as `BONUS_GRANTED` / `TIME_REDUCED`.
-- FR-21.3 The guardian window offers both: *Sperren* (armed by a first tap, done by a second within
-  five seconds) or *Entsperren*, and −15 · +15 · +30; an admin has the same page as the first tab,
-  *Today*. The phone says so in German: *"Deine Eltern haben dein Handy gesperrt. Anrufen und
-  Nachrichten gehen weiter."* `fgctl pause|unpause`, `fgctl bonus ±n` and the MCP tools
+- FR-21.3 The guardian window offers both: *Pausieren* (armed by a first tap, done by a second within
+  five seconds) or *Fortsetzen*, and −15 · +15 · +30 · +60; an admin has the same page as the first
+  tab, *Übersicht* (until 0.6.33 *Sperren*/*Entsperren* on a separate *Today* tab). The phone says so
+  in German: *"Deine Eltern haben dein Handy pausiert. Anrufen und Nachrichten gehen weiter."* `fgctl pause|unpause`, `fgctl bonus ±n` and the MCP tools
   `pause_profile` and `adjust_time_today` do the same.
 
 ### FR-22 Daily plan and earned time (phase 3)
@@ -676,7 +687,7 @@ bedtime, then the daily budget.
   groups, each with a title, weekdays (a bit set, Monday 1 … Sunday 64), a window `HH:MM`–`HH:MM` on
   one day, 0–1440 minutes and 1–20 tasks (title ≤ 120, note ≤ 200). A group or task sent with its id
   is edited in place and keeps its history; one without is new; one left out is retired, never
-  deleted. Audited as `PLAN_UPDATED`. The console edits it on the Rules tab.
+  deleted. Audited as `PLAN_UPDATED`. The console edits it under *Regeln › Zeit*.
 - FR-22.2 **Reporting** is the child's *Fertig* on the phone's Heute screen
   (`POST /device/tasks/:task/report`): only a task of the phone's own profile, of a group that runs
   today, inside its window, and only with the server reachable. It earns nothing by itself; it asks a
@@ -697,7 +708,7 @@ bedtime, then the daily budget.
   in earned time does not also count against the budget. Nothing is charged while there is no earned
   time left or the profile is in watch-only mode: nothing could pay, and a charge would only become a
   debt against minutes not yet earned (measured on a family phone in watch-only mode, 2026-09-27).
-- FR-22.6 **Bonus apps** are the fifth answer on the Apps tab (rule `BONUS`): suspended whenever no
+- FR-22.6 **Bonus apps** are the fifth answer on the Apps page, *Bonus-App* (rule `BONUS`): suspended whenever no
   earned time is left, whatever the hour — the console says *Paused — no earned time left* (reason
   `EARNED`) — and usable while there is some, even in bedtime or past the limit.
 - FR-22.7 `fgctl plan <child> [--set file.json]` (the document `--json` prints is the one `--set`
@@ -732,7 +743,7 @@ child can stop or snooze but not reschedule.
   notification, and the sound is the same. Nothing on the phone changes the schedule.
 - FR-23.5 **The Heute screen** says the next alarm first: *Wecker: heute 06:30*, *morgen 06:30*, or
   the weekday.
-- FR-23.6 The console's Rules tab has an *Alarm clock* card (the week; one date set to a time or to no
+- FR-23.6 The console's *Regeln › Zeit* has a *Wecker* card (the week; one date set to a time or to no
   alarm; the date changes listed with *Remove*), and a device card says *alarm: notification only*
   when the phone reports that it may not take over the lock screen (`alarm_full_screen: false`).
   `fgctl alarm <child> [--set file.json]`, `fgctl alarm-day <child> <date|today|tomorrow>
@@ -763,9 +774,9 @@ that suspend recurring entries. The phone shows today and tomorrow; the console 
   next item today) and *Morgen* (tomorrow's items, or its holiday), with the place and *(freiwillig)*
   for optional entries. Days are chosen by date on the phone's clock in the profile's timezone, so a
   phone offline past midnight shows the right day and no tomorrow it was not sent.
-- FR-24.6 The console's Rules tab has an *Agenda* card — entries every week or on one date, with
+- FR-24.6 The console's *Regeln › Agenda* has an *Agenda* card — entries every week or on one date, with
   place, from–to and *Optional*, saved as one document, and *This week* below as the server expands
-  it — and the Alarm card a *Not during holidays* switch; the Family tab has *Holidays* (title, first
+  it — and the *Wecker* card a *Nicht in den Ferien* switch; *Familie* has *Ferien* (title, first
   and last day, its length). `fgctl agenda <child> [--set file]`, `fgctl week <child> [--from] [--days]`,
   `fgctl holidays [--set file]` (and `skip_holidays` in `fgctl alarm --set`), and the MCP tools
   `get_agenda`, `set_agenda`, `get_week`, `get_holidays`, `set_holidays` and `set_alarm`'s
@@ -830,7 +841,7 @@ The phone spends energy on its connection only while someone can benefit from it
 - FR-26.5 **The heartbeat reports the energy FamilyGuard spends**: its CPU time, the wake-ups it caused
   by kind, and the time in each mode and filter route. Built in 0.6.26 (CPU, data, wake-ups by kind),
   the mode times in 0.6.27 and the route times in 0.6.29: `GET
-  /devices/:id/energy`, `fgctl energy`, MCP `get_energy`, and the Activity tab's *Energy* card.
+  /devices/:id/energy`, `fgctl energy`, MCP `get_energy`, and the *Energie* card under *Aktivität*.
 
 ### FR-27 Live mode (2026-09-28)
 - FR-27.1 A parent or guardian starts Live for a device from the console (*Live 30 min*), fgctl or MCP,

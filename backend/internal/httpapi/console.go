@@ -35,6 +35,11 @@ var consoleRoutes = map[string]string{
 	"/index.html":           "index.html",
 	"/app.css":              "app.css",
 	"/app.js":               "app.js",
+	"/overview.js":          "overview.js",
+	"/rules.js":             "rules.js",
+	"/apps.js":              "apps.js",
+	"/activity.js":          "activity.js",
+	"/family.js":            "family.js",
 	"/manifest.webmanifest": "manifest.webmanifest",
 	"/icon.svg":             "icon.svg",
 }

@@ -17,8 +17,7 @@ func TestTheAdminKeepsTheAgendaAndHolidaysInTheConsole(t *testing.T) {
 	child := h.newChild(primary.Token, "Mira")
 	h.patchPolicy(primary.Token, child.ID, map[string]any{"timezone": "Europe/Zurich"})
 	b := signInBrowser(t, h, primaryParent)
-	b.eval(`document.querySelector('.tab[data-tab="rules"]').click()`, nil)
-	b.waitFor(`!!document.querySelector('#view .agenda-card button[data-agenda="add"]')`, 15*time.Second, "the agenda card")
+	b.switchTab(t, "rules/agenda", "#view .agenda-card button[data-agenda=\"add\"]")
 
 	// A repeating entry: school, Monday to Friday (the default), 08:00–12:00.
 	b.eval(`document.querySelector('#view .agenda-card button[data-agenda="add"]').click()`, nil)
@@ -39,7 +38,7 @@ func TestTheAdminKeepsTheAgendaAndHolidaysInTheConsole(t *testing.T) {
 	b.eval(`(`+fill+`)(1, { kind: 'SINGLE' })`, nil)
 	b.waitFor(`!!document.querySelectorAll('#view .agenda-entry')[1].querySelector('[data-field="day"]')`, 5*time.Second, "the date field of a one-date entry")
 	b.eval(`(`+fill+`)(1, { title: 'Zahnarzt', day: '2026-10-07', starts_at: '14:00', ends_at: '14:30', optional: true })`, nil)
-	b.eval(`document.querySelector('#view .agenda-card button[data-agenda="save"]').click()`, nil)
+	b.eval(`document.querySelector('#savebar button[data-save="all"]').click()`, nil)
 
 	var saved []agendaEntryDTO
 	deadline := time.Now().Add(10 * time.Second)
@@ -76,11 +75,12 @@ func TestTheAdminKeepsTheAgendaAndHolidaysInTheConsole(t *testing.T) {
 		t.Error("in the week an item's place is drawn on the same line as its title")
 	}
 
-	// ---- the alarm's "not during holidays" ----
+	// ---- the alarm's "not during holidays", on the Zeit page of the same view ----
+	b.switchTab(t, "rules", "#view .alarm-card input[data-alarm=\"skip-holidays\"]")
 	b.eval(`(() => {
 	  const box = document.querySelector('#view .alarm-card input[data-alarm="skip-holidays"]');
 	  box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true }));
-	  document.querySelector('#view .alarm-card button[data-alarm="save"]').click();
+	  document.querySelector('#savebar button[data-save="all"]').click();
 	})()`, nil)
 	deadline = time.Now().Add(10 * time.Second)
 	for {
@@ -128,7 +128,7 @@ func TestTheAdminKeepsTheAgendaAndHolidaysInTheConsole(t *testing.T) {
 	}
 	var listed string
 	b.eval(`document.querySelector('#view .holidays-card').textContent`, &listed)
-	if !strings.Contains(listed, "12 days") {
+	if !strings.Contains(listed, "12 Tage") {
 		t.Errorf("the holiday does not say how long it is: %q", listed)
 	}
 	if len(b.pageErrors) != 0 {
@@ -146,7 +146,7 @@ func TestASaveThatAnswersAfterATabSwitchLeavesTheNewTabIntact(t *testing.T) {
 	child := h.newChild(primary.Token, "Mira")
 	b := signInBrowser(t, h, primaryParent)
 	b.eval(`document.querySelector('.tab[data-tab="rules"]').click()`, nil)
-	b.waitFor(`!!document.querySelector('#view .alarm-card button[data-alarm="save"]')`, 15*time.Second, "the alarm card")
+	b.waitFor(`!!document.querySelector('#view .alarm-card button[data-alarm="day-toggle"]')`, 15*time.Second, "the alarm card")
 	b.eval(`(() => {
 	  // The Family tab's own load is held back, so the save answers while Rules' data is still the
 	  // data in hand and Family is already the view — the order that threw.
@@ -154,7 +154,9 @@ func TestASaveThatAnswersAfterATabSwitchLeavesTheNewTabIntact(t *testing.T) {
 	  window.fetch = (url, opts) => String(url).endsWith('/parents')
 	    ? new Promise((r) => setTimeout(r, 1500)).then(() => real(url, opts))
 	    : real(url, opts);
-	  document.querySelector('#view .alarm-card button[data-alarm="save"]').click();
+	  // Something to save: Monday on.
+	  document.querySelector('#view .alarm-card button[data-alarm="day-toggle"][data-day="0"]').click();
+	  document.querySelector('#savebar button[data-save="all"]').click();
 	  document.querySelector('.tab[data-tab="family"]').click();
 	})()`, nil)
 	b.waitFor(`!!document.querySelector('#view .holidays-card')`, 15*time.Second, "the Family tab")

@@ -50,7 +50,7 @@ func TestTheAdminBuildsADailyPlanInTheConsole(t *testing.T) {
 	  const rows = document.querySelectorAll('#view .plan-task');
 	  const t = rows[1].querySelector('input[data-field="task-title"]'); t.value = 'Klavier üben'; t.dispatchEvent(new Event('input', { bubbles: true }));
 	  const n = rows[1].querySelector('input[data-field="task-note"]'); n.value = '10 min'; n.dispatchEvent(new Event('input', { bubbles: true }));
-	  document.querySelector('#view button[data-plan="save"]').click();
+	  document.querySelector('#view button[data-save="all"]').click();
 	})()`, nil)
 
 	var plan struct {
@@ -79,7 +79,7 @@ func TestTheAdminBuildsADailyPlanInTheConsole(t *testing.T) {
 	b.waitFor(`document.querySelector('#view .plan-group input[data-field="title"]').value === 'Tag'`, 10*time.Second, "the saved plan redrawn")
 	b.eval(`(() => {
 	  const i = document.querySelector('#view .plan-group input[data-field="title"]'); i.value = 'Tagsüber'; i.dispatchEvent(new Event('input', { bubbles: true }));
-	  document.querySelector('#view button[data-plan="save"]').click();
+	  document.querySelector('#view button[data-save="all"]').click();
 	})()`, nil)
 	deadline = time.Now().Add(10 * time.Second)
 	for {
@@ -142,7 +142,7 @@ func TestAGuardianConfirmsTasksAndSeesBonuszeit(t *testing.T) {
 	waitState(cat, "REJECTED")
 
 	card := func(task string) string {
-		return `#view .guardian-card button[data-task="` + task + `"][data-decision="confirm"]`
+		return `#view .child-card button[data-task="` + task + `"][data-decision="confirm"]`
 	}
 	b.waitFor(`!!document.querySelector('`+card(cat)+`')`, 10*time.Second, "the rejected task offered again on the card")
 	b.eval(`document.querySelector('`+card(cat)+`').click()`, nil)
@@ -151,11 +151,11 @@ func TestAGuardianConfirmsTasksAndSeesBonuszeit(t *testing.T) {
 	b.eval(`document.querySelector('`+card(piano)+`').click()`, nil)
 	waitState(piano, "CONFIRMED")
 
-	b.waitFor(`(document.querySelector('#view .guardian-card .earned') || {}).textContent?.includes('Bonuszeit: 30 min')`,
+	b.waitFor(`(document.querySelector('#view .child-card .earned') || {}).textContent?.includes('Bonuszeit: 30 min')`,
 		10*time.Second, "the card to show 30 minutes of Bonuszeit")
 	// When it runs out, as a German reader says a day — never the ISO date the API carries.
 	var earnedText string
-	b.eval(`document.querySelector('#view .guardian-card .earned').textContent`, &earnedText)
+	b.eval(`document.querySelector('#view .child-card .earned').textContent`, &earnedText)
 	if !regexp.MustCompile(`davon bis (Mo|Di|Mi|Do|Fr|Sa|So) \d{1,2}\.\d{1,2}\.$`).MatchString(earnedText) {
 		t.Errorf("the Bonuszeit line does not say when it expires as a day: %q", earnedText)
 	}
@@ -187,7 +187,7 @@ func TestTheAppsTabMarksABonusApp(t *testing.T) {
 	}}).expect(http.StatusOK)
 	b := signInBrowser(t, h, primaryParent)
 	b.eval(`document.querySelector('.tab[data-tab="apps"]').click()`, nil)
-	b.waitFor(`Array.from(document.querySelectorAll('#view li')).some((li) => li.textContent.includes('`+pkgMovies+`') && li.querySelector('.seg'))`,
+	b.waitFor(`!!document.querySelector('#view li[data-package="`+pkgMovies+`"] [data-rule-chip]')`,
 		15*time.Second, "the app's row")
 	// The browser's own answer to the PUT is held back, so the server holds the rule before the page
 	// has redrawn — the order CI's slower browser produced three times in a row, and the one a test
@@ -198,7 +198,7 @@ func TestTheAppsTabMarksABonusApp(t *testing.T) {
 	    ? real(url, opts).then((r) => new Promise((ok) => setTimeout(() => ok(r), 800)))
 	    : real(url, opts);
 	})()`, nil)
-	b.eval(clickCategory(pkgMovies, "Bonus app"), nil)
+	clickCategory(b, pkgMovies, "BONUS")
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		var rules struct {
@@ -218,14 +218,14 @@ func TestTheAppsTabMarksABonusApp(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("'Bonus app' stored %q, want BONUS", found)
+			t.Fatalf("'Bonus-App' stored %q, want BONUS", found)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	// The row redraws when the page has its answer, which can be after the server holds the rule:
 	// waited for, not read once.
 	row := `Array.from(document.querySelectorAll('#view li')).find((li) => li.textContent.includes('` + pkgMovies + `'))`
-	b.waitFor(`(`+row+` || {}).textContent?.includes('earned time')`, 10*time.Second, "the bonus app's row to say it runs on earned time")
+	b.waitFor(`(`+row+` || {}).textContent?.includes('Bonuszeit')`, 10*time.Second, "the bonus app's row to say it runs on earned time")
 }
 
 // A bonus app with no earned time left is paused whatever the hour, and both the server's day view
@@ -260,7 +260,7 @@ func TestABonusAppWithoutEarnedTimeSaysWhyItIsPaused(t *testing.T) {
 	b.switchTab(t, "activity", "#view .app-bars")
 	var text string
 	b.eval(`document.querySelector('#view .app-bars > li').textContent`, &text)
-	for _, must := range []string{"Bonus app", "runs only on earned time", "now: Paused — no earned time left"} {
+	for _, must := range []string{"Bonus-App", "läuft nur mit Bonuszeit", "jetzt: Pausiert — keine Bonuszeit mehr"} {
 		if !strings.Contains(text, must) {
 			t.Errorf("the bonus app's row does not say %q: %q", must, text)
 		}

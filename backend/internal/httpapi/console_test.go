@@ -45,6 +45,11 @@ var wantContentType = map[string]string{
 	"/index.html":           "text/html",
 	"/app.css":              "text/css",
 	"/app.js":               "text/javascript",
+	"/overview.js":          "text/javascript",
+	"/rules.js":             "text/javascript",
+	"/apps.js":              "text/javascript",
+	"/activity.js":          "text/javascript",
+	"/family.js":            "text/javascript",
 	"/manifest.webmanifest": "application/manifest+json",
 	"/icon.svg":             "image/svg+xml",
 }

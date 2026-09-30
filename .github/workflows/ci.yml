@@ -104,6 +104,13 @@ jobs:
         working-directory: android-dpc
       - name: Unit tests, counted from the JUnit XML
         run: tests/run_all.sh android-unit
+      # Android lint, errors only (warnings do not fail it). It is here because it had found a crash
+      # nobody else had: the alarm clock asked for VibratorManager, which does not exist before
+      # Android 12, on an app whose floor is Android 10 — an error lint printed and nothing ran.
+      # Deliberate exceptions are suppressed at their line with the reason beside them.
+      - name: Android lint
+        run: ./gradlew --console=plain --no-daemon :app:lintDebug
+        working-directory: android-dpc
       # The XML is the readable artifact of this gate. Uploaded on failure as well as success,
       # because the run that failed is the one worth reading.
       - name: Upload the test results

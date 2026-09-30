@@ -1,6 +1,8 @@
 # Console redesign — design
 
-**Status:** proposed 2026-09-30, for the owner's review. The owner asked: *"I want the console to be
+**Status:** approved 2026-09-30 (*"Continue till it's finished, don't wait all the time or ask me,
+just do it but good"*) and built as 0.6.33 — IMPLEMENTATION_PLAN Phase 49; where the build departed
+from this text, the plan's *Rulings* say so. The owner asked: *"I want the console to be
 enhanced for mobile usage, the ux and ui needs massive enhancement. Also the desktop version need
 enhancement. Optimize it"*. The owner's decision: the whole console in German (Swiss spelling, no ß,
 24-hour times).

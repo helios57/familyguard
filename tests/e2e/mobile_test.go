@@ -7,8 +7,8 @@ package e2e
 // declares `--tap: 44px`, the manifest would install. Those are worth having and they are all
 // satisfiable by a page that is unusable on a phone. Only a browser can answer whether the thumb
 // has 44 px to hit, whether the page scrolls sideways, whether the top of a view is reachable or
-// parked under the header, and whether the drawer that holds the whole navigation on a phone can be
-// opened at all.
+// parked under the header, and whether the bar that holds the whole navigation on a phone is pinned
+// where a thumb can reach it.
 //
 // The data below is seeded through the real API before anything is measured, because an empty
 // console lays out perfectly: the overflow this catches comes from a long device name, a package
@@ -272,45 +272,45 @@ func formatOverflow(list []renderedOverflow) string {
 // instantly, and the measurement that followed was of the previous view under the new one's name.
 // The provisioning subtest found it — it went looking for a "Setup QR" button and was handed the
 // family view's Remove / Rename / Sign out.
-// It also navigates the way a thumb does. Below 900px the navigation lives inside a closed
-// <dialog>, and `.click()` on an element in one still follows the link — so a test that skipped the
-// menu button would keep passing after the button stopped opening anything, which is the whole
-// navigation on a phone. Opening the drawer first is not ceremony; it is the part under test.
+// It also navigates the way a thumb does: through the link in the navigation, which it first
+// requires to be visible — a link that is in the DOM but off screen still follows on `.click()`,
+// and a test that did not look would keep passing after the bar stopped being reachable.
 func (b *browser) switchTab(t *testing.T, tab, ready string) {
 	t.Helper()
+	// A sub-page ("rules/agenda") is reached the way a parent reaches it: the view's own link in
+	// the navigation, then the sub-page's link on that view.
+	view, sub, _ := strings.Cut(tab, "/")
 	b.eval(fmt.Sprintf(`(() => {
   const marker = document.createElement('div');
   marker.id = 'stale-view-marker';
   document.getElementById('view').appendChild(marker);
-  const menu = document.getElementById('menu-open');
   const shown = (e) => {
     const cs = getComputedStyle(e);
     const r = e.getBoundingClientRect();
     return cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0 && r.height > 0;
   };
-  // Already here. Clicking the tab you are on changes no hash, fires no hashchange and re-renders
-  // nothing, so the marker below would never clear and this helper would time out after 20 s
-  // saying the view was never rendered afresh — a sentence about a broken page describing a no-op
-  // click. Two consecutive subtests on one tab is an ordinary thing to write, so the helper
-  // handles it rather than every caller having to know which tab the one before it left on.
-  // The menu is deliberately left shut on this path: opening the drawer is only a way to REACH the
-  // link, and on this path there is no link to click — the drawer would stay open over whatever
-  // the caller measures next.
+  // Already here. Clicking the link you are on changes no hash, fires no hashchange and re-renders
+  // nothing, so the marker would never clear and this helper would time out saying the view was
+  // never rendered afresh — a sentence about a broken page describing a no-op click.
   if (location.hash === '#/%s') { refresh(); return; }
-  if (shown(menu)) menu.click();
   const link = document.querySelector('.tab[data-tab=%q]');
-  if (!shown(link)) throw new Error('the %q link is not visible even after opening the menu');
-  link.click();
-})()`, tab, tab, tab), nil)
+  if (!link || !shown(link)) throw new Error('the %q link is not visible');
+  if (location.hash.split('/')[1] !== %q || %q === '') link.click();
+})()`, tab, view, view, view, sub), nil)
+	if sub != "" {
+		b.waitFor(fmt.Sprintf("location.hash.startsWith('#/%s') && document.querySelector('.subtabs a[data-sub=%q]') !== null", view, sub),
+			20*time.Second, "the "+view+" view's sub-pages")
+		b.eval(fmt.Sprintf(`document.querySelector('.subtabs a[data-sub=%q]').click()`, sub), nil)
+	}
 	b.waitFor(fmt.Sprintf(
 		"location.hash === '#/%s' && document.getElementById('stale-view-marker') === null && "+
 			"document.querySelector(%q) !== null", tab, ready),
 		20*time.Second, "the "+tab+" view to be rendered afresh")
 }
 
-// press sends one key to the page. Used for Escape, which is the drawer behaviour that comes from
+// press sends one key to the page. Used for Escape, which is the sheet behaviour that comes from
 // <dialog> rather than from our code — and is therefore the one that silently disappears the day
-// somebody reimplements the drawer as a <div>.
+// somebody reimplements the sheet as a <div>.
 func (b *browser) press(key string, code int) {
 	for _, kind := range []string{"rawKeyDown", "keyUp"} {
 		b.call("Input.dispatchKeyEvent", map[string]any{
@@ -467,8 +467,10 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 		"both children to appear in the switcher")
 
 	for _, screen := range []struct{ tab, ready string }{
-		{"home", "#view .card"},
+		{"overview", "#view .child-card"},
 		{"rules", "#view .switch"},
+		{"rules/protection", "#view .switch"},
+		{"rules/agenda", "#view .agenda-card"},
 		{"apps", "#view .list li"},
 		{"activity", "#view .card"},
 		{"family", "#view .list li"},
@@ -552,172 +554,86 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 		})
 	}
 
-	// The drawer IS the navigation below 900px. Everything above measures screens it has already
-	// been used to reach, which proves it opens; this proves the rest of the contract — that it is
-	// modal, that the links are only reachable through it, that Escape closes it, and that
-	// following a link does not leave it sitting open over the page it just navigated to.
-	t.Run("drawer", func(t *testing.T) {
+	// The bottom bar IS the navigation below 900px: one element, `#mainnav`, pinned to the bottom
+	// edge where a thumb reaches it. Everything above measures screens it has already been used to
+	// reach, which proves the links work; this proves the rest of the contract — that it is pinned,
+	// that it holds every destination at full size, that it covers neither the last thing on a long
+	// page nor the toast that reports what a tap did, and that following a link goes there.
+	t.Run("bottom bar", func(t *testing.T) {
 		defer b.focus(t)()
-		// Routed by setting the hash rather than through switchTab, which needs the menu button this
-		// subtest is about to check for. Reaching the screen through the thing under test would make
-		// a missing button fail as "the home link is not visible" and never reach the assertion that
-		// names the cause.
-		b.eval("location.hash = '#/home'", nil)
-		b.waitFor("location.hash === '#/home' && document.querySelector('#view .card') !== null",
-			20*time.Second, "the home view")
+		// Routed by setting the hash rather than through switchTab, which uses the bar under test.
+		b.eval("location.hash = '#/overview'", nil)
+		b.waitFor("location.hash === '#/overview' && document.querySelector('#view .child-card') !== null",
+			20*time.Second, "the overview")
 
-		const visibleJS = `const shown = (e) => {
+		var bar struct {
+			ScrollHeight    float64 `json:"scrollHeight"`
+			InnerHeight     float64 `json:"innerHeight"`
+			BottomAtTop     float64 `json:"bottomAtTop"`
+			TopAtEnd        float64 `json:"topAtEnd"`
+			LastBottomAtEnd float64 `json:"lastBottomAtEnd"`
+			VisibleTabs     int     `json:"visibleTabs"`
+			ToastBottom     float64 `json:"toastBottom"`
+			BarTop          float64 `json:"barTop"`
+		}
+		b.eval(`(() => {
+  const nav = document.getElementById('mainnav');
+  const shown = (e) => {
     const cs = getComputedStyle(e);
     const r = e.getBoundingClientRect();
-    return cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0 && r.height > 0;
-  };`
-
-		var shut struct {
-			Open        bool `json:"open"`
-			VisibleTabs int  `json:"visibleTabs"`
-			MenuVisible bool `json:"menuVisible"`
-		}
-		b.eval(`(() => {
-  `+visibleJS+`
-  return {
-    open: document.getElementById('drawer').open,
-    visibleTabs: [...document.querySelectorAll('.tab')].filter(shown).length,
-    menuVisible: shown(document.getElementById('menu-open')),
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0 && r.height > 0
+      && r.bottom <= window.innerHeight + 0.5 && r.top >= -0.5;
   };
-})()`, &shut)
-
-		if !shut.MenuVisible {
-			t.Fatal("there is no visible menu button on a phone, and the navigation lives behind " +
-				"it — so every screen except the one that happens to load is unreachable")
-		}
-		if shut.Open {
-			t.Error("the drawer is already open before anything was tapped")
-		}
-		if shut.VisibleTabs != 0 {
-			t.Errorf("%d navigation link(s) are visible in the header on a %d px screen while the "+
-				"drawer is shut. At this width the header holds the menu button and the child "+
-				"being looked at; links in it are the two-navigations problem the drawer exists "+
-				"to avoid", shut.VisibleTabs, phoneWidth)
-		}
-
-		b.eval("document.getElementById('menu-open').click()", nil)
-		b.waitFor("document.getElementById('drawer').open", 10*time.Second, "the drawer to open")
-		// Open is not the same as arrived. The drawer slides in over 0.16s, and measuring during
-		// that reports the whole menu hanging off the left edge of the screen — 25 elements at
-		// x -310…0, which reads exactly like a layout that does not fit. Waiting on the geometry the
-		// assertions are about, rather than on a duration, keeps this from being a stopwatch race.
-		b.waitFor("document.getElementById('drawer').getBoundingClientRect().left > -0.5",
-			5*time.Second, "the drawer to finish sliding in")
-
-		var open struct {
-			VisibleTabs int     `json:"visibleTabs"`
-			Width       float64 `json:"width"`
-			Expanded    string  `json:"expanded"`
-			Modal       bool    `json:"modal"`
-			FirstTabTop float64 `json:"firstTabTop"`
-		}
-		b.eval(`(() => {
-  `+visibleJS+`
-  const d = document.getElementById('drawer');
-  const tabs = [...document.querySelectorAll('#drawer-nav .tab')];
+  // Pinned is measured at the TOP of a long page: a bar that merely flows at the end of the
+  // content also sits at the bottom edge once you have scrolled there, which is the moment a
+  // check would pass having measured nothing.
+  window.scrollTo(0, 0);
+  const atTop = nav.getBoundingClientRect();
+  window.scrollTo(0, document.scrollingElement.scrollHeight);
+  const atEnd = nav.getBoundingClientRect();
+  const kids = [...document.querySelectorAll('#view > *')];
+  const last = kids.length ? kids[kids.length - 1].getBoundingClientRect().bottom : 0;
+  toast('Messung');
+  const t = document.getElementById('toast').getBoundingClientRect();
+  window.scrollTo(0, 0);
   return {
-    visibleTabs: [...document.querySelectorAll('.tab')].filter(shown).length,
-    width: d.getBoundingClientRect().width,
-    expanded: document.getElementById('menu-open').getAttribute('aria-expanded'),
-    modal: d.matches(':modal'),
-    firstTabTop: tabs.length ? Math.min(...tabs.map(e => e.getBoundingClientRect().top)) : -1,
+    scrollHeight: document.scrollingElement.scrollHeight,
+    innerHeight: window.innerHeight,
+    bottomAtTop: atTop.bottom,
+    topAtEnd: atEnd.top,
+    lastBottomAtEnd: last,
+    visibleTabs: [...nav.querySelectorAll('.tab')].filter(shown).length,
+    toastBottom: t.bottom,
+    barTop: atTop.top,
   };
-})()`, &open)
+})()`, &bar)
 
-		if open.VisibleTabs != consoleDestinations {
-			t.Errorf("the open drawer shows %d of the %d navigation links", open.VisibleTabs, consoleDestinations)
+		if bar.ScrollHeight < bar.InnerHeight+80 {
+			t.Fatalf("the overview is %.0f px in a %.0f px viewport: nothing scrolls, so whether the "+
+				"bar is pinned is NOT MEASURED — the seed has to fill more than a screen",
+				bar.ScrollHeight, bar.InnerHeight)
 		}
-		if open.Width > phoneWidth+0.5 {
-			t.Errorf("the drawer is %.0f px wide on a %d px screen, so it is not a drawer — it is "+
-				"a page with no way back to the one underneath", open.Width, phoneWidth)
+		if bar.BottomAtTop < bar.InnerHeight-0.5 || bar.BottomAtTop > bar.InnerHeight+0.5 {
+			t.Errorf("at the top of a long page the navigation ends at %.0f in a %.0f px viewport: "+
+				"it is not pinned to the bottom edge, so the destinations are only reachable after "+
+				"scrolling to the end", bar.BottomAtTop, bar.InnerHeight)
 		}
-		if open.Expanded != "true" {
-			t.Errorf("the menu button's aria-expanded is %q while the drawer is open; a screen "+
-				"reader is told the menu is still shut", open.Expanded)
+		if bar.VisibleTabs != consoleDestinations {
+			t.Errorf("the bottom bar shows %d of the %d destinations on screen", bar.VisibleTabs, consoleDestinations)
 		}
-
-		// The same claim again, with the race that broke it made deterministic.
-		//
-		// `dialog.close()` fires `close` as a QUEUED TASK, so closing and reopening inside one task
-		// delivers the close event while the drawer is open again — which is what a parent does by
-		// picking a destination (the drawer closes) and reaching for the menu once more. The check
-		// above catches that roughly never: it went red once in CI, on a tree whose identical suite
-		// had been green minutes before, and green everywhere else. A guard that fires one time in
-		// many is a guard that gets re-run rather than read, so the ordering is forced here instead
-		// of waited for.
-		//
-		// The counter is the positive control. Without it a `close` event that never arrived would
-		// leave aria-expanded at "true" and this would pass having tested nothing.
-		b.eval(`(() => {
-  window.__closeEvents = 0;
-  document.getElementById('drawer').addEventListener('close', () => { window.__closeEvents++; });
-  closeDrawer();
-  openDrawer();
-})()`, nil)
-		b.waitFor("window.__closeEvents > 0", 5*time.Second,
-			"the drawer's close event to be delivered after the reopen")
-
-		var raced struct {
-			Open     bool   `json:"open"`
-			Expanded string `json:"expanded"`
+		if bar.LastBottomAtEnd > bar.TopAtEnd+0.5 {
+			t.Errorf("scrolled to the end, the last card ends at %.0f and the bar starts at %.0f: "+
+				"the bottom %.0f px of every long page is underneath the navigation and cannot be "+
+				"scrolled out from behind it", bar.LastBottomAtEnd, bar.TopAtEnd, bar.LastBottomAtEnd-bar.TopAtEnd)
 		}
-		b.eval(`({
-  open: document.getElementById('drawer').open,
-  expanded: document.getElementById('menu-open').getAttribute('aria-expanded'),
-})`, &raced)
-		if !raced.Open {
-			t.Error("the drawer did not reopen, so the close-then-open ordering was not exercised")
-		} else if raced.Expanded != "true" {
-			t.Errorf("after closing and reopening the drawer in one task, aria-expanded is %q "+
-				"while the drawer is open: the queued close event overwrote the open state", raced.Expanded)
-		}
-		// :modal is what buys the focus trap and the Escape key from the platform instead of from a
-		// key handler somebody has to keep right. A drawer that is open but not modal leaves the
-		// page behind it focusable, so tabbing walks out of the menu into content nobody can see.
-		if !open.Modal {
-			t.Error("the drawer is open but not modal: focus can leave it into the page behind, " +
-				"and none of the dialog behaviour below is coming from the platform")
-		}
-		// Moving the navigation to the top costs one-handed reach: the ☰ is in the corner furthest
-		// from a thumb. The drawer is allowed to cost that ONCE, for the opening tap. If its
-		// destinations then sit at the top of the drawer too, every navigation is a full-screen
-		// stretch and the tab bar was strictly better. So the links must land in the lower part
-		// of the screen — the band the tab bar used to occupy.
-		if reach := float64(phoneHeight) * 0.35; open.FirstTabTop < reach {
-			t.Errorf("the drawer's first destination starts %.0f px down a %d px screen, above the "+
-				"%.0f px mark: the destinations are not in the drawer's lower half, so reaching "+
-				"them one-handed is a full-screen stretch on every navigation and not just on the "+
-				"tap that opened the menu", open.FirstTabTop, phoneHeight, reach)
+		if bar.ToastBottom > bar.BarTop+0.5 {
+			t.Errorf("the toast ends at %.0f and the bar starts at %.0f: the one line that says "+
+				"whether a tap worked is drawn underneath the navigation", bar.ToastBottom, bar.BarTop)
 		}
 
-		b.measure(t, "drawer").check(t, "drawer")
-
-		// Escape and the button's state are asserted as ONE condition, because they do not happen at
-		// the same instant: <dialog> queues its `close` event, so `open` is already false for a beat
-		// before the listener that clears aria-expanded runs. Sampling the attribute the moment the
-		// dialog closes is a race — it passed run after run in isolation and went red inside the
-		// full suite. Waiting on the pair still fails, loudly and by name, if nothing ever clears it.
-		b.press("Escape", 27)
-		b.waitFor("!document.getElementById('drawer').open && "+
-			"document.getElementById('menu-open').getAttribute('aria-expanded') === 'false'",
-			10*time.Second,
-			"Escape to close the drawer and the menu button's state to follow it")
-
-		// Following a link must close it. A drawer left open over the page it just navigated to is
-		// the single most common defect in hand-rolled ones, and it is invisible to any check that
-		// only asks whether the route changed.
-		b.eval("document.getElementById('menu-open').click()", nil)
-		b.waitFor("document.getElementById('drawer').open", 10*time.Second, "the drawer to reopen")
-		b.waitFor("document.getElementById('drawer').getBoundingClientRect().left > -0.5",
-			5*time.Second, "the drawer to finish sliding in again")
 		b.eval(`document.querySelector('.tab[data-tab="rules"]').click()`, nil)
-		b.waitFor("location.hash === '#/rules' && !document.getElementById('drawer').open",
-			10*time.Second, "the drawer to close behind the link it followed")
+		b.waitFor(`location.hash === '#/rules' && document.querySelector('.tab[data-tab="rules"]').getAttribute('aria-current') === 'page'`,
+			10*time.Second, "the Regeln link to open Regeln and mark itself current")
 	})
 
 	// The sheet is the only full-screen surface, and it is where the QR a parent has to point a
@@ -727,10 +643,10 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 		// Waited for by the button this subtest is about to click, not by "a card exists". Scoped
 		// to the phone that has never enrolled: on the enrolled one the same button revokes the
 		// device, and that path is measured in "replace phone" below.
-		b.switchTab(t, "home", "#view .card")
-		b.waitFor(deviceCardButton("The spare phone", `/set up|qr|provision/i`)+" !== null",
-			20*time.Second, "the set-up button on the spare phone's card")
-		b.eval(deviceCardButton("The spare phone", `/set up|qr|provision/i`)+".click()", nil)
+		b.switchTab(t, "overview", "#view .child-card")
+		b.waitFor(deviceCardButton("The spare phone", `/einrichten/i`)+" !== null",
+			20*time.Second, "the set-up button on the spare phone's row")
+		b.eval(deviceCardButton("The spare phone", `/einrichten/i`)+".click()", nil)
 		b.waitFor("document.getElementById('sheet').open", 20*time.Second, "the provisioning sheet")
 		b.waitFor("document.querySelector('#sheet-body svg') !== null", 20*time.Second, "the QR to render")
 
@@ -755,7 +671,9 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 			t.Errorf("the provisioning QR renders %.0f px wide on a %d px screen; a camera has to "+
 				"resolve 25 modules across that", sheet.QRWidth, phoneWidth)
 		}
-		b.eval("document.getElementById('sheet-close').click()", nil)
+		// Escape closes it, and that comes from <dialog>, not from a key handler of ours.
+		b.press("Escape", 27)
+		b.waitFor("!document.getElementById('sheet').open", 10*time.Second, "Escape to close the sheet")
 	})
 
 	// FR-1.7, rendered. The single most expensive button in this console: on an enrolled phone it
@@ -770,17 +688,19 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 	// Chrome cannot see past it), and backing out leaves the phone enrolled.
 	t.Run("replace phone", func(t *testing.T) {
 		defer b.focus(t)()
-		b.switchTab(t, "home", "#view .card")
+		b.switchTab(t, "overview", "#view .child-card")
+		openPhoneSheet(t, b, enrolledPhoneName)
 
 		var label string
-		b.eval(deviceCardButton(enrolledPhoneName, `/replace|set up|qr|provision/i`)+".textContent.trim()", &label)
-		if !strings.Contains(strings.ToLower(label), "replace") {
+		b.eval(`document.querySelector('#sheet-body [data-action="replace"]').textContent.trim()`, &label)
+		if !strings.Contains(strings.ToLower(label), "ersetzen") {
 			t.Errorf("the enrolled phone's provisioning button reads %q; it revokes the device, and "+
 				"a label that reads like \"show me that code again\" is what disconnected the first "+
 				"real phone", label)
 		}
 
-		b.eval(deviceCardButton(enrolledPhoneName, `/replace|set up|qr|provision/i`)+".click()", nil)
+		b.eval(`document.querySelector('#sheet-body [data-action="replace"]').click()`, nil)
+		b.waitFor("document.getElementById('sheet').dataset.kind === 'confirm'", 20*time.Second, "the confirmation in the sheet")
 		b.waitFor("document.getElementById('sheet').open", 20*time.Second, "the confirmation sheet")
 		// No QR: this is the confirmation, and a sheet that went straight to the code would mean
 		// the device had already been revoked by the time the parent read anything.
@@ -807,7 +727,7 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 		// happens to the phone; the re-link sentence is what it costs to undo — somebody has to
 		// physically pick the phone up. A sheet that mentioned only the second would read as
 		// reassurance for an action that is still destructive.
-		for _, phrase := range []string{"revokes", "re-link", "older build"} {
+		for _, phrase := range []string{"widerruft", "neu verbinden", "älteren version"} {
 			if !strings.Contains(strings.ToLower(sheet.Body), phrase) {
 				t.Errorf("the confirmation never says %q, so the parent is not told what this "+
 					"costs. It reads: %q", phrase, sheet.Body)
@@ -831,11 +751,13 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 		// is whether the phone is still enrolled, and only a fresh fetch can tell.
 		b.eval("(async () => { await refresh(); return true; })()", nil)
 
+		// An enrolled phone's row is the button that opens its sheet; a phone that is not enrolled
+		// has a row with an Einrichten button instead.
 		var stillEnrolled bool
-		b.eval(deviceCardButton(enrolledPhoneName, `/replace/i`)+" !== null", &stillEnrolled)
+		b.eval(`[...document.querySelectorAll('#view button.device-row')].some((r) => r.textContent.includes(`+jsString(enrolledPhoneName)+`))`, &stillEnrolled)
 		if !stillEnrolled {
-			t.Error("cancelling the confirmation revoked the phone anyway: its card no longer offers " +
-				"Replace, so the console believes it is not enrolled")
+			t.Error("cancelling the confirmation revoked the phone anyway: its row no longer opens " +
+				"the phone sheet, so the console believes it is not enrolled")
 		}
 	})
 
@@ -858,7 +780,7 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 		}
 		b.eval(`(() => {
   const card = [...document.querySelectorAll('#view .card')]
-    .find((c) => /blocked for everyone/i.test(c.querySelector('h2')?.textContent || ''));
+    .find((c) => /für alle gesperrt/i.test(c.querySelector('h2')?.textContent || ''));
   if (!card) throw new Error('no family blocklist card on the apps view: ' +
     [...document.querySelectorAll('#view .card h2')].map((h) => h.textContent.trim()).join(' | '));
   return {
@@ -890,13 +812,13 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 		var state string
 		b.eval(`(() => {
   const card = [...document.querySelectorAll('#view .card')]
-    .find((c) => /blocked for everyone/i.test(c.querySelector('h2')?.textContent || ''));
+    .find((c) => /für alle gesperrt/i.test(c.querySelector('h2')?.textContent || ''));
   const row = [...card.querySelectorAll('li')]
     .find((li) => /com\.facebook\.katana/.test(li.textContent));
   if (!row) throw new Error('no com.facebook.katana row in the blocklist card');
   return [...row.querySelectorAll('.label small')].map((s) => s.textContent.trim()).join(' ~ ');
 })()`, &state)
-		if !strings.Contains(state, "Hidden on the phone") {
+		if !strings.Contains(state, "Auf dem Handy versteckt") {
 			t.Errorf("the phone reports com.facebook.katana hidden and the blocklist card says %q; "+
 				"a parent reading this cannot tell a block that worked from one that never reached "+
 				"the phone", state)
@@ -907,11 +829,11 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 		defer b.focus(t)()
 		b.switchTab(t, "apps", "#view .list li")
 		b.waitFor(`[...document.querySelectorAll('#view button')]`+
-			`.some((x) => /catalog|add an app/i.test(x.textContent))`,
+			`.some((x) => /katalog|app hinzufügen/i.test(x.textContent))`,
 			20*time.Second, "the catalog button on the apps view")
 		b.eval(`(() => {
   const buttons = [...document.querySelectorAll('#view button')];
-  const open = buttons.find((x) => /catalog|add an app/i.test(x.textContent));
+  const open = buttons.find((x) => /katalog|app hinzufügen/i.test(x.textContent));
   if (!open) throw new Error('no catalog button on the apps view: ' +
     buttons.map((x) => x.textContent.trim()).join(' | '));
   open.click();
@@ -1076,11 +998,22 @@ const enrolledPhoneName = "Mira's phone — the blue one with the cracked screen
 // waitFor condition.
 func deviceCardButton(deviceName, pattern string) string {
 	return `(() => {
-  const card = [...document.querySelectorAll('#view .card')]
-    .find((c) => (c.querySelector('.card-head h2')?.textContent || '').includes(` + jsString(deviceName) + `));
-  if (!card) return null;
-  return [...card.querySelectorAll('button')].find((x) => ` + pattern + `.test(x.textContent)) || null;
+  const row = [...document.querySelectorAll('#view .device-row')]
+    .find((r) => (r.querySelector('b')?.textContent || '').includes(` + jsString(deviceName) + `));
+  if (!row) return null;
+  return [...row.querySelectorAll('button')].find((x) => ` + pattern + `.test(x.textContent)) || null;
 })()`
+}
+
+// openPhoneSheet taps a phone's row in Übersicht and waits for its sheet — where every fact, warning
+// and command about one phone lives since the redesign of 2026-09-30.
+func openPhoneSheet(t *testing.T, b *browser, deviceName string) {
+	t.Helper()
+	row := `[...document.querySelectorAll('#view button.device-row')].find((r) => (r.querySelector('b')?.textContent || '').includes(` + jsString(deviceName) + `))`
+	b.waitFor(row+` !== undefined`, 20*time.Second, "the row of "+deviceName)
+	b.eval(row+`.click()`, nil)
+	b.waitFor(`document.getElementById('sheet').open && document.getElementById('sheet').dataset.kind === 'device' && `+
+		`document.getElementById('sheet-title').textContent === `+jsString(deviceName), 10*time.Second, "the phone sheet of "+deviceName)
 }
 
 // jsString quotes a Go string as a JavaScript literal. json.Marshal is exactly right for this: JSON

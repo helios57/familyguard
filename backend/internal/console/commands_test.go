@@ -31,11 +31,7 @@ import (
 // the assets come out of the embedded FS, which is the copy that actually ships rather than a file
 // on disk that a build might not include.
 func TestTheConsoleCanSendEveryCommandTheServerAccepts(t *testing.T) {
-	raw, err := assets.ReadFile("assets/app.js")
-	if err != nil {
-		t.Fatalf("could not read the embedded console (%v): a check that scans nothing reports "+
-			"clean for the same reason a passing one does", err)
-	}
+	raw := consoleScript(t)
 
 	// The console's own helper. Matching the call rather than the bare string is deliberate: a
 	// command named only in a comment — which is exactly what a removed button leaves behind — is
@@ -46,7 +42,7 @@ func TestTheConsoleCanSendEveryCommandTheServerAccepts(t *testing.T) {
 		wired[m[1]] = true
 	}
 	if len(wired) == 0 {
-		t.Fatalf("no cmd('…') call sites in the embedded app.js: the console no longer issues " +
+		t.Fatalf("no cmd('…') call sites in the embedded console: the console no longer issues " +
 			"commands this way, so this check is measuring nothing")
 	}
 	if len(store.ValidCommandTypes) < 4 {

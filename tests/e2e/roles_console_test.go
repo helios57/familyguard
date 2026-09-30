@@ -48,10 +48,11 @@ func TestThePrimaryAdminPicksAndChangesRolesInTheConsole(t *testing.T) {
 		t.Fatalf("the console added the person as %q, not GUARDIAN", got)
 	}
 
-	// Change the role with the row's select. confirm() is answered by the page override below.
-	b.eval(`window.confirm = () => true;
-	  (() => { const li = Array.from(document.querySelectorAll('#view li')).find((l) => l.textContent.includes('guardian@family.test'));
+	// Change the role with the row's select, then answer the confirmation in the sheet.
+	b.eval(`(() => { const li = Array.from(document.querySelectorAll('#view li')).find((l) => l.textContent.includes('guardian@family.test'));
 	    const s = li.querySelector('select.role-select'); s.value = 'ADMIN'; s.dispatchEvent(new Event('change')); })()`, nil)
+	b.waitFor(`document.getElementById('sheet').open && !!document.querySelector('#sheet [data-confirm="yes"]')`, 10*time.Second, "the confirmation")
+	b.eval(`document.querySelector('#sheet [data-confirm="yes"]').click()`, nil)
 	deadline := time.Now().Add(10 * time.Second)
 	for roleOf("guardian@family.test") != "ADMIN" {
 		if time.Now().After(deadline) {
@@ -103,8 +104,8 @@ func TestAGuardianSeesTheGuardianViewAndCanGiveTime(t *testing.T) {
 	b.waitFor("!document.getElementById('signin').hidden", 15*time.Second, "the sign-in screen")
 	b.eval("document.querySelector('#signin a.btn-primary').click()", nil)
 	b.waitFor("!document.getElementById('app').hidden", 30*time.Second, "the console to sign in")
-	b.waitFor("document.querySelectorAll('#view .guardian-card').length === 3", 15*time.Second,
-		"one guardian card per profile")
+	b.waitFor("document.querySelectorAll('#view .child-card').length === 3", 15*time.Second,
+		"one card per profile")
 
 	var page struct {
 		NavHidden bool     `json:"navHidden"`
@@ -113,16 +114,16 @@ func TestAGuardianSeesTheGuardianViewAndCanGiveTime(t *testing.T) {
 	}
 	b.eval(`({
 	  navHidden: document.getElementById('mainnav').hidden,
-	  cards: Array.from(document.querySelectorAll('#view .guardian-card')).map((c) => c.textContent),
-	  buttons: Array.from(document.querySelectorAll('#view .guardian-card button[data-minutes]')).map((x) => x.dataset.minutes),
+	  cards: Array.from(document.querySelectorAll('#view .child-card')).map((c) => c.textContent),
+	  buttons: Array.from(document.querySelectorAll('#view .child-card button[data-minutes]')).map((x) => x.dataset.minutes),
 	})`, &page)
 	if !page.NavHidden {
 		t.Error("a guardian sees the admin tab bar")
 	}
-	var crumb string
-	b.eval(`document.getElementById('crumb').textContent`, &crumb)
-	if crumb != "" {
-		t.Errorf("the header names one profile (%q) above a page that shows all of them", crumb)
+	var switcherHidden bool
+	b.eval(`document.getElementById('kids-row').hidden`, &switcherHidden)
+	if !switcherHidden {
+		t.Error("the header offers a child switcher above a page that shows every profile")
 	}
 	var mira, nils, lea string
 	for _, c := range page.Cards {
@@ -139,8 +140,8 @@ func TestAGuardianSeesTheGuardianViewAndCanGiveTime(t *testing.T) {
 	// The status line itself, not the card: the card also holds a "+60 min" button, and a check on
 	// the card's text passed on that button alone while the status read something else.
 	var status string
-	b.eval(`Array.from(document.querySelectorAll('#view .guardian-card')).find((c) => c.textContent.includes('Mira'))
-	  .querySelector('h2 + p').textContent`, &status)
+	b.eval(`Array.from(document.querySelectorAll('#view .child-card')).find((c) => c.textContent.includes('Mira'))
+	  .querySelector('.today').textContent`, &status)
 	if !strings.HasSuffix(status, "Heute 0 min von 1 h") {
 		t.Errorf("Mira's status line does not show today's time against her 60-minute limit: %q (card %q)", status, mira)
 	}
@@ -151,17 +152,27 @@ func TestAGuardianSeesTheGuardianViewAndCanGiveTime(t *testing.T) {
 	if !strings.Contains(lea, "kein Tageslimit") {
 		t.Errorf("a phone with no daily limit does not say so: %q", lea)
 	}
-	// Review focus 5: one set of buttons, for the profile that has a limit (FR-21: −15 · +15 · +30).
-	if fmt.Sprint(page.Buttons) != "[-15 15 30]" {
-		t.Errorf("time buttons %v, want exactly [-15 15 30] (Mira only)", page.Buttons)
+	// Review focus 5: time only for the profile that has a limit — +15 on its card, and the rest
+	// (FR-21: −15 · +15 · +30, and +60) in the sheet behind "Zeit für heute anpassen".
+	if fmt.Sprint(page.Buttons) != "[15]" {
+		t.Errorf("time buttons on the cards %v, want exactly [15] (Mira only)", page.Buttons)
 	}
+	var sheetButtons []string
+	b.eval(`Array.from(document.querySelectorAll('#view .child-card')).find((c) => c.textContent.includes('Mira'))
+	  .querySelector('[data-action="time-sheet"]').click()`, nil)
+	b.waitFor(`document.getElementById('sheet').open && document.querySelectorAll('#sheet [data-minutes]').length > 0`, 10*time.Second, "the time sheet")
+	b.eval(`Array.from(document.querySelectorAll('#sheet [data-minutes]')).map((x) => x.dataset.minutes)`, &sheetButtons)
+	if fmt.Sprint(sheetButtons) != "[15 30 60 -15]" {
+		t.Errorf("the time sheet offers %v, want [15 30 60 -15]", sheetButtons)
+	}
+	b.eval(`document.getElementById('sheet-close').click()`, nil)
 	// Chrome logs a refused request (403) as a page error, so this also catches a guardian view that
 	// still asks for something only an admin may read.
 	if len(b.pageErrors) != 0 {
 		t.Errorf("the guardian view made the page complain: %s", b.pageErrorReport())
 	}
 
-	b.eval(`document.querySelector('#view .guardian-card button[data-minutes="15"]').click()`, nil)
+	b.eval(`document.querySelector('#view .child-card button[data-minutes="15"]').click()`, nil)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		var ds struct {
@@ -230,26 +241,28 @@ func TestAGuardianPausesAndTakesTimeAway(t *testing.T) {
 	h.issuer.setNextLogin(guardianIdentity)
 	b.waitFor("!document.getElementById('signin').hidden", 15*time.Second, "the sign-in screen")
 	b.eval("document.querySelector('#signin a.btn-primary').click()", nil)
-	b.waitFor("document.querySelectorAll('#view .guardian-card button[data-action=\"pause\"]').length === 1",
-		15*time.Second, "the Sperren button")
+	b.waitFor("document.querySelectorAll('#view .child-card button[data-action=\"pause\"]').length === 1",
+		15*time.Second, "the Pausieren button")
 
 	// One tap arms it and changes nothing.
 	b.eval(`document.querySelector('#view button[data-action="pause"]').click()`, nil)
 	b.waitFor(`document.querySelector('#view button[data-action="pause"]').textContent.includes('Wirklich')`,
 		5*time.Second, "the button to ask again")
 	if paused() {
-		t.Fatal("one tap on Sperren paused the phone; it must ask again")
+		t.Fatal("one tap on Pausieren paused the phone; it must ask again")
 	}
 	b.eval(`document.querySelector('#view button[data-action="pause"]').click()`, nil)
 	waitFor("the pause to reach the server", paused)
-	b.waitFor(`document.querySelector('#view .guardian-card').textContent.includes('Gesperrt')`,
-		10*time.Second, "the card to say Gesperrt")
+	b.waitFor(`document.querySelector('#view .child-card [data-state]').dataset.state === 'Pausiert'`,
+		10*time.Second, "the card to say Pausiert")
 
 	b.eval(`document.querySelector('#view button[data-action="unpause"]').click()`, nil)
 	waitFor("the unpause to reach the server", func() bool { return !paused() })
 
-	b.waitFor(`!!document.querySelector('#view button[data-minutes="-15"]')`, 10*time.Second, "the −15 button")
-	b.eval(`document.querySelector('#view button[data-minutes="-15"]').click()`, nil)
+	b.waitFor(`!!document.querySelector('#view [data-action="time-sheet"]')`, 10*time.Second, "the time button")
+	b.eval(`document.querySelector('#view [data-action="time-sheet"]').click()`, nil)
+	b.waitFor(`!!document.querySelector('#sheet button[data-minutes="-15"]')`, 10*time.Second, "the −15 button")
+	b.eval(`document.querySelector('#sheet button[data-minutes="-15"]').click()`, nil)
 	waitFor("−15 to reach the server", func() bool {
 		var ds struct {
 			Desired struct {
@@ -260,14 +273,14 @@ func TestAGuardianPausesAndTakesTimeAway(t *testing.T) {
 			expect(http.StatusOK).decode(&ds)
 		return ds.Desired.BonusMinutes == -15
 	})
-	b.waitFor(`document.querySelector('#view .guardian-card h2 + p').textContent.includes('15 min weniger')`,
+	b.waitFor(`document.querySelector('#view .child-card .today').textContent.includes('15 min weniger')`,
 		10*time.Second, "the status line to say 15 minutes less")
 	if len(b.pageErrors) != 0 {
 		t.Errorf("the guardian window made the page complain: %s", b.pageErrorReport())
 	}
 }
 
-// An admin gets the guardian window too, as the first tab, and keeps the full console.
+// An admin gets the guardian window too — it is Übersicht, the first tab — and keeps the full console.
 func TestAnAdminHasTheGuardianWindowAsTheFirstTab(t *testing.T) {
 	h := newHarness(t)
 	primary := h.signIn(primaryParent)
@@ -281,19 +294,19 @@ func TestAnAdminHasTheGuardianWindowAsTheFirstTab(t *testing.T) {
 	b.waitFor("!document.getElementById('app').hidden", 30*time.Second, "the console to sign in")
 	var first string
 	b.eval(`document.querySelector('#mainnav .tab').dataset.tab`, &first)
-	if first != "guardian" {
-		t.Fatalf("the first tab is %q, want the guardian window", first)
+	if first != "overview" {
+		t.Fatalf("the first tab is %q, want Übersicht (the guardian window)", first)
 	}
-	b.eval(`document.querySelector('.tab[data-tab="guardian"]').click()`, nil)
-	b.waitFor("document.querySelectorAll('#view .guardian-card').length === 1", 15*time.Second, "the guardian card")
-	var crumb string
-	b.eval(`document.getElementById('crumb').textContent`, &crumb)
-	if crumb != "" {
-		t.Errorf("on the guardian tab the header names one profile (%q) above a page of all of them", crumb)
+	b.eval(`document.querySelector('.tab[data-tab="overview"]').click()`, nil)
+	b.waitFor("document.querySelectorAll('#view .child-card').length === 1", 15*time.Second, "the child's card")
+	var switcherHidden bool
+	b.eval(`document.getElementById('kids-row').hidden`, &switcherHidden)
+	if !switcherHidden {
+		t.Error("on Übersicht the header offers a child switcher above a page of every child")
 	}
 	var tabs int
 	b.eval(`document.querySelectorAll('#mainnav .tab').length`, &tabs)
-	if tabs != 6 {
-		t.Errorf("an admin has %d tabs; the guardian window is added, nothing is taken away (want 6)", tabs)
+	if tabs != consoleDestinations {
+		t.Errorf("an admin has %d tabs, want %d: Übersicht, Regeln, Apps, Aktivität, Familie", tabs, consoleDestinations)
 	}
 }

@@ -269,7 +269,7 @@ func TestTheConsoleDrawsEachAppAgainstItsLimit(t *testing.T) {
 	if len(drawn.Rows) != 1 {
 		t.Fatalf("the card draws %d app rows, want 1: %q", len(drawn.Rows), drawn.Rows)
 	}
-	for _, must := range []string{"Brawl Stars", "20 min of 40 min", "Own limit 40 min a day"} {
+	for _, must := range []string{"Brawl Stars", "20 min von 40 min", "Eigenes Limit 40 min pro Tag"} {
 		if !strings.Contains(drawn.Rows[0], must) {
 			t.Errorf("the app row does not say %q: %q", must, drawn.Rows[0])
 		}
@@ -287,15 +287,19 @@ func TestTheConsoleDrawsEachAppAgainstItsLimit(t *testing.T) {
 	if pct(drawn.Fill) != 50 || pct(drawn.Marker) != 100 {
 		t.Errorf("20 of 40 minutes draws a bar %q wide with the limit at %q; want 50%% and 100%%", drawn.Fill, drawn.Marker)
 	}
-	if !strings.Contains(drawn.Summary, "20 min of 1 h") {
+	if !strings.Contains(drawn.Summary, "20 min von 1 h") {
 		t.Errorf("the day's summary does not read 20 min of the 1 h limit: %q", drawn.Summary)
 	}
-	if fmt.Sprint(drawn.Buttons) != "[+15 min +30 min +60 min]" {
-		t.Fatalf("the extra-time buttons are %q", drawn.Buttons)
+	// Giving time is Übersicht's first button, and it is not repeated here: two places for one
+	// action is how they come to behave differently.
+	if len(drawn.Buttons) != 0 {
+		t.Errorf("Aktivität repeats buttons from Übersicht: %q", drawn.Buttons)
 	}
 
-	// Pressing one grants the time on the server, not merely in the page.
-	b.eval(`document.querySelector('#view .st-summary button').click()`, nil)
+	// +15 from Übersicht grants the time on the server, not merely in the page, and Aktivität's day
+	// shows it.
+	b.switchTab(t, "overview", `#view .child-card button[data-minutes="15"]`)
+	b.eval(`document.querySelector('#view .child-card button[data-minutes="15"]').click()`, nil)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		var d struct {
@@ -310,6 +314,7 @@ func TestTheConsoleDrawsEachAppAgainstItsLimit(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	b.switchTab(t, "activity", "#view .st-summary")
 	b.waitFor("(document.querySelector('#view .st-summary') || {}).textContent.includes('15 min extra')",
 		10*time.Second, "the summary to show the extra time")
 }

@@ -13,7 +13,7 @@ import (
 
 const appRowsJS = `Array.from(document.querySelectorAll('#view .applist li')).map((li) => ({
   text: li.textContent,
-  forget: !!Array.from(li.querySelectorAll('button')).find((b) => b.textContent === 'Remove from list'),
+  forget: !!Array.from(li.querySelectorAll('button')).find((b) => b.textContent === 'Aus der Liste entfernen'),
 }))`
 
 type appRowText struct {
@@ -70,26 +70,26 @@ func TestTheConsoleShowsPreinstalledAppsAndRemovesUninstalledOnes(t *testing.T) 
 	if camera == nil {
 		t.Fatalf("the Camera is not in the Apps list with the default filters: %+v", rows)
 	}
-	if !strings.Contains(camera.Text, "Always free (preinstalled)") {
+	if !strings.Contains(camera.Text, "Immer frei (vorinstalliert)") {
 		t.Errorf("the Camera row does not say it is always free: %q", camera.Text)
 	}
 	if camera.Forget {
-		t.Errorf("an installed app offers 'Remove from list': %q", camera.Text)
+		t.Errorf("an installed app offers 'Aus der Liste entfernen': %q", camera.Text)
 	}
 	if r := rowFor(rows, pkgService); r != nil {
 		t.Errorf("a service with no icon is listed without 'Show background services': %q", r.Text)
 	}
-	if r := rowFor(rows, pkgGame); r == nil || strings.Contains(r.Text, "preinstalled") {
+	if r := rowFor(rows, pkgGame); r == nil || strings.Contains(r.Text, "vorinstalliert") {
 		t.Errorf("the child's own game must be listed and must not be called preinstalled: %+v", r)
 	}
 	old := rowFor(rows, pkgOld)
 	if old == nil || !old.Forget {
-		t.Fatalf("the uninstalled game has no 'Remove from list' button: %+v", old)
+		t.Fatalf("the uninstalled game has no 'Aus der Liste entfernen' button: %+v", old)
 	}
 
 	b.eval(`(() => { const li = Array.from(document.querySelectorAll('#view .applist li'))
         .find((l) => l.textContent.indexOf('`+pkgOld+`') >= 0);
-      Array.from(li.querySelectorAll('button')).find((b) => b.textContent === 'Remove from list').click();
+      Array.from(li.querySelectorAll('button')).find((b) => b.textContent === 'Aus der Liste entfernen').click();
       return true; })()`, nil)
 	b.waitFor(`!Array.from(document.querySelectorAll('#view .applist li'))
         .some((l) => l.textContent.indexOf('`+pkgOld+`') >= 0)`, 15*time.Second,

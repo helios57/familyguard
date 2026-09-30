@@ -54,13 +54,13 @@ func TestTheConsoleShowsWhatFamilyGuardSpends(t *testing.T) {
 			none = c.Text
 		}
 	}
-	for _, want := range []string{f.device.Name, "per unplugged hour", "FamilyGuard CPU", "s per hour", "wake-ups per hour",
-		"Resting (screen off) 75 % of the time", "Ad filter DNS only 50 % of its time"} {
+	for _, want := range []string{f.device.Name, "pro Stunde ohne Ladegerät", "FamilyGuard braucht", "s Rechenzeit pro Stunde", "Aufwecker pro Stunde",
+		"Ruht (Bildschirm aus) 75 % der Zeit", "Werbefilter nur DNS 50 % seiner Zeit"} {
 		if !strings.Contains(reported, want) {
 			t.Errorf("the reporting phone's energy card lacks %q: %q", want, reported)
 		}
 	}
-	if !strings.Contains(none, "The spare phone") || !strings.Contains(none, "Not reported yet") {
+	if !strings.Contains(none, "The spare phone") || !strings.Contains(none, "Noch nicht gemeldet") {
 		t.Errorf("the silent phone's card should say it has not reported: %q", none)
 	}
 }

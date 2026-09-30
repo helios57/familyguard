@@ -27,18 +27,13 @@ import (
 //
 // The assets come out of the embedded FS, which is the copy that ships, not a file on disk.
 func TestBothPowerSwitchesAreShownWhenBothAreOff(t *testing.T) {
-	raw, err := assets.ReadFile("assets/app.js")
-	if err != nil {
-		t.Fatalf("could not read the embedded console (%v): a check that scans nothing reports "+
-			"clean for the same reason a passing one does", err)
-	}
-	js := string(raw)
+	js := consoleScript(t)
 
 	// Calibration. Every assertion below is a search, and an empty result and a search that never
 	// ran are the same shape — so first prove the haystack is the file we think it is.
 	for _, anchor := range []string{"power_exempt", "exact_alarms", "badge warn"} {
 		if !strings.Contains(js, anchor) {
-			t.Fatalf("the embedded app.js does not contain %q at all: this test is scanning the "+
+			t.Fatalf("the embedded console does not contain %q at all: this test is scanning the "+
 				"wrong file, and every check below would pass vacuously", anchor)
 		}
 	}
@@ -63,8 +58,8 @@ func TestBothPowerSwitchesAreShownWhenBothAreOff(t *testing.T) {
 	// 2. Both remedies must be reachable in the text. A badge that names a problem without naming
 	//    the setting that fixes it sends the parent to a search engine.
 	for _, remedy := range []string{
-		`Battery \u2192 Unrestricted`,
-		`Alarms and reminders`,
+		`Akku → Nicht eingeschränkt`,
+		`Wecker und Erinnerungen`,
 	} {
 		if !strings.Contains(js, remedy) {
 			t.Errorf("the console never tells a parent where to find %q. FamilyGuard cannot grant "+
@@ -77,7 +72,7 @@ func TestBothPowerSwitchesAreShownWhenBothAreOff(t *testing.T) {
 	//     screen carries an Open settings button per switch that goes straight there. The manual
 	//     paths above remain as the fallback, but a console that lists only them sends the parent
 	//     back to hunting through Settings -- the exact complaint that produced the buttons.
-	for _, hint := range []string{"open FamilyGuard", "Open settings button"} {
+	for _, hint := range []string{"öffne dort FamilyGuard", "«Einstellungen öffnen»"} {
 		if !strings.Contains(js, hint) {
 			t.Errorf("the console never mentions %q, so a parent is sent to navigate Settings by "+
 				"hand even though the phone now offers the switch directly", hint)

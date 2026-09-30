@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.VibrationEffect
+import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -98,8 +99,19 @@ class AlarmRingService : Service() {
         }.onFailure { Log.w(TAG, "the alarm tone could not play: $it") }.getOrNull()
     }
 
+    /* VibratorManager is API 31 and the floor is 29: on Android 10 and 11 the class does not exist,
+       and naming it throws NoClassDefFoundError — inside the alarm, while it rings. Android lint's
+       NewApi reported both call sites; CI did not run lint, so nothing was red. */
+    private fun vibrator(): Vibrator? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            getSystemService(VibratorManager::class.java)?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION") // the VibratorManager route is API 31; minSdk here is 29
+            getSystemService(Vibrator::class.java)
+        }
+
     private fun vibrate() {
-        val vibrator = getSystemService(VibratorManager::class.java)?.defaultVibrator ?: return
+        val vibrator = vibrator() ?: return
         runCatching { vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 800, 600), 0)) }
     }
 
@@ -107,7 +119,7 @@ class AlarmRingService : Service() {
         handler.removeCallbacksAndMessages(null)
         player?.let { runCatching { it.stop(); it.release() } }
         player = null
-        getSystemService(VibratorManager::class.java)?.defaultVibrator?.cancel()
+        vibrator()?.cancel()
         restoreVolume?.let { level ->
             runCatching { getSystemService(AudioManager::class.java)?.setStreamVolume(AudioManager.STREAM_ALARM, level, 0) }
         }

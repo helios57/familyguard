@@ -18,19 +18,22 @@ func TestTheAdminSetsTheAlarmInTheConsole(t *testing.T) {
 	h.patchPolicy(primary.Token, child.ID, map[string]any{"timezone": "Europe/Zurich"})
 	b := signInBrowser(t, h, primaryParent)
 	b.eval(`document.querySelector('.tab[data-tab="rules"]').click()`, nil)
-	b.waitFor(`!!document.querySelector('#view .alarm-card button[data-alarm="save"]')`, 15*time.Second, "the alarm card")
+	b.waitFor(`!!document.querySelector('#view .alarm-card button[data-alarm="day-toggle"]')`, 15*time.Second, "the alarm card")
 	b.measure(t, "rules/alarm").check(t, "rules/alarm")
 
-	// Monday to Friday at 06:30, Friday 07:00; the weekend stays off.
+	// Monday to Friday at 06:30 — five day chips and one time, the common case — then Friday alone
+	// moved to 07:00, which is what "pro Tag verschieden" is for. The weekend stays off.
 	b.eval(`(() => {
-	  const set = (i, v) => {
-	    const row = document.querySelector('#view .alarm-card [data-day="' + i + '"]');
-	    const on = row.querySelector('input[data-alarm="on"]'); on.checked = true; on.dispatchEvent(new Event('change', { bubbles: true }));
-	    const at = row.querySelector('input[data-alarm="time"]'); at.value = v; at.dispatchEvent(new Event('input', { bubbles: true }));
-	  };
-	  [0, 1, 2, 3].forEach((i) => set(i, '06:30')); set(4, '07:00');
-	  document.querySelector('#view .alarm-card button[data-alarm="save"]').click();
+	  const q = (sel) => document.querySelector('#view .alarm-card ' + sel);
+	  [0, 1, 2, 3, 4].forEach((i) => q('button[data-alarm="day-toggle"][data-day="' + i + '"]').click());
+	  const all = q('input[data-alarm="time-all"]'); all.value = '06:30'; all.dispatchEvent(new Event('input', { bubbles: true }));
+	  q('button[data-alarm="per-day"]').click();
+	  const fri = q('[data-day="4"] input[data-alarm="time"]'); fri.value = '07:00'; fri.dispatchEvent(new Event('input', { bubbles: true }));
 	})()`, nil)
+	// One bar saves every unsaved editor on the page; it appears only once something changed.
+	b.waitFor(`!document.getElementById('savebar').hidden`, 5*time.Second, "the save bar")
+	b.measure(t, "rules/alarm per day").check(t, "rules/alarm per day")
+	b.eval(`document.querySelector('#savebar button[data-save="all"]').click()`, nil)
 	want := []string{"06:30", "06:30", "06:30", "06:30", "07:00", "", ""}
 	deadline := time.Now().Add(10 * time.Second)
 	for !slices.Equal(h.getAlarm(primary.Token, child.ID).Weekdays, want) {
@@ -59,7 +62,7 @@ func TestTheAdminSetsTheAlarmInTheConsole(t *testing.T) {
 	b.waitFor(`!!document.querySelector('#view .alarm-card button[data-alarm="day-clear"][data-date="`+tomorrow+`"]')`, 10*time.Second, "the listed change")
 	var listed string
 	b.eval(`document.querySelector('#view .alarm-card .alarm-changes').textContent`, &listed)
-	if !strings.Contains(listed, "no alarm") {
+	if !strings.Contains(listed, "kein Wecker") {
 		t.Errorf("the listed change does not say there is no alarm that day: %q", listed)
 	}
 	b.eval(`document.querySelector('#view .alarm-card button[data-alarm="day-clear"][data-date="`+tomorrow+`"]').click()`, nil)
@@ -103,13 +106,15 @@ func TestAPhoneThatCannotTakeOverTheScreenForTheAlarmSaysSo(t *testing.T) {
 	}
 
 	b := signInBrowser(t, h, primaryParent)
-	b.waitFor(`Array.from(document.querySelectorAll('#view .badge')).some((n) => n.textContent === 'alarm: notification only')`,
-		15*time.Second, "the device card to say the alarm cannot take over the screen")
+	openPhoneSheet(t, b, f.device.Name)
+	b.waitFor(`Array.from(document.querySelectorAll('#sheet .badge')).some((n) => n.textContent === 'Wecker: nur Mitteilung')`,
+		15*time.Second, "the phone sheet to say the alarm cannot take over the screen")
 
 	// And it goes away when the phone reports it may.
 	h.call(http.MethodPost, "/device/heartbeat", f.deviceToken(), map[string]any{
 		"connectivity": "wifi", "alarm_full_screen": true,
 	}).expect(http.StatusOK)
-	b.waitFor(`!Array.from(document.querySelectorAll('#view .badge')).some((n) => n.textContent === 'alarm: notification only')`,
+	// The open sheet is redrawn from the server's next answer, without being closed and reopened.
+	b.waitFor(`document.getElementById('sheet').open && !Array.from(document.querySelectorAll('#sheet .badge')).some((n) => n.textContent === 'Wecker: nur Mitteilung')`,
 		15*time.Second, "the badge to go once the phone may take over the screen")
 }

@@ -207,17 +207,18 @@ The calibration records are in `IMPLEMENTATION_PLAN.md` (for example "5.3 calibr
 39 red"), and each one names the tests that caught each break.
 
 One of those records is executable rather than written down. `tests/e2e/calibrate-mobile.sh` breaks
-the parent console fourteen ways in turn — an unparsable `app.js`, a card wider than the viewport, a
+the parent console fifteen ways in turn — an unparsable `app.js`, a card wider than the viewport, a
 sideways-scrolling list, 13 px inputs, a header that scrolls away, content hidden behind it, chrome
-that eats the screen, a menu button that cannot be seen, a drawer that stays open over the page it
-navigated to, a drawer whose links sit at the top of the screen instead of under the thumb, a
-sign-in button below the fold, an oversized sheet, a shrunken QR, a 30 px button — and requires the
+that eats the screen, a bottom bar that is not pinned, a last card hidden under it, a toast drawn
+beneath it, a destination missing from it, a sign-in button below the fold, an oversized sheet, a
+shrunken QR, a 30 px button — and requires the
 mobile test to go red *naming that rule*, then requires green once the file is
 restored. It found a real defect in its own subject the first time it ran: the pinned-navigation
 assertion measured the bar only at the end of a long page, where a `position: static` bar also sits
 at the bottom of the viewport, so the check passed its own known-bad input. That lesson survived the
-navigation moving to the top — the same trap exists at the other end of the page, so the header is
-now measured after scrolling rather than before.
+navigation moving to the top and back: the header is measured after scrolling to the end, and the
+bottom bar (since 0.6.33) at the top of a long page — each where the broken version would look
+different.
 
 This is not ceremony. The dominant defect class in policy-enforcement code is a control that passes
 having evaluated nothing — a guard that is defined, unit-tested and never called; an assertion whose

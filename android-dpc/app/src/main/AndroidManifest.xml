@@ -87,7 +87,8 @@
       restricts this permission to a short list of app categories does not gate it — and device
       administration is on that list regardless.
     -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
 
     <!--
       Screen time (FR-3) is measured from `UsageStatsManager`, and this is the declaration that makes

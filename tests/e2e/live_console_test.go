@@ -25,7 +25,7 @@ func TestAGuardianStartsLiveAndSeesThePosition(t *testing.T) {
 	h.issuer.setNextLogin(guardianIdentity)
 	b.waitFor("!document.getElementById('signin').hidden", 15*time.Second, "the sign-in screen")
 	b.eval("document.querySelector('#signin a.btn-primary').click()", nil)
-	b.waitFor(`document.querySelectorAll('#view .guardian-card [data-action="live-start"]').length === 1`,
+	b.waitFor(`document.querySelectorAll('#view .child-card [data-action="live-start"]').length === 1`,
 		15*time.Second, "the guardian's Live button")
 
 	b.eval(`document.querySelector('#view [data-action="live-start"]').click()`, nil)
@@ -51,7 +51,7 @@ func TestAGuardianStartsLiveAndSeesThePosition(t *testing.T) {
 		t.Errorf("the guardian stopped Live and the server still holds %+v", l)
 	}
 
-	// The admin's device card, in English, for a session started elsewhere.
+	// The admin's Übersicht, for a session started elsewhere.
 	h.call(http.MethodPost, "/devices/"+f.device.ID+"/live", f.parent.Token, map[string]any{"minutes": 10}).expect(http.StatusOK)
 	a := startBrowser(t)
 	a.phone(phoneWidth, phoneHeight)
@@ -59,8 +59,8 @@ func TestAGuardianStartsLiveAndSeesThePosition(t *testing.T) {
 	h.issuer.setNextLogin(primaryParent)
 	a.waitFor("!document.getElementById('signin').hidden", 15*time.Second, "the sign-in screen")
 	a.eval("document.querySelector('#signin a.btn-primary').click()", nil)
-	a.waitFor(`document.querySelector('#view [data-live="on"]') && document.querySelector('#view [data-live="on"]').textContent.includes('Live until')`,
-		15*time.Second, "the admin's device card to show the session")
+	a.waitFor(`document.querySelector('#view [data-live="on"]') && document.querySelector('#view [data-live="on"]').textContent.includes('Live bis')`,
+		15*time.Second, "the admin's Übersicht to show the session")
 	a.measure(t, "home/live").check(t, "home/live")
 }
 
@@ -77,20 +77,28 @@ func TestTheConsoleSaysWhenAPhoneIsResting(t *testing.T) {
 	h.issuer.setNextLogin(primaryParent)
 	b.waitFor("!document.getElementById('signin').hidden", 15*time.Second, "the sign-in screen")
 	b.eval("document.querySelector('#signin a.btn-primary').click()", nil)
-	b.waitFor(`!!document.querySelector('#view [data-link="resting"]') && !!document.querySelector('#view [data-resting="poll"]')`,
-		15*time.Second, "the card to say the phone is resting and what that means")
-	b.measure(t, "home/resting").check(t, "home/resting")
+	// The row says it rests; the phone sheet says what that means for Sperren and Klingeln.
+	b.waitFor(`!!document.querySelector('#view [data-link="resting"]')`, 15*time.Second, "the row to say the phone is resting")
+	openPhoneSheet(t, b, f.device.Name)
+	b.waitFor(`!!document.querySelector('#sheet [data-resting="poll"]')`, 15*time.Second, "the sheet to say what resting means")
+	b.measure(t, "overview/resting").check(t, "overview/resting")
 
 	// FR-26.3: with a push address the card says a change reaches it within seconds.
 	h.call(http.MethodPost, "/device/heartbeat", f.deviceToken(), map[string]any{"connectivity": "wifi", "push_token": "fid-1"}).
 		expect(http.StatusOK)
 	b.eval(`location.reload()`, nil)
-	b.waitFor(`!!document.querySelector('#view [data-resting="push"]') && document.querySelector('#view [data-resting="push"]').textContent.includes('by push')`,
-		15*time.Second, "the card to say a resting phone is woken by push")
+	openPhoneSheet(t, b, f.device.Name)
+	b.waitFor(`!!document.querySelector('#sheet [data-resting="push"]') && document.querySelector('#sheet [data-resting="push"]').textContent.includes('per Push')`,
+		15*time.Second, "the sheet to say a resting phone is woken by push")
 
 	stream := h.openStream("/device/stream", f.deviceToken())
 	defer stream.Close()
 	b.eval(`location.reload()`, nil)
-	b.waitFor(`!!document.querySelector('#view [data-link="listening"]') && !document.querySelector('#view [data-resting]')`,
-		15*time.Second, "the card to say online once the phone holds its stream")
+	b.waitFor(`!!document.querySelector('#view [data-link="listening"]')`, 15*time.Second, "the row to say online once the phone holds its stream")
+	openPhoneSheet(t, b, f.device.Name)
+	var resting bool
+	b.eval(`!!document.querySelector('#sheet [data-resting]')`, &resting)
+	if resting {
+		t.Error("a phone holding its stream is still explained as resting")
+	}
 }

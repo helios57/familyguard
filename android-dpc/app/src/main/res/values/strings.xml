@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">FamilyGuard</string>
+    <string name="app_name" translatable="false">FamilyGuard</string>
 
     <!-- Shown by Settings wherever the device admin is listed. -->
-    <string name="admin_label">FamilyGuard</string>
+    <string name="admin_label" translatable="false">FamilyGuard</string>
     <string name="admin_description">Applies the settings a parent chose for this phone. The phone
         can always be reset from the recovery menu.</string>
 
@@ -55,7 +55,7 @@
     <string name="recovery_already_released">Already unlocked. The rules are off until this phone
         next reaches the family settings.</string>
     <!-- %1$s is the reason, from the controller. -->
-    <string name="recovery_unavailable">%1$s</string>
+    <string name="recovery_unavailable" translatable="false">%1$s</string>
     <string name="recovery_empty">Enter the code first.</string>
 
     <!-- %1$d is how many wrong codes in a row; %2$s is a formatted wait. -->
@@ -79,9 +79,9 @@
     -->
     <string name="status_heading">This phone</string>
     <string name="status_loading">Checking…</string>
-    <string name="status_flag">⚠</string>
+    <string name="status_flag" translatable="false">⚠</string>
     <!-- %1$s is the label, %2$s the value. Read out as one sentence by a screen reader. -->
-    <string name="status_row_description">%1$s: %2$s</string>
+    <string name="status_row_description" translatable="false">%1$s: %2$s</string>
     <!-- Same, for a row that needs attention. The word is what carries it without colour. -->
     <string name="status_row_description_attention">Needs attention. %1$s: %2$s</string>
     <string name="status_unavailable">This phone could not read its own status.</string>

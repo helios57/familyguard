@@ -2,16 +2,12 @@ package e2e
 
 // The other end of the 900 px breakpoint, measured in a browser.
 //
-// `#mainnav` and `#child-switcher` are single nodes that MOVE between the header row and the
-// drawer as the viewport crosses 900 px (app.js `placeChrome`). Everything that guarded that
-// arrangement measured the phone: TestConsoleRendersOnAPhone asserts the header holds no links and
-// the drawer holds all five. Both statements can be true while the wide layout is broken, and they
-// were — the console shipped with the header navigation AND a menu button that opens an empty
-// drawer, because at this width the nodes are in the header and nothing is left to put in it.
-//
-// The rule this file adds is the one that binds the two halves together: **at any one width there
-// is exactly one navigation, and it is the one on screen.** A control that opens the other one is
-// a defect even when the other one is correctly empty.
+// Since the redesign of 2026-09-30 there is ONE navigation element, `#mainnav`, and app.css lays it
+// out twice: a bar pinned to the bottom of a phone, and a sidebar from 900 px. Nothing moves it and
+// nothing copies it. Before that, script moved the node between a header row and a drawer, and the
+// console once shipped with the header navigation AND a menu button that opened an empty drawer —
+// so the rule this file holds is still the one that binds the two widths together: **at any one
+// width there is exactly one navigation, all of it on screen, and nothing that opens another.**
 
 import (
 	"testing"
@@ -34,41 +30,66 @@ const chromeJS = `(() => {
     if (!e) return false;
     const cs = getComputedStyle(e);
     const r = e.getBoundingClientRect();
-    return cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0 && r.height > 0
+      && r.right <= window.innerWidth + 0.5 && r.bottom <= window.innerHeight + 0.5 && r.left >= -0.5 && r.top >= -0.5;
   };
   const nav = document.getElementById('mainnav');
-  const kids = document.getElementById('child-switcher');
+  const r = nav.getBoundingClientRect();
+  const tabs = [...nav.querySelectorAll('.tab')].filter(shown).map((t) => t.getBoundingClientRect());
   return {
-    navInHeader: document.getElementById('topbar-row').contains(nav),
-    navInDrawer: document.getElementById('drawer-nav').contains(nav),
-    kidsInHeader: document.getElementById('topbar-row').contains(kids),
-    kidsInDrawer: document.getElementById('drawer-children').contains(kids),
-    visibleTabs: [...document.querySelectorAll('.tab')].filter(shown).length,
+    navCount: document.querySelectorAll('nav#mainnav, .mainnav').length,
+    tabCount: document.querySelectorAll('.tab').length,
+    navLeft: r.left, navTop: r.top, navBottom: r.bottom, navWidth: r.width, navHeight: r.height,
+    innerWidth: window.innerWidth, innerHeight: window.innerHeight,
+    visibleTabs: tabs.length,
+    tabsInARow: tabs.length > 1 && tabs.every((t) => Math.abs(t.top - tabs[0].top) < 1),
+    tabsInAColumn: tabs.length > 1 && tabs.every((t) => Math.abs(t.left - tabs[0].left) < 1),
     visiblePills: [...document.querySelectorAll('#child-switcher .pill')].filter(shown).length,
-    menuVisible: shown(document.getElementById('menu-open')),
-    menuDisplay: getComputedStyle(document.getElementById('menu-open')).display,
     signoutVisible: shown(document.getElementById('signout')),
-    drawerOpen: document.getElementById('drawer').open,
+    // Any dialog open on its own is a menu nobody asked for.
+    dialogOpen: [...document.querySelectorAll('dialog')].some((d) => d.open),
   };
 })()`
 
 type chromePlacement struct {
-	NavInHeader    bool   `json:"navInHeader"`
-	NavInDrawer    bool   `json:"navInDrawer"`
-	KidsInHeader   bool   `json:"kidsInHeader"`
-	KidsInDrawer   bool   `json:"kidsInDrawer"`
-	VisibleTabs    int    `json:"visibleTabs"`
-	VisiblePills   int    `json:"visiblePills"`
-	MenuVisible    bool   `json:"menuVisible"`
-	MenuDisplay    string `json:"menuDisplay"`
-	SignoutVisible bool   `json:"signoutVisible"`
-	DrawerOpen     bool   `json:"drawerOpen"`
+	NavCount       int     `json:"navCount"`
+	TabCount       int     `json:"tabCount"`
+	NavLeft        float64 `json:"navLeft"`
+	NavTop         float64 `json:"navTop"`
+	NavBottom      float64 `json:"navBottom"`
+	NavWidth       float64 `json:"navWidth"`
+	NavHeight      float64 `json:"navHeight"`
+	InnerWidth     float64 `json:"innerWidth"`
+	InnerHeight    float64 `json:"innerHeight"`
+	VisibleTabs    int     `json:"visibleTabs"`
+	TabsInARow     bool    `json:"tabsInARow"`
+	TabsInAColumn  bool    `json:"tabsInAColumn"`
+	VisiblePills   int     `json:"visiblePills"`
+	SignoutVisible bool    `json:"signoutVisible"`
+	DialogOpen     bool    `json:"dialogOpen"`
 }
 
-// consoleDestinations is how many places the console's navigation leads to: Today (the guardian
-// window, FR-21), Home, Rules, Apps, Activity and Family. A layout test that counted the links it
-// could see against a different number would pass on a console that hid one.
-const consoleDestinations = 6
+// oneNavigation is the rule this file exists for, checked at whatever width the page is.
+func (c chromePlacement) oneNavigation(t *testing.T, width string) {
+	t.Helper()
+	if c.NavCount != 1 {
+		t.Errorf("%s: %d navigation elements; there must be one, laid out per width, never a copy that drifts", width, c.NavCount)
+	}
+	if c.TabCount != consoleDestinations {
+		t.Errorf("%s: %d destination links in the page, want %d — a second set is a second navigation", width, c.TabCount, consoleDestinations)
+	}
+	if c.VisibleTabs != consoleDestinations {
+		t.Errorf("%s: %d of the %d destinations are on screen", width, c.VisibleTabs, consoleDestinations)
+	}
+	if c.DialogOpen {
+		t.Errorf("%s: a dialog is open that nobody opened", width)
+	}
+}
+
+// consoleDestinations is how many places the console's navigation leads to: Übersicht (which since
+// 2026-09-30 is also the guardian window, FR-21), Regeln, Apps, Aktivität and Familie. A layout test
+// that counted the links it could see against a different number would pass on a console that hid one.
+const consoleDestinations = 5
 
 func TestTheConsoleHasOneNavigationAtEveryWidth(t *testing.T) {
 	h, _ := catalogHarness(t)
@@ -92,118 +113,62 @@ func TestTheConsoleHasOneNavigationAtEveryWidth(t *testing.T) {
 	b.waitFor("document.querySelectorAll('#child-switcher .pill').length >= 2", 15*time.Second,
 		"both children to appear in the switcher")
 
+	// A page about one child, so the switcher is on screen too.
+	b.eval("location.hash = '#/rules'", nil)
+	b.waitFor("location.hash === '#/rules' && document.querySelector('#view .card') !== null", 20*time.Second, "Regeln")
+
 	var wide chromePlacement
 	b.eval(chromeJS, &wide)
-
-	if !wide.NavInHeader {
-		t.Errorf("at %d px the navigation is not in the header row (in drawer: %v): the layout "+
-			"this width is designed around never happened", laptopWidth, wide.NavInDrawer)
-	}
-	if wide.VisibleTabs != consoleDestinations {
-		t.Errorf("at %d px %d of the %d navigation links are visible in the header",
-			laptopWidth, wide.VisibleTabs, consoleDestinations)
-	}
-	if !wide.KidsInHeader {
-		t.Errorf("at %d px the child switcher is not in the header row (in drawer: %v)",
-			laptopWidth, wide.KidsInDrawer)
+	wide.oneNavigation(t, "laptop")
+	// A sidebar: at the left edge, the height of the window, its links stacked.
+	if wide.NavLeft > 0.5 || wide.NavHeight < wide.InnerHeight-0.5 || !wide.TabsInAColumn {
+		t.Errorf("at %d px the navigation is at x=%.0f, %.0f px tall in a %.0f px window, links "+
+			"stacked: %v — the sidebar this width is designed around never happened",
+			laptopWidth, wide.NavLeft, wide.NavHeight, wide.InnerHeight, wide.TabsInAColumn)
 	}
 	if wide.VisiblePills < 3 {
 		t.Errorf("at %d px %d child pills are visible; the fixture has two children and the "+
 			"add button", laptopWidth, wide.VisiblePills)
 	}
 	if !wide.SignoutVisible {
-		t.Errorf("at %d px there is no visible sign-out control: the drawer holds the other one "+
-			"and the drawer is not reachable here", laptopWidth)
-	}
-
-	// The assertion the shipped console failed.
-	//
-	// `placeChrome` puts both nodes in the header at this width, so the drawer's two slots are
-	// empty by construction — correctly so. A menu button offered anyway opens a blank panel, and
-	// the parent's reading of it is not "this width has no drawer" but "the menu is broken". Both
-	// halves of the report that started this were this one fact: an empty side menu, and a top
-	// menu still there.
-	//
-	// It is stated as "not offered" rather than "display is none" because the cause was neither
-	// obvious nor in app.js: `.menu-btn { display: none }` inside the 900 px media query was
-	// overridden by `.btn-icon { display: inline-grid }` 200 lines further down the stylesheet —
-	// equal specificity, later in the file, so the media query lost. A source-level guard over the
-	// media query would have read as satisfied.
-	if wide.MenuVisible {
-		t.Errorf("at %d px the menu button is visible (computed display %q) while the navigation "+
-			"it opens is in the header: tapping it opens an empty drawer. There must be exactly "+
-			"one navigation at any width, and at this one it is the header",
-			laptopWidth, wide.MenuDisplay)
-	}
-
-	// A negative control on the sentence above: the drawer's slots really are empty here, so the
-	// button is not merely redundant — it is a control that shows nothing.
-	var slots struct {
-		Nav      int `json:"nav"`
-		Children int `json:"children"`
-	}
-	b.eval(`({
-  nav: document.getElementById('drawer-nav').childElementCount,
-  children: document.getElementById('drawer-children').childElementCount,
-})`, &slots)
-	if slots.Nav != 0 || slots.Children != 0 {
-		t.Errorf("at %d px the drawer slots hold %d nav and %d switcher node(s); the header "+
-			"reported holding them too, so one of the two is a copy and they will drift",
-			laptopWidth, slots.Nav, slots.Children)
+		t.Errorf("at %d px there is no visible sign-out control", laptopWidth)
 	}
 
 	b.measureAt(t, "laptop", laptopWidth).check(t, "laptop")
 
-	// Crossing the breakpoint both ways, because the relocation is driven by a matchMedia `change`
-	// listener and a listener that was never registered looks identical to a correct one until the
-	// viewport moves. Narrow first: everything must end up in the drawer and the button must come
-	// back.
-	t.Run("narrowing to a phone moves the navigation into the drawer", func(t *testing.T) {
+	// Crossing the breakpoint both ways: the layout is a media query, and a query that never
+	// applies looks identical to a correct one until the viewport moves.
+	t.Run("narrowing to a phone turns the sidebar into the bottom bar", func(t *testing.T) {
 		defer b.focus(t)()
 		b.phone(phoneWidth, phoneHeight)
-		b.waitFor("document.getElementById('drawer-nav').contains(document.getElementById('mainnav'))",
-			10*time.Second, "the navigation to move into the drawer")
+		b.waitFor("document.getElementById('mainnav').getBoundingClientRect().width <= window.innerWidth + 0.5 && "+
+			"document.getElementById('mainnav').getBoundingClientRect().top > window.innerHeight / 2",
+			10*time.Second, "the navigation to become a bottom bar")
 
 		var narrow chromePlacement
 		b.eval(chromeJS, &narrow)
-		if !narrow.MenuVisible {
-			t.Error("after narrowing to a phone there is no visible menu button, and the " +
-				"navigation is now inside the drawer it opens: every screen is unreachable")
+		narrow.oneNavigation(t, "phone")
+		if narrow.NavBottom < narrow.InnerHeight-0.5 || !narrow.TabsInARow {
+			t.Errorf("after narrowing the navigation ends at %.0f in a %.0f px window, links in a row: %v",
+				narrow.NavBottom, narrow.InnerHeight, narrow.TabsInARow)
 		}
-		if narrow.VisibleTabs != 0 {
-			t.Errorf("after narrowing, %d navigation link(s) are still visible with the drawer "+
-				"shut", narrow.VisibleTabs)
-		}
-		if !narrow.KidsInDrawer {
-			t.Error("after narrowing, the child switcher stayed in the header row")
+		if narrow.SignoutVisible {
+			t.Error("after narrowing, sign-out is still in the header, where a phone has no room for it " +
+				"(it is on Familie)")
 		}
 	})
 
-	t.Run("widening back puts it in the header and takes the button away", func(t *testing.T) {
+	t.Run("widening back turns it into the sidebar again", func(t *testing.T) {
 		defer b.focus(t)()
-		// Opened first, so the widening has something to close. `placeChrome` closes the drawer on
-		// the way wide for a reason a still picture cannot show: a parent who opens the menu on a
-		// phone and rotates into a tablet layout would otherwise be left with a modal dialog whose
-		// contents have just been moved out from under it.
-		b.eval("document.getElementById('menu-open').click()", nil)
-		b.waitFor("document.getElementById('drawer').open", 10*time.Second, "the drawer to open")
-
 		b.laptop(laptopWidth, laptopHeight)
-		b.waitFor("document.getElementById('topbar-row').contains(document.getElementById('mainnav'))",
-			10*time.Second, "the navigation to move back into the header")
-
+		b.waitFor("document.getElementById('mainnav').getBoundingClientRect().left <= 0.5 && "+
+			"document.getElementById('mainnav').getBoundingClientRect().height >= window.innerHeight - 0.5",
+			10*time.Second, "the navigation to become a sidebar again")
 		var back chromePlacement
 		b.eval(chromeJS, &back)
-		if back.DrawerOpen {
-			t.Error("widening past the breakpoint left the drawer open over the page, with its " +
-				"navigation moved out into the header behind it")
-		}
-		if back.MenuVisible {
-			t.Errorf("after widening the menu button is visible again (computed display %q)",
-				back.MenuDisplay)
-		}
-		if back.VisibleTabs != consoleDestinations {
-			t.Errorf("after widening, %d of the %d links are visible in the header", back.VisibleTabs, consoleDestinations)
+		back.oneNavigation(t, "laptop again")
+		if !back.TabsInAColumn {
+			t.Error("after widening, the links are not stacked in the sidebar")
 		}
 	})
 }

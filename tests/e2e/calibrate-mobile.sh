@@ -27,10 +27,11 @@ ASSETS="$(cd ../../backend/internal/console/assets 2>/dev/null && pwd)" || {
   echo "NOT MEASURED: the console assets are not where this script expects them"; exit 2; }
 
 BK="$(mktemp -d)" || { echo "NOT MEASURED: no temp directory"; exit 2; }
-cp "$ASSETS/app.css" "$ASSETS/app.js" "$ASSETS/index.html" "$BK/" || {
+# Every file the page is made of: since 2026-09-30 the script is six files (app.js and one per view).
+cp "$ASSETS"/*.css "$ASSETS"/*.js "$ASSETS/index.html" "$BK/" || {
   echo "NOT MEASURED: could not back the assets up"; exit 2; }
 LOGS="$(mktemp -d)"
-restore() { cp "$BK/app.css" "$BK/app.js" "$BK/index.html" "$ASSETS/"; }
+restore() { cp "$BK"/* "$ASSETS/"; }
 cleanup() { restore; rm -rf "$BK"; }
 trap cleanup EXIT
 
@@ -63,7 +64,7 @@ python3 - "$ASSETS/app.js" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()
-broken = s.replace("          }))))));\n", "          })))));\n", 1)
+broken = s.replace("text: 'Nochmals versuchen', onclick: refresh })));\n", "text: 'Nochmals versuchen', onclick: refresh }));\n", 1)
 if broken == s:
     sys.exit("could not find the line to break")
 open(p, 'w').write(broken)
@@ -104,44 +105,24 @@ run_case content-behind-topbar "underneath the header"
 printf '\n.topbar-row { min-height: 200px; }\n' >> "$ASSETS/app.css"
 run_case topbar-budget "px budget"
 
-# 8. The drawer can be opened at all. Below 900px it holds the whole navigation, so a menu button
-#    that is not there is four of the five screens becoming unreachable — with nothing on the page
-#    to say so.
-printf '\n#menu-open { display: none !important; }\n' >> "$ASSETS/app.css"
-run_case drawer-reachable "there is no visible menu button"
+# 8. The bottom bar is pinned. Below 900px it IS the navigation; a bar that merely flows at the end
+#    of the content still sits at the bottom edge once you have scrolled there, which is why the
+#    rule measures it at the TOP of a long page.
+printf '\n#mainnav { position: static !important; }\n' >> "$ASSETS/app.css"
+run_case bar-pinned "it is not pinned to the bottom edge"
 
-# 9. Following a link closes the drawer. A menu left sitting open over the page it just navigated to
-#    is the defect every hand-rolled drawer has, and one no check of "did the route change" can see.
-#
-#    BOTH paths have to go, not one. There are two — the listener on the nav itself, which also
-#    covers tapping the link for the screen you are already on (no hashchange, so no route event),
-#    and onRoute's own call. Removing either alone leaves the other closing the drawer and the rule
-#    stays green while looking calibrated, which is the failure mode this whole script exists for.
-python3 - "$ASSETS/app.js" <<'PY'
-import sys
-p = sys.argv[1]
-s = open(p).read()
-for needle in (
-    "  document.getElementById('mainnav').addEventListener('click', closeDrawer);\n",
-    "  closeDrawer();\n  refresh();\n}\n\nconst VIEWS",
-):
-    if needle not in s:
-        sys.exit("could not find %r to remove" % needle[:60])
-s = s.replace("  document.getElementById('mainnav').addEventListener('click', closeDrawer);\n", "", 1)
-s = s.replace("  closeDrawer();\n  refresh();\n}\n\nconst VIEWS", "  refresh();\n}\n\nconst VIEWS", 1)
-open(p, 'w').write(s)
-PY
-[ $? -eq 0 ] || { echo "NOT MEASURED: could not break app.js"; exit 2; }
-run_case drawer-closes-on-nav "the drawer to close behind the link it followed"
+# 9. Nothing is underneath it. The view keeps room for the bar at its end; without that room the
+#    last card of every long page sits under the navigation for good.
+printf '\n.view { padding-bottom: 0 !important; }\n' >> "$ASSETS/app.css"
+run_case bar-covers-content "underneath the navigation and cannot be"
 
-# 10. The drawer's destinations are in its LOWER half. This is the rule that pays for moving the
-#     navigation off the bottom of the screen: the ☰ is a corner reach, and it is allowed to be one
-#     because it happens once. Top-aligning the links inside the drawer makes every navigation a
-#     full-screen stretch instead, which is strictly worse than the tab bar this replaced — and
-#     nothing else here would notice, because the drawer still opens, still holds five links and
-#     still closes behind them.
-printf '\n#drawer-nav { margin-top: 0; }\n' >> "$ASSETS/app.css"
-run_case drawer-reach "the destinations are not in the drawer's lower half"
+# 10. The toast is above it — the one line that says whether a tap worked.
+printf '\n.toast { bottom: 0 !important; }\n' >> "$ASSETS/app.css"
+run_case toast-above-bar "drawn underneath the navigation"
+
+# 10b. Every destination is on the bar.
+printf '\n.mainnav .tab:last-child { display: none; }\n' >> "$ASSETS/app.css"
+run_case bar-destinations "destinations on screen"
 
 # 11. The sign-in button is on screen when the page loads. The layout this replaced centred the card
 #     in a 100dvh grid; pushing it down reproduces what that did on a shorter phone.
@@ -174,7 +155,7 @@ fi
 
 echo
 if [ "$fails" -eq 0 ]; then
-  echo "CALIBRATION: all 14 rules bind — each observed red for its own reason, and green when restored."
+  echo "CALIBRATION: all 15 rules bind — each observed red for its own reason, and green when restored."
   exit 0
 fi
 echo "CALIBRATION: $fails problem(s). Logs in $LOGS"

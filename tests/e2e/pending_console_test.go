@@ -17,15 +17,11 @@ import (
 	"time"
 )
 
-// pendingCardJS reads the "Waiting for your decision" card out of the rendered Apps tab. It returns
-// null rather than throwing when the card is absent, because its absence is a state this test
-// asserts twice: before anything is waiting, and after the last app has been answered.
+// pendingCardJS reads the "Wartet auf deine Entscheidung" card out of the rendered Apps page. It
+// returns null rather than throwing when the card is absent, because its absence is a state this
+// test asserts twice: before anything is waiting, and after the last app has been answered.
 const pendingCardJS = `(() => {
-  const cards = Array.from(document.querySelectorAll('#view .card'));
-  const card = cards.find((c) => {
-    const h = c.querySelector('h2');
-    return h && h.textContent.indexOf('Waiting for your decision') >= 0;
-  });
+  const card = document.querySelector('#view .pending-card');
   if (!card) return null;
   const badge = card.querySelector('.badge');
   return {
@@ -33,9 +29,8 @@ const pendingCardJS = `(() => {
     rows: Array.from(card.querySelectorAll('li')).map((li) => ({
       label: (li.querySelector('.label b') || {}).textContent || '',
       package: (li.querySelector('.label small') || {}).textContent || '',
-      buttons: Array.from(li.querySelectorAll('.seg button')).map((b) => b.textContent),
-      pressed: Array.from(li.querySelectorAll('.seg button'))
-        .filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.textContent),
+      buttons: Array.from(li.querySelectorAll('button')).map((b) => b.textContent.trim()),
+      rules: Array.from(li.querySelectorAll('button[data-rule]')).map((b) => b.dataset.rule),
     })),
   };
 })()`
@@ -46,26 +41,49 @@ type pendingCard struct {
 		Label   string   `json:"label"`
 		Package string   `json:"package"`
 		Buttons []string `json:"buttons"`
-		Pressed []string `json:"pressed"`
+		Rules   []string `json:"rules"`
 	} `json:"rows"`
 }
 
-// clickCategory taps one of the category buttons on the row for pkg, wherever that row is drawn —
-// the queue card at the top or the full list below it. Selecting by the package id rather than by
-// position because the list reorders as answers are given, and a test that clicked "the second
-// button of the first row" would be asserting a layout nobody promised.
-func clickCategory(pkg, label string) string {
+// ruleSheetJS reads the rule sheet: which answers it offers, by the server-side key each writes,
+// and which one is marked as in force.
+const ruleSheetJS = `(() => {
+  const options = Array.from(document.querySelectorAll('#sheet .rule-option'));
+  return {
+    offered: options.map((o) => o.dataset.rule),
+    pressed: options.filter((o) => o.getAttribute('aria-pressed') === 'true').map((o) => o.dataset.rule),
+  };
+})()`
+
+type ruleSheet struct {
+	Offered []string `json:"offered"`
+	Pressed []string `json:"pressed"`
+}
+
+// openRuleSheet opens the sheet with every answer for pkg: from the row's rule chip in the list, or
+// from "Andere Regel …" on its row in the queue. Selected by the package id, never by position — the
+// list reorders as answers are given.
+func openRuleSheet(pkg string) string {
 	return fmt.Sprintf(`(() => {
-  const rows = Array.from(document.querySelectorAll('#view li'))
-    .filter((li) => li.textContent.indexOf(%q) >= 0 && li.querySelector('.seg'));
-  if (!rows.length) throw new Error('no row for %s in the rendered page');
-  const btn = Array.from(rows[0].querySelectorAll('.seg button'))
-    .find((b) => b.textContent === %q);
-  if (!btn) throw new Error('row for %s has no %s button; it has: '
-    + Array.from(rows[0].querySelectorAll('.seg button')).map((b) => b.textContent).join(' | '));
-  btn.click();
+  const rows = Array.from(document.querySelectorAll('#view li[data-package=%q]'));
+  const opener = rows.map((li) => li.querySelector('[data-rule-chip], [data-action="more-rules"]')).find(Boolean);
+  if (!opener) throw new Error('no row for %s in the rendered page');
+  opener.click();
   return true;
-})()`, pkg, pkg, label, pkg, label)
+})()`, pkg, pkg)
+}
+
+// clickCategory gives pkg the answer `rule` — ALLOW, LIMIT, OWN, BLOCK, BONUS, or "none" for no
+// rule — through the rule sheet, the way a parent gives any answer that is not on the row itself.
+func clickCategory(b *browser, pkg, rule string) {
+	b.eval(openRuleSheet(pkg), nil)
+	b.waitFor(`document.getElementById('sheet').open && !!document.querySelector('#sheet .rule-option')`, 10*time.Second, "the rule sheet for "+pkg)
+	b.eval(fmt.Sprintf(`(() => {
+  const opt = document.querySelector('#sheet .rule-option[data-rule=%q]');
+  if (!opt) throw new Error('the rule sheet offers no %s; it offers: '
+    + Array.from(document.querySelectorAll('#sheet .rule-option')).map((o) => o.dataset.rule).join(' | '));
+  opt.click();
+})()`, rule, rule), nil)
 }
 
 func TestTheConsoleShowsTheApprovalQueueAndCategorisesFromIt(t *testing.T) {
@@ -113,16 +131,22 @@ func TestTheConsoleShowsTheApprovalQueueAndCategorisesFromIt(t *testing.T) {
 	// and the line that says apps are waiting for a decision could never be drawn — which is why
 	// the family found out about the queue from somewhere other than the console. Nothing was red,
 	// because undefined is not an error and "0 min" is a plausible number.
-	b.waitFor("document.querySelectorAll('#view .card').length > 0", 15*time.Second, "the home view")
-	var home card
-	b.eval(deviceCardJS, &home)
-	// "1 h", not "1 h 0 min": a round hour says no minutes.
-	if !strings.Contains(home.Text, "42 min of 1 h") || strings.Contains(home.Text, "1 h 0 min") {
-		t.Errorf("the home card does not report the screen time the phone filed.\ncard: %s", home.Text)
+	b.waitFor("document.querySelectorAll('#view .child-card').length > 0", 15*time.Second, "Übersicht")
+	var home struct {
+		Today   string `json:"today"`
+		Pending string `json:"pending"`
 	}
-	if !strings.Contains(home.Text, "app(s) are paused waiting for your decision") {
-		t.Errorf("the home card does not say an app is waiting for a decision, so a parent has no "+
-			"way to learn the queue exists.\ncard: %s", home.Text)
+	b.eval(`({
+	  today: (document.querySelector('#view .child-card .today') || {}).textContent || '',
+	  pending: (document.querySelector('#view .child-card [data-pending]') || {}).textContent || '',
+	})`, &home)
+	// "1 h", not "1 h 0 min": a round hour says no minutes.
+	if !strings.Contains(home.Today, "42 min von 1 h") || strings.Contains(home.Today, "1 h 0 min") {
+		t.Errorf("the child's card does not report the screen time the phone filed: %q", home.Today)
+	}
+	if !strings.Contains(home.Pending, "1 App wartet auf deine Entscheidung") {
+		t.Errorf("the child's card does not say an app is waiting for a decision, so a parent has no "+
+			"way to learn the queue exists: %q", home.Pending)
 	}
 
 	b.eval("document.querySelector('.tab[data-tab=\"apps\"]').click()", nil)
@@ -151,20 +175,25 @@ func TestTheConsoleShowsTheApprovalQueueAndCategorisesFromIt(t *testing.T) {
 	if !strings.Contains(row.Package, pkgChat) {
 		t.Errorf("the row does not say which package it is about: %q", row.Package)
 	}
-	// The four answers the owner asked for, by the words they asked for them in.
-	for _, want := range []string{"Always free", "Daily limit", "Own limit", "Always blocked"} {
-		if !hasButton(row.Buttons, want) {
-			t.Errorf("the queue offers no %q button: %q", want, row.Buttons)
-		}
+	// The two answers almost everyone gives, on the row itself: the ordinary yes (it counts like
+	// every other app) and no.
+	if fmt.Sprint(row.Rules) != "[LIMIT BLOCK]" || !hasButton(row.Buttons, "Erlauben") || !hasButton(row.Buttons, "Sperren") {
+		t.Errorf("the queue row offers %q (rules %v); want Erlauben (LIMIT) and Sperren (BLOCK)", row.Buttons, row.Rules)
 	}
-	// Undecided IS the state, so it must not also be a button here — a control that offers the
-	// answer already in force is how the old two-button version hid its third state.
-	if hasButton(row.Buttons, "Undecided") {
-		t.Errorf("an app with no rule offers an 'Undecided' button: %q", row.Buttons)
+	// And every answer the owner asked for behind "Andere Regel …".
+	b.eval(openRuleSheet(pkgChat), nil)
+	b.waitFor(`document.getElementById('sheet').open && !!document.querySelector('#sheet .rule-option')`, 10*time.Second, "the rule sheet")
+	var sheet ruleSheet
+	b.eval(ruleSheetJS, &sheet)
+	if fmt.Sprint(sheet.Offered) != "[ALLOW LIMIT OWN BLOCK BONUS]" {
+		t.Errorf("the rule sheet offers %v; want every answer and — for an app with no rule — no "+
+			"'Keine Regel', because a control that offers the answer already in force is how the "+
+			"old two-button version hid its third state", sheet.Offered)
 	}
-	if len(row.Pressed) != 0 {
-		t.Errorf("a waiting app shows %q as already chosen", row.Pressed)
+	if len(sheet.Pressed) != 0 {
+		t.Errorf("a waiting app shows %v as already chosen", sheet.Pressed)
 	}
+	b.eval(`document.getElementById('sheet-close').click()`, nil)
 	// The one app that was never waiting must not be in the queue — an assertion that the queue is
 	// a queue rather than a second copy of the list.
 	if strings.Contains(fmt.Sprint(queue.Rows), pkgGame) {
@@ -185,10 +214,8 @@ func TestTheConsoleShowsTheApprovalQueueAndCategorisesFromIt(t *testing.T) {
       return true;
     })()`, nil)
 
-	b.eval(clickCategory(pkgChat, "Daily limit"), nil)
-	b.waitFor("(() => { const cards = Array.from(document.querySelectorAll('#view .card'));"+
-		"return !cards.some((c) => { const h = c.querySelector('h2');"+
-		"return h && h.textContent.indexOf('Waiting for your decision') >= 0; }); })()",
+	b.eval(`document.querySelector('#view .pending-card li[data-package="`+pkgChat+`"] button[data-rule="LIMIT"]').click()`, nil)
+	b.waitFor("document.querySelector('#view .pending-card') === null",
 		15*time.Second, "the queue to empty once the last app is answered")
 
 	var immediate int
@@ -205,32 +232,31 @@ func TestTheConsoleShowsTheApprovalQueueAndCategorisesFromIt(t *testing.T) {
 
 	rules := listRules(t, h, parent.Token, child.ID)
 	if got := rules[pkgChat]; got.Action != "LIMIT" || got.LimitMinutes != 0 {
-		t.Fatalf("'Daily limit' stored %+v; it must be a LIMIT with no allowance of its own", got)
+		t.Fatalf("'Erlauben' stored %+v; it must be a LIMIT with no allowance of its own", got)
 	}
 
 	// ---- and the one answer that carries a number ----
-	b.eval(clickCategory(pkgChat, "Own limit"), nil)
-	b.waitFor("document.querySelectorAll('#view .own-limit input').length > 0", 15*time.Second,
+	clickCategory(b, pkgChat, "OWN")
+	b.waitFor("document.querySelectorAll('#sheet .own-limit input').length > 0", 15*time.Second,
 		"the minutes field to appear with the answer it belongs to")
 	var minutes string
-	b.eval("document.querySelector('#view .own-limit input').value", &minutes)
+	b.eval("document.querySelector('#sheet .own-limit input').value", &minutes)
 	if minutes != "60" {
 		t.Errorf("the allowance field starts at %q; choosing 'Own limit' must store a real "+
 			"allowance rather than a zero under a button that says there is one", minutes)
 	}
 	rules = listRules(t, h, parent.Token, child.ID)
 	if got := rules[pkgChat]; got.Action != "LIMIT" || got.LimitMinutes != 60 {
-		t.Fatalf("'Own limit' stored %+v; the console showed 60 minutes", got)
+		t.Fatalf("'Eigenes Limit' stored %+v; the console showed 60 minutes", got)
 	}
+	b.eval(`document.getElementById('sheet-close').click()`, nil)
 
 	// Reversibility, from the same control: an answer a parent can give is one they can take back.
-	b.eval(clickCategory(pkgChat, "Undecided"), nil)
-	b.waitFor("(() => { const cards = Array.from(document.querySelectorAll('#view .card'));"+
-		"return cards.some((c) => { const h = c.querySelector('h2');"+
-		"return h && h.textContent.indexOf('Waiting for your decision') >= 0; }); })()",
+	clickCategory(b, pkgChat, "none")
+	b.waitFor("document.querySelector('#view .pending-card') !== null",
 		15*time.Second, "the app to return to the queue")
 	if _, still := listRules(t, h, parent.Token, child.ID)[pkgChat]; still {
-		t.Error("'Undecided' left the rule in place, so the app is in the queue and approved at once")
+		t.Error("'Keine Regel' left the rule in place, so the app is in the queue and approved at once")
 	}
 }
 

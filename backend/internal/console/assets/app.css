@@ -1,63 +1,90 @@
 /* Family Guard console.
  *
  * Mobile first, and literally so: every rule below the reset is written for a 360 px phone held in
- * one hand, and the media queries only widen that layout for a tablet or a laptop. Nothing here is a
- * phone adaptation of a desktop screen, because that is the shape that produces 11 px labels and
- * controls you cannot hit while walking.
+ * one hand, and the media queries only widen that layout for a laptop. Three constants come from
+ * that: no tap target smaller than 44 px, no input smaller than 16 px (below that iOS zooms the page
+ * on focus and never zooms back), and nothing important within reach of the browser chrome.
  *
- * Three constants come from that: no tap target smaller than 44 px, no input smaller than 16 px
- * (below that iOS zooms the page on focus and never zooms back), and nothing important within
- * reach of the browser chrome at either end.
+ * ONE navigation, `#mainnav`, at every width, placed by this file alone: a bar pinned to the bottom
+ * below 900 px, where a thumb reaches it, and a sidebar from 900 px. No script moves it and nothing
+ * is written twice — the objection to two navigations (the second copy is the one that stops being
+ * updated) is answered by there being one element, laid out twice.
  *
- * The navigation lives at the top at every width. Below 900 px it is a drawer opened from the ☰
- * button; at 900 px and above it is a row of links in the header. There is still only ONE of it:
- * app.js moves `#mainnav` and `#child-switcher` between the header and the drawer as the viewport
- * crosses that breakpoint. An earlier version of this file kept the navigation pinned to the bottom
- * at every width and justified it by saying a sidebar "would mean maintaining two navigations" —
- * the objection was right, and moving the node instead of duplicating it is the answer to it.
+ * Every colour is a token on :root with a dark set, and the status colours mean the same thing
+ * everywhere: ok (running, free), warn (needs a look), paused (apps held), danger (locked, failed),
+ * gold (Bonuszeit — the colour the phone uses for it too).
  */
 
 :root {
-  --bg: #f5f6f9;
+  --bg: #f3f4f7;
   --surface: #ffffff;
-  --surface-2: #eceef4;
-  --text: #14161d;
-  --text-dim: #5a6072;
-  --line: #d9dce6;
-  --accent: #2f5bd7;
-  --accent-soft: #e6ecfb;
+  --surface-2: #eef0f5;
+  --surface-3: #e3e6ee;
+  --text: #121521;
+  --text-dim: #586074;
+  --line: #e1e4ec;
+  --line-strong: #cdd2de;
+  --accent: #3257d6;
+  --accent-soft: #e7ecfc;
   --accent-text: #ffffff;
-  --ok: #1c7f4b;
-  --warn: #a86400;
+  --ok: #16794a;
+  --ok-soft: #e3f4ea;
+  --warn: #9a5b00;
+  --warn-soft: #fcf1dc;
+  --paused: #b4480f;
+  --paused-soft: #fde9dd;
   --danger: #b3261e;
+  --danger-soft: #fbe5e3;
   /* Bonuszeit (FR-22): gold on the phone and here, so a child and a parent learn one colour for
-     earned time. Dark enough to read as text: 5.5:1 on a card, 5.1:1 on the page (dark: 10.2:1). */
+     earned time. Dark enough to read as text on a card (5.5:1). */
   --gold: #8a6100;
-  --radius: 14px;
+  --gold-fill: #d9a520;
+  --gold-soft: #fbf1d6;
+  --shadow: 0 1px 2px rgba(18, 21, 33, 0.05), 0 2px 8px rgba(18, 21, 33, 0.04);
+  --radius: 16px;
+  --radius-sm: 12px;
   --tap: 44px;
   --gap: 12px;
   --topbar: 56px;
+  --tabbar: 64px;
+  --sidebar: 232px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f1016;
-    --surface: #191b24;
-    --surface-2: #232634;
+    --bg: #0e1016;
+    --surface: #171a23;
+    --surface-2: #20242f;
+    --surface-3: #2a2f3c;
     --text: #eef0f6;
-    --text-dim: #a2a8bb;
-    --line: #2e3242;
-    --accent: #6d90ff;
-    --accent-soft: #232a44;
-    --accent-text: #0f1016;
-    --ok: #56d199;
+    --text-dim: #a3a9bb;
+    --line: #272b37;
+    --line-strong: #363c4c;
+    --accent: #7b9bff;
+    --accent-soft: #222a45;
+    --accent-text: #0e1016;
+    --ok: #5ad19b;
+    --ok-soft: #143325;
     --warn: #f0b355;
+    --warn-soft: #3a2d14;
+    --paused: #ff9d66;
+    --paused-soft: #3d2517;
     --danger: #ff8a80;
+    --danger-soft: #3e1d1c;
     --gold: #f2c14e;
+    --gold-fill: #e0ad2e;
+    --gold-soft: #3a3014;
+    --shadow: none;
   }
 }
 
 * { box-sizing: border-box; }
+
+/* `hidden` must win over every display a component sets: the shell is a grid from 900 px, and a
+   grid rule beats the UA's [hidden] on specificity, which would show a signed-out page's console. */
+[hidden] { display: none !important; }
+
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 
 html, body {
   margin: 0;
@@ -65,70 +92,50 @@ html, body {
   background: var(--bg);
   color: var(--text);
   font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  /* Stops the grey flash on tap without removing the :active feedback below it. */
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: contain;
 }
 
-h1, h2, h3 { margin: 0; font-weight: 650; }
-h1 { font-size: 1.15rem; }
-h2 { font-size: 1.05rem; }
+h1, h2, h3 { margin: 0; font-weight: 650; letter-spacing: -0.005em; }
+h1 { font-size: 1.12rem; }
+h2 { font-size: 1.06rem; }
 h3 { font-size: 0.95rem; }
 p { margin: 0 0 0.6em; }
+p:last-child { margin-bottom: 0; }
 
 .noscript { display: block; padding: 24px; text-align: center; }
 
+.icon { width: 20px; height: 20px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.icon-sm { width: 16px; height: 16px; }
+
 /* ---- sign in ------------------------------------------------------------ */
 
-/* This used to be `min-height: 100dvh; place-items: center` around a 420 px card, which on a laptop
-   is one small box floating in an otherwise empty viewport — it reads as a page that failed to
-   load. The page is now laid out top-down like every other page, and the three blocks are placed
-   into two columns only when there is room for two columns. */
-
 .signin { padding: clamp(20px, 4vh, 56px) 20px calc(40px + env(safe-area-inset-bottom)); }
-
-.signin-inner {
-  max-width: 1000px;
-  margin: 0 auto;
-  display: grid;
-  gap: 24px;
-}
-
-.signin-head img { display: block; margin-bottom: 12px; }
+.signin-inner { max-width: 1000px; margin: 0 auto; display: grid; gap: 24px; }
+.signin-head img { display: block; margin-bottom: 12px; border-radius: 14px; }
 .signin-head h1 { font-size: 1.6rem; letter-spacing: -0.01em; }
 .signin-lead { color: var(--text-dim); margin-top: 6px; font-size: 1.02rem; max-width: 46ch; }
-
 .signin-card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  box-shadow: var(--shadow);
   padding: 22px 20px;
 }
 .signin-card h2 { margin-bottom: 4px; }
 .signin-card p { color: var(--text-dim); }
 .signin-note { font-size: 0.85rem; margin: 10px 0 0; }
-
 .signin-points { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-.signin-points li {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  color: var(--text-dim);
-  font-size: 0.95rem;
-}
+.signin-points li { display: flex; gap: 12px; align-items: flex-start; color: var(--text-dim); font-size: 0.95rem; }
 .point-icon {
   flex: 0 0 auto;
-  width: 28px; height: 28px;
+  width: 32px; height: 32px;
   display: grid; place-items: center;
-  border-radius: 8px;
-  background: var(--surface-2);
+  border-radius: 10px;
+  background: var(--accent-soft);
   color: var(--accent);
-  font-size: 0.95rem;
 }
 
-/* Two columns, with the card beside the description rather than under it. `align-content: center`
-   rather than `min-height: 100dvh`: the block is centred in whatever space it has, and does not
-   claim a viewport it cannot fill. */
 @media (min-width: 860px) {
   .signin { padding-block: clamp(40px, 9vh, 96px); }
   .signin-inner {
@@ -143,50 +150,26 @@ p { margin: 0 0 0.6em; }
   .signin-card { grid-area: card; align-self: start; }
 }
 
-/* ---- top bar ------------------------------------------------------------ */
+/* ---- shell -------------------------------------------------------------- */
 
 .topbar {
   position: sticky;
   top: 0;
   z-index: 10;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px);
   border-bottom: 1px solid var(--line);
-  padding: env(safe-area-inset-top) 10px 0;
+  padding: env(safe-area-inset-top) 12px 0;
 }
-.topbar-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: var(--topbar);
-}
-#family-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.topbar-row { display: flex; align-items: center; gap: 10px; min-height: var(--topbar); }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+.brand img { width: 30px; height: 30px; border-radius: 9px; flex: 0 0 auto; }
+#family-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* The current child, shown only where the switcher itself is not: below 900 px the pills are in the
-   drawer, and a header that does not say which child you are looking at makes every screen below it
-   ambiguous. */
-.crumb {
-  color: var(--text-dim);
-  font-size: 0.95rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-.crumb:empty { display: none; }
-.crumb::before { content: "·"; margin-right: 6px; }
-
-.menu-btn { flex: 0 0 auto; font-size: 1.2rem; }
-
-/* Below 900 px these three live in the drawer, so they are hidden *in the header* rather than
-   globally — a bare `#mainnav { display: none }` would follow the node into the drawer and hide it
-   there too. */
-.topbar #mainnav,
-.topbar #child-switcher,
-.topbar #signout { display: none; }
-
-/* The child switcher scrolls sideways rather than wrapping: with four children a wrapping row
-   pushes the content below the fold, and the snap points keep a half-cut pill from being the
-   resting state. */
+/* The child switcher: a row under the brand on a phone, scrolling sideways rather than wrapping
+   (four children in a wrapping row push the content below the fold), and beside it on a laptop. */
+.kids-row { padding-bottom: 10px; }
+.kids-row[hidden] { display: none; }
 .pills {
   display: flex;
   gap: 8px;
@@ -198,293 +181,301 @@ p { margin: 0 0 0.6em; }
 .pill {
   scroll-snap-align: start;
   flex: 0 0 auto;
-  /* var(--tap), like every other control. It read 36px until a browser measured it: the child
-     switcher is how a parent changes which child they are looking at, so it is one of the two most
-     tapped things in the console, and it was the only control below the floor this file's own
-     header promises. Nine source-level guards over this stylesheet passed the whole time. */
   min-height: var(--tap);
-  padding: 7px 14px;
+  padding: 7px 16px;
   border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
   color: var(--text);
   font: inherit;
   font-size: 0.95rem;
+  font-weight: 550;
   white-space: nowrap;
   cursor: pointer;
 }
 .pill[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.pill-add { color: var(--text-dim); font-weight: 500; }
 
-/* ---- navigation --------------------------------------------------------- */
+#signout { display: none; }
+#page-title { display: none; }
 
-.mainnav { display: flex; gap: 2px; min-width: 0; }
+/* ---- navigation: bottom bar, then sidebar -------------------------------- */
+
+.mainnav {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 12;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  height: calc(var(--tabbar) + env(safe-area-inset-bottom));
+  padding: 0 4px env(safe-area-inset-bottom);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px);
+  border-top: 1px solid var(--line);
+}
+.mainnav[hidden] { display: none; }
+/* Before the media query that shows it: a media query adds no specificity, so the base rule written
+   after it won on source order and the sidebar never showed the family's name. */
+.mainnav-head { display: none; align-items: center; gap: 10px; padding: 4px 10px 18px; font-weight: 650; min-width: 0; }
+.mainnav-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mainnav-head img { width: 30px; height: 30px; border-radius: 9px; }
 .tab {
   min-height: var(--tap);
+  min-width: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  border-radius: 10px;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 2px;
+  border-radius: 12px;
   text-decoration: none;
   color: var(--text-dim);
-  font-size: 0.95rem;
+  font-size: 0.72rem;
+  font-weight: 550;
   white-space: nowrap;
 }
-.tab-icon { font-size: 1.05rem; line-height: 1; }
-.tab[aria-current="page"] { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
-
-@media (min-width: 900px) {
-  /* `.topbar .menu-btn`, not `.menu-btn`.
-     A media query adds no specificity, so a bare `.menu-btn { display: none }` here is (0,1,0) and
-     loses to `.btn-icon { display: inline-grid }` 200 lines further down this file purely on source
-     order — and the ☰ carries both classes. That shipped: at 900 px and up the navigation is in the
-     header where it belongs AND the menu button is still offered, so tapping it opens a drawer
-     whose two slots placeChrome has just emptied. Reported as "the sidenav is empty and I still
-     have a top menu", which is one defect, not two. Measured in
-     TestTheConsoleHasOneNavigationAtEveryWidth. */
-  .topbar .menu-btn { display: none; }
-  .crumb { display: none; }
-  .topbar { padding-inline: 20px; }
-  .topbar #mainnav { display: flex; }
-  .topbar #child-switcher { display: flex; flex: 0 1 auto; margin-left: auto; }
-  .topbar #signout { display: inline-flex; flex: 0 0 auto; }
-  .topbar-row { max-width: 1240px; margin-inline: auto; gap: 12px; }
-  .mainnav { margin-left: 10px; }
-}
-
-/* ---- drawer ------------------------------------------------------------- */
-
-/* A <dialog>, so the focus trap, the Esc key and the scrim come from the platform rather than from
-   a hand-written key handler that has to be right. The UA stylesheet centres a modal dialog with
-   `inset: 0; margin: auto`; `margin-right: auto` alone pins it to the left edge. */
-.drawer {
-  border: none;
-  padding: 0;
-  margin: 0 auto 0 0;
-  width: min(310px, 86vw);
-  max-width: none;
-  height: 100dvh;
-  max-height: 100dvh;
-  border-radius: 0;
-  background: var(--surface);
-  color: var(--text);
-  overflow: hidden;
-}
-.drawer[open] { display: flex; flex-direction: column; }
-.drawer::backdrop { background: rgba(0, 0, 0, 0.5); }
-
-@media (prefers-reduced-motion: no-preference) {
-  .drawer[open] { animation: drawer-in 0.16s ease-out; }
-  @keyframes drawer-in { from { transform: translateX(-100%); } to { transform: none; } }
-}
-
-.drawer-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: max(8px, env(safe-area-inset-top)) 10px 8px 16px;
-  border-bottom: 1px solid var(--line);
-}
-.drawer-family { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.drawer-slot { padding: 8px; overflow-y: auto; }
-
-/* The destinations sit at the BOTTOM of the drawer, not the top. Moving the navigation off the
-   bottom bar costs one-handed reach — the ☰ is in the far corner from a thumb — and this is what
-   keeps that cost to the opening tap alone: once the drawer is up, the five links it exists for are
-   back in the same band of the screen the tab bar used to occupy. `margin-top: auto` on the FIRST
-   growing child is what does it, so the free space collects in exactly one place; `.drawer-foot`
-   deliberately does not also claim it, because two auto margins split the space between them and
-   leave the sign-out button floating in a gap. When the content is taller than the drawer the auto
-   margin resolves to zero on its own and the layout degrades to a plain top-aligned list. */
-#drawer-nav { flex: 0 0 auto; margin-top: auto; }
-.drawer-slot-children { flex: 0 1 auto; max-height: 38vh; }
-.drawer-sep {
-  margin: 4px 0 0;
-  padding: 8px 16px 0;
-  border-top: 1px solid var(--line);
-  color: var(--text-dim);
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.drawer-foot {
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--line);
-}
-
-/* The same nav element, laid out as a two-column grid instead of a row. A list was right for five
-   destinations; the sixth (the guardian window, FR-21) pushed the first one above the thumb's reach
-   on an 800 px phone, which mobile_test measures. Two columns of 48 px rows keep all six in the
-   drawer's lower part and every target at full tap size. */
-.drawer .mainnav { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.drawer .tab { min-height: 48px; padding: 0 12px; font-size: 1rem; border-radius: 10px; }
-.drawer .tab-icon { width: 22px; text-align: center; }
-
-/* And the same switcher, as a column of full-width pills. */
-.drawer .pills { flex-direction: column; overflow-x: visible; gap: 6px; }
-.drawer .pill { border-radius: 10px; text-align: left; width: 100%; }
-
-/* ---- view --------------------------------------------------------------- */
+.tab .icon { width: 22px; height: 22px; }
+.tab > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.tab[aria-current="page"] { color: var(--accent); }
+.tab[aria-current="page"] .icon { stroke-width: 2.4; }
 
 .view {
   padding: var(--gap);
-  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  padding-bottom: calc(var(--tabbar) + 28px + env(safe-area-inset-bottom));
   outline: none;
+}
+.view.no-tabbar { padding-bottom: calc(28px + env(safe-area-inset-bottom)); }
+
+@media (min-width: 900px) {
+  .app-shell { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); grid-template-areas: "nav top" "nav view"; grid-template-rows: auto 1fr; min-height: 100dvh; }
+  .app-shell.no-nav { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "view"; }
+  .topbar { grid-area: top; padding-inline: 24px; }
+  .topbar-inner { max-width: 1180px; margin: 0 auto; display: flex; align-items: center; gap: 16px; }
+  .topbar-row { flex: 0 1 auto; min-width: 0; }
+  .kids-row { flex: 1 1 auto; min-width: 0; padding: 0; display: flex; justify-content: flex-end; }
+  #signout { display: inline-flex; flex: 0 0 auto; margin-left: auto; }
+  /* The sidebar carries the family's name; the top bar repeats it only when there is no sidebar
+     (a guardian's page). */
+  .app-shell:not(.no-nav) .topbar .brand { display: none; }
+  /* The laptop's top bar names the page, where the phone's names the family. */
+  .app-shell:not(.no-nav) #page-title { display: block; font-size: 1.15rem; white-space: nowrap; }
+  .mainnav {
+    grid-area: nav;
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 20px 12px;
+    background: var(--surface);
+    border-top: none;
+    border-right: 1px solid var(--line);
+    backdrop-filter: none;
+  }
+  .mainnav-head { display: flex; }
+  .tab { flex-direction: row; justify-content: flex-start; gap: 12px; padding: 0 14px; min-height: 46px; font-size: 0.97rem; }
+  .tab[aria-current="page"] { background: var(--accent-soft); font-weight: 650; }
+  .view { grid-area: view; width: 100%; max-width: 1180px; margin: 0 auto; padding: 24px 24px 48px; }
+  .view.no-tabbar { padding-bottom: 48px; }
+}
+
+/* ---- layout inside a view ------------------------------------------------- */
+
+.page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin: 4px 2px 14px; }
+.page-head h1 { font-size: 1.35rem; }
+.page-head p { margin: 2px 0 0; color: var(--text-dim); font-size: 0.92rem; }
+
+/* `minmax(0, 1fr)`, never the implicit `auto`: an auto track grows to the widest thing in it, and one
+   phone name that may not wrap pushed a 360 px page sideways (tour, 2026-09-30). */
+.cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); }
+.cols > * { min-width: 0; }
+.col { display: grid; gap: var(--gap); align-content: start; }
+@media (min-width: 900px) {
+  .cols { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .cols.wide-left { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
+  .cols > .full { grid-column: 1 / -1; }
 }
 
 /* ---- cards -------------------------------------------------------------- */
 
+/* Every card is a column with ONE vertical rhythm: fields that sat flush against the next label
+   (tour, Schlafenszeit card) were a card without it. */
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px;
-  margin-bottom: var(--gap);
-}
-.card-head {
+  box-shadow: var(--shadow);
+  padding: 16px;
+  min-width: 0;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
+  flex-direction: column;
+  gap: 12px;
 }
+.cols > .card, .col > .card { margin: 0; }
+.view > .card { margin-bottom: var(--gap); }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+.card-head h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.card-head .row-actions { margin-left: auto; }
+.section-title { margin: 6px 0 -4px; font-size: 0.8rem; font-weight: 650; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.card > .section-title:first-child { margin-top: 0; }
+
 .muted { color: var(--text-dim); font-size: 0.9rem; }
 .stack { display: flex; flex-direction: column; gap: 10px; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .wrap { display: flex; flex-wrap: wrap; gap: 8px; }
+.grow { flex: 1 1 auto; min-width: 0; }
 
-.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: var(--text-dim); }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: 0 0 auto; background: var(--text-dim); }
 .dot.online { background: var(--ok); }
+.dot.resting { background: var(--warn); }
 .dot.offline { background: var(--danger); }
 
-.badge {
-  display: inline-block;
-  padding: 2px 8px;
+.badge, .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
   border-radius: 999px;
   background: var(--surface-2);
   font-size: 0.78rem;
+  font-weight: 550;
   color: var(--text-dim);
+  white-space: nowrap;
 }
-.badge.warn { color: var(--warn); }
-.badge.danger { color: var(--danger); }
-.badge.ok { color: var(--ok); }
+.badge.ok, .chip.ok { color: var(--ok); background: var(--ok-soft); }
+.badge.warn, .chip.warn { color: var(--warn); background: var(--warn-soft); }
+.badge.paused, .chip.paused { color: var(--paused); background: var(--paused-soft); }
+.badge.danger, .chip.danger { color: var(--danger); background: var(--danger-soft); }
+.badge.gold, .chip.gold { color: var(--gold); background: var(--gold-soft); }
+.chip { font-size: 0.82rem; padding: 3px 10px; }
 
-/* ---- empty states and first run ----------------------------------------- */
+/* A warning that needs a parent: a coloured block, not a line of grey text among other grey text. */
+.notice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+.notice .icon { color: var(--warn); margin-top: 1px; }
+.notice.danger { background: var(--danger-soft); }
+.notice.danger .icon { color: var(--danger); }
+.notice.info { background: var(--surface-2); }
+.notice.info .icon { color: var(--text-dim); }
+.notice > div { min-width: 0; }
+.notice b { display: block; }
+.notice p { margin: 2px 0 0; }
 
-/* The console a parent sees on day one has no devices, no apps, no usage and no history, so four of
-   its five screens are made entirely of this. It is the first impression, not the edge case. */
-.empty { text-align: center; padding: 26px 18px; }
+/* Help that is one line until asked. The <details> gives keyboard and screen-reader behaviour free. */
+.help { font-size: 0.88rem; color: var(--text-dim); }
+.help summary { cursor: pointer; list-style: none; display: flex; gap: 6px; align-items: flex-start; min-height: var(--tap); padding: 11px 0; }
+.help summary::-webkit-details-marker { display: none; }
+.help summary .icon { margin-top: 1px; }
+.help[open] summary { padding-bottom: 4px; }
+.help > p { margin: 0 0 8px 26px; }
+
+.empty { text-align: center; padding: 28px 18px; }
 .empty .empty-icon {
-  width: 52px; height: 52px;
+  width: 56px; height: 56px;
   margin: 0 auto 12px;
   display: grid; place-items: center;
-  border-radius: 14px;
-  background: var(--surface-2);
-  color: var(--text-dim);
-  font-size: 1.5rem;
+  border-radius: 16px;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
+.empty .empty-icon .icon { width: 26px; height: 26px; }
 .empty h2 { margin-bottom: 6px; }
 .empty p { color: var(--text-dim); font-size: 0.95rem; max-width: 44ch; margin-inline: auto; }
-.empty .btn { margin-top: 14px; display: inline-flex; align-items: center; justify-content: center; }
+.empty .btn { margin-top: 4px; align-self: center; }
 
 .steps { margin: 0 0 14px; padding: 0; list-style: none; counter-reset: step; }
-.steps li {
-  position: relative;
-  counter-increment: step;
-  padding: 0 0 14px 40px;
-  border-left: 2px solid var(--line);
-  margin-left: 13px;
-}
+.steps li { position: relative; counter-increment: step; padding: 0 0 14px 40px; border-left: 2px solid var(--line); margin-left: 13px; }
 .steps li:last-child { border-left-color: transparent; padding-bottom: 0; }
 .steps li::before {
   content: counter(step);
-  position: absolute;
-  left: -14px; top: -2px;
+  position: absolute; left: -14px; top: -2px;
   width: 26px; height: 26px;
   display: grid; place-items: center;
   border-radius: 50%;
-  background: var(--accent);
-  color: var(--accent-text);
-  font-size: 0.82rem;
-  font-weight: 650;
+  background: var(--accent); color: var(--accent-text);
+  font-size: 0.82rem; font-weight: 650;
 }
 .steps b { display: block; font-weight: 620; }
 .steps small { color: var(--text-dim); font-size: 0.88rem; }
-
-/* ---- home status strip -------------------------------------------------- */
-
-/* Shown only when there is more than one device. With one device the card below already answers
-   "is it all right", and a strip repeating it is decoration. */
-.strip { padding: 4px 14px; }
-.strip .strip-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: var(--tap);
-  padding: 8px 0;
-  border-bottom: 1px solid var(--line);
-}
-.strip .strip-row:last-child { border-bottom: none; }
-.strip .strip-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.strip .meter { flex: 0 0 84px; }
 
 /* ---- controls ----------------------------------------------------------- */
 
 .btn {
   min-height: var(--tap);
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--surface-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
   color: var(--text);
   font: inherit;
   font-size: 0.95rem;
+  font-weight: 550;
+  line-height: 1.2;
   cursor: pointer;
   touch-action: manipulation;
+  text-decoration: none;
+  /* German runs to long single words — "Wiederherstellungscode" is wider than half a phone — so a
+     button may shrink and break the word where German breaks it (the page is lang="de-CH"). */
+  min-width: 0;
+  hyphens: auto;
+  /* `anywhere`, not `break-word`: only `anywhere` lowers the button's minimum width, and hyphenation
+     needs a dictionary a browser may not have — the test browser does not, and it measured the
+     phone sheet at 414 px of 360 with `break-word`. */
+  overflow-wrap: anywhere;
 }
 .btn:active { transform: translateY(1px); }
-.btn:disabled { opacity: 0.5; cursor: default; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn:focus-visible, .pill:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn-soft { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.btn-gold { background: var(--gold-soft); border-color: transparent; color: var(--gold); }
 .btn-danger { color: var(--danger); }
-/* FR-21: a paused profile says so in the guardian window, in the colour of the button that did it. */
-.guardian-paused { color: var(--danger); font-weight: 600; }
+.btn-danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn-quiet { background: transparent; border-color: transparent; color: var(--text-dim); }
-.btn-block { display: block; width: 100%; text-align: center; text-decoration: none; }
-/* An <a> is inline, and min-height does not apply to an inline box — so a link styled as a button
-   is exactly as tall as its line box plus padding, which lands within a pixel of the 44px floor and
-   depends on the font. Giving it a block-level display makes the floor apply instead of nearly
-   apply. `a.btn.btn-block` restates the full-width case, which the more specific rule would
-   otherwise override back to inline. */
-a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
-a.btn.btn-block { display: flex; }
-.btn-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-/* A tap target is an area, not a height.
-   `.btn` sets min-height, so a button whose label is a single glyph is 44px tall and as wide as the
-   glyph — the sheet's close control measured 43x44 on a 360px phone, and the only instrument that
-   noticed was one that measured both edges. Icon-only buttons get the floor in both directions. */
-.btn-icon { min-width: var(--tap); display: inline-grid; place-items: center; padding: 0; }
+.btn-block { display: flex; width: 100%; }
+.btn-icon { min-width: var(--tap); padding: 0; }
+.btn-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn-row > .btn { flex: 1 1 auto; }
+.guardian-paused { color: var(--danger); font-weight: 600; }
 
-label { display: block; font-size: 0.9rem; color: var(--text-dim); margin-bottom: 4px; }
-input, select {
+label { display: block; font-size: 0.88rem; color: var(--text-dim); margin-bottom: 4px; }
+input, select, textarea {
   width: 100%;
   min-height: var(--tap);
   padding: 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
   color: var(--text);
-  /* 16px exactly: anything smaller makes mobile Safari zoom in on focus and stay there. */
   font: inherit;
+  /* 16px exactly: anything smaller makes mobile Safari zoom in on focus and stay there. */
   font-size: 16px;
 }
+input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 input[type="checkbox"] { width: auto; min-height: auto; }
+input:disabled { opacity: 0.5; }
 
-/* A switch big enough to hit. The input stays in the DOM and keeps its semantics; only its
-   appearance is replaced, so it is still reachable by keyboard and by a screen reader. */
-.switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: var(--tap); }
+.switch { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: var(--tap); margin: 0; padding: 6px 0; }
+.switch + .switch { border-top: 1px solid var(--line); }
 .switch .switch-label { flex: 1; color: var(--text); font-size: 0.98rem; }
-.switch .switch-label small { display: block; color: var(--text-dim); font-size: 0.82rem; }
+.switch .switch-label small { display: block; color: var(--text-dim); font-size: 0.84rem; margin-top: 1px; }
 .switch input {
   appearance: none;
   -webkit-appearance: none;
@@ -492,10 +483,11 @@ input[type="checkbox"] { width: auto; min-height: auto; }
   width: 52px;
   height: 30px;
   border-radius: 999px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
   position: relative;
   transition: background 0.15s;
+  cursor: pointer;
 }
 .switch input::after {
   content: "";
@@ -503,49 +495,29 @@ input[type="checkbox"] { width: auto; min-height: auto; }
   top: 3px; left: 3px;
   width: 22px; height: 22px;
   border-radius: 50%;
-  background: var(--text-dim);
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
   transition: transform 0.15s;
 }
 .switch input:checked { background: var(--accent); border-color: var(--accent); }
-.switch input:checked::after { transform: translateX(22px); background: var(--accent-text); }
+.switch input:checked::after { transform: translateX(22px); }
 .switch input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-/* The same switch with no label beside it: the row's own `.label` is the label, and the control is
-   the whole right-hand cell. Without this the flex `justify-content: space-between` pushes the
-   toggle away from a row that has no second child to push it against. */
-.switch-bare { flex: 0 0 auto; }
+.switch-bare { flex: 0 0 auto; padding: 0; }
 
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-
-/* People & rights (FR-20.3): the address takes the full width, the role and "Add" share the row
-   under it. Three controls in the two-column row above would leave "Add" alone on a third line. */
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > span { color: var(--text-dim); font-size: 0.85rem; }
 .add-person { grid-template-columns: 1fr auto; }
 .add-person input { grid-column: 1 / -1; }
 
-/* A person's role and Remove. The row wraps, and the name and address claim a basis wide enough
-   that on a phone the controls move UNDER them: side by side at 360 px they left the address about
-   40 px, and it broke one letter per line. On a wider screen everything stays on one line. */
-.list li.person { flex-wrap: wrap; }
-.list li.person .label { flex: 1 1 14rem; }
-.row-actions { display: flex; gap: 8px; align-items: center; flex: 0 0 auto; margin-left: auto; }
-
-/* A labelled control that stacks — used where the label cannot sit beside the input, as a file
-   picker's does not. */
-.field { display: flex; flex-direction: column; gap: 6px; }
-.field > span { color: var(--text-dim); font-size: 0.85rem; }
-
-/* Prose that is a warning rather than an aside. Same size as `.muted`, different colour, because a
-   parent skimming a list has to be able to see which line is the one that needs them. */
 .warn { color: var(--warn); }
 .list .label small.warn { color: var(--warn); }
 
-/* A value meant to be selected and copied — an API key, once. Wraps rather than scrolls: a key that
-   runs off the right of a phone screen is one a parent copies half of. */
 .code-block {
   display: block;
   padding: 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.9rem;
@@ -554,20 +526,30 @@ input[type="checkbox"] { width: auto; min-height: auto; }
   user-select: all;
 }
 
-/* A group of mutually exclusive choices, sized so three of them still fit a 360 px screen. */
-.seg { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+/* A group of mutually exclusive choices. */
+.seg { display: flex; padding: 3px; gap: 3px; border-radius: var(--radius-sm); background: var(--surface-2); }
 .seg .btn {
   flex: 1 1 0;
   min-width: 0;
   border: none;
-  border-radius: 0;
-  background: var(--surface);
+  border-radius: 9px;
+  background: transparent;
   color: var(--text-dim);
   font-size: 0.9rem;
-  padding: 10px 6px;
+  padding: 8px 6px;
+  min-height: var(--tap);
 }
-.seg .btn + .btn { border-left: 1px solid var(--line); }
-.seg .btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.seg .btn[aria-pressed="true"], .seg .btn[aria-current="page"] { background: var(--surface); color: var(--text); font-weight: 650; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+
+/* Sub-tabs of a view (Regeln: Zeit, Schutz, Agenda): the same segmented shape, as links. */
+.subtabs { display: flex; padding: 3px; gap: 3px; border-radius: var(--radius-sm); background: var(--surface-3); margin-bottom: 14px; }
+.subtabs a {
+  flex: 1 1 0; min-width: 0; min-height: var(--tap);
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  border-radius: 9px; color: var(--text-dim); text-decoration: none; font-weight: 600; font-size: 0.93rem;
+}
+.subtabs a[aria-current="page"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+
 
 /* ---- lists -------------------------------------------------------------- */
 
@@ -578,68 +560,132 @@ input[type="checkbox"] { width: auto; min-height: auto; }
   justify-content: space-between;
   gap: 10px;
   min-height: var(--tap);
-  padding: 8px 0;
+  padding: 10px 0;
   border-bottom: 1px solid var(--line);
 }
 .list li:last-child { border-bottom: none; }
-.list .label { min-width: 0; }
+.label { min-width: 0; flex: 1 1 auto; }
+.label > b, .label > small { display: block; }
+.label > small { color: var(--text-dim); font-size: 0.82rem; overflow-wrap: anywhere; }
 .list .label b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.list .label small { color: var(--text-dim); font-size: 0.8rem; word-break: break-all; }
+.list .label small { display: block; color: var(--text-dim); font-size: 0.82rem; overflow-wrap: anywhere; }
+.list li.person { flex-wrap: wrap; }
+.list li.person .label { flex: 1 1 14rem; }
+.row-actions { display: flex; gap: 8px; align-items: center; flex: 0 0 auto; margin-left: auto; }
+.list-count { color: var(--text-dim); font-size: 0.85rem; margin: 0 0 4px; }
 
-/* The app list carries a three-way control per row, which does not fit beside a package name on a
-   360 px screen. It stacks below the label until there is room for both. */
-.applist li { flex-direction: column; align-items: stretch; gap: 8px; }
-.applist .seg,
-.applist .app-choice { width: 100%; }
+.toolbar { display: grid; gap: 8px; }
+/* Filters as chips that wrap: five segments in one row ran their labels together at 360 px. */
+.filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.filters .pill { padding: 6px 14px; font-size: 0.9rem; }
 
-/* The category control is six buttons where it used to be three (FR-5.8, FR-22), so the labels get less
-   room each. They are shortened rather than truncated: a segmented control that clips its own
-   options is one whose choices a parent has to guess at, and the full sentence for each lives in
-   the button's title. */
-.applist .app-choice { display: flex; flex-direction: column; gap: 8px; }
-.applist .seg .btn { font-size: 0.82rem; padding: 10px 4px; }
+/* ---- the meter ------------------------------------------------------------ */
 
-/* Only rendered while "Own limit" is the selected answer — see categoryControl for why a minutes
-   field must not sit next to an app that has no allowance. */
-.own-limit {
+.meter { position: relative; height: 12px; border-radius: 999px; background: var(--surface-2); overflow: hidden; display: flex; }
+.meter > span { display: block; height: 100%; background: var(--ok); flex: 0 0 auto; }
+.meter > span.over { background: var(--danger); }
+.meter > span.bonus { background: var(--gold-fill); }
+.meter-sm { height: 8px; }
+
+/* ---- Übersicht ------------------------------------------------------------ */
+
+.child-card { gap: 14px; }
+.child-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.avatar {
+  width: 44px; height: 44px; flex: 0 0 auto;
+  display: grid; place-items: center;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+.child-head h2 { font-size: 1.18rem; }
+.child-head .state-line { color: var(--text-dim); font-size: 0.9rem; margin-top: 1px; }
+.child-head .chip { margin-left: auto; }
+
+.time-block { display: grid; gap: 6px; }
+.time-block .row b { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.time-block .row .muted { text-align: right; }
+
+.quick { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.quick .btn { flex-direction: column; gap: 4px; padding: 10px 4px; min-height: 64px; font-size: 0.86rem; }
+.quick .btn .icon { width: 22px; height: 22px; }
+
+.devices { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.device-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: var(--tap);
-}
-.own-limit input {
-  flex: 0 0 auto;
-  width: 96px;
-  min-height: var(--tap);
-  padding: 8px 10px;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
   color: var(--text);
   font: inherit;
-  text-align: right;
+  text-align: left;
+  cursor: pointer;
 }
-.own-limit input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+div.device-row { cursor: default; flex-wrap: wrap; }
+/* An unset phone's Einrichten goes under the name on a phone, where beside it the name had 60 px. */
+div.device-row > .btn { flex: 1 1 100%; }
+@media (min-width: 480px) { div.device-row > .btn { flex: 0 0 auto; } }
+.device-row .device-icon { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: var(--surface); color: var(--text-dim); flex: 0 0 auto; }
+.device-row .grow b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device-row .grow small { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; color: var(--text-dim); font-size: 0.82rem; }
+.device-row .grow small.warn { color: var(--warn); }
+.device-row > .icon:last-child { color: var(--text-dim); }
 
-@media (min-width: 560px) {
-  .applist li { flex-direction: row; align-items: center; }
-  .applist .seg,
-  .applist .app-choice { width: auto; flex: 0 0 380px; }
+.tasks { display: grid; gap: 10px; }
+.task-group .row { margin-bottom: 4px; }
+.task-group .list li { padding: 6px 0; }
+.earned { color: var(--gold); font-weight: 600; margin: 0; }
+.earned.debt { color: var(--danger); }
+.guardian-tasks .list li { padding: 6px 0; }
+.guardian-tasks .label > span { display: block; }
+.waiting-card .list li { flex-wrap: wrap; }
+.waiting-card .list li .label { flex: 1 1 12rem; }
+
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.facts div { padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius-sm); min-width: 0; }
+.facts dt { font-size: 0.78rem; color: var(--text-dim); }
+.facts dd { margin: 2px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+
+.action-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.action-grid .btn { justify-content: flex-start; }
+
+/* ---- apps --------------------------------------------------------------- */
+
+.applist li { gap: 12px; }
+.app-mark {
+  width: 40px; height: 40px; flex: 0 0 auto;
+  display: grid; place-items: center;
+  border-radius: 11px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 1rem;
 }
+.rule-chip { flex: 0 0 auto; min-height: var(--tap); }
+.rule-options { display: grid; gap: 8px; }
+.rule-option {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 12px; min-height: var(--tap);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.rule-option[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.rule-option b { display: block; }
+.rule-option small { display: block; color: var(--text-dim); font-size: 0.85rem; margin-top: 2px; }
+.own-limit { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: var(--tap); }
+.own-limit input { flex: 0 0 auto; width: 110px; text-align: right; }
+.pending-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: 100%; }
+.applist li.pending { flex-wrap: wrap; }
+.applist li.pending .label { flex: 1 1 10rem; }
 
-.toolbar { display: grid; gap: 8px; margin-bottom: 10px; }
-.toolbar .seg .btn { font-size: 0.85rem; }
-.list-count { color: var(--text-dim); font-size: 0.85rem; margin: 0 0 8px; }
+/* ---- activity ----------------------------------------------------------- */
 
-/* ---- the quota meter ----------------------------------------------------- */
-
-.meter { height: 10px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
-.meter > span { display: block; height: 100%; background: var(--ok); }
-.meter > span.over { background: var(--danger); }
-
-/* Per-app bars on the Activity card (FR-3.9). Widths and the limit marker's position are set
-   through CSSOM by app.js — never as a style attribute, which this console's CSP drops. */
 .app-bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
 .app-bar { display: grid; gap: 4px; min-width: 0; }
 .app-bar .row { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
@@ -649,106 +695,70 @@ input[type="checkbox"] { width: auto; min-height: auto; }
 .ubar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: var(--accent); }
 .ubar-fill.over { background: var(--danger); }
 .ubar-fill.uncounted { background: var(--text-dim); opacity: 0.5; }
-/* The limit, drawn as a tick across the bar so a parent sees "how far past" as well as "past". */
 .ubar-limit { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--text); }
 .st-summary { margin: 8px 0 12px; }
+.swatch { display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 3px; }
 
-/* ---- the day, hour by hour (FR-3.7) ------------------------------------- */
-
-/* One column per hour the day actually had — 23 or 25 of them on the two mornings the clocks move,
-   because the server walks instants rather than clock numbers and the console draws whatever it is
-   handed. Full height is a full hour, FIXED rather than scaled to the busiest hour of the day: a
-   scaled axis draws twenty minutes and four hours identically on their own days, and the question
-   being asked is "how much of that hour", not "how does this hour compare to the rest of this one".
-
-   `align-items: flex-end` so a column grows from the baseline up, and `min-width: 0` on the column
-   so twenty-five of them still fit a 320px phone rather than pushing the card sideways. */
-.hr-chart {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 96px;
-  margin-top: 8px;
-  padding: 0 1px;
-  border-radius: 6px;
-  background: var(--surface-2);
-}
+.hr-chart { display: flex; align-items: flex-end; gap: 2px; height: 104px; margin-top: 8px; padding: 0 1px; border-radius: 8px; background: var(--surface-2); }
 .hr-col { flex: 1 1 0; min-width: 0; height: 100%; display: flex; align-items: flex-end; }
-.hr-fill {
-  width: 100%;
-  min-height: 2px;
-  border-radius: 2px 2px 0 0;
-  background: var(--accent);
-  opacity: 0.9;
-}
-/* An hour with nothing in it draws as a hairline rather than as nothing, so the shape of the day
-   still reads as twenty-four slots — a chart that simply omits its quiet hours looks like a chart
-   that failed to load. */
-.hr-fill.empty { background: var(--line); opacity: 0.6; }
-
-/* A label every third column, and the blanks are still THERE — an axis built only from the labelled
-   hours would space them evenly and quietly lie about which column each one sits under. */
-.hr-axis {
-  display: flex;
-  gap: 2px;
-  padding: 0 1px;
-  margin: 4px 0 10px;
-  font-size: 0.72rem;
-  color: var(--text-dim);
-}
+.hr-fill { width: 100%; min-height: 2px; border-radius: 3px 3px 0 0; background: var(--accent); opacity: 0.9; }
+.hr-fill.empty { background: var(--line-strong); opacity: 0.6; }
+.hr-axis { display: flex; gap: 2px; padding: 0 1px; margin: 4px 0 10px; font-size: 0.72rem; color: var(--text-dim); }
 .hr-tick { flex: 1 1 0; min-width: 0; text-align: left; white-space: nowrap; }
 .hr-tick.blank { visibility: hidden; }
-
-/* ---- the app table ------------------------------------------------------- */
-
-/* A real table, not a list of rows pretending to be one: two columns whose second is a number, and
-   a number column that does not line up is one a parent has to read twice. `table-layout: fixed`
-   plus `word-break` on the name keeps a long package id inside the card instead of widening it. */
-.tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
-.tbl th, .tbl td { padding: 10px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
-.tbl thead th {
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-dim);
-  text-align: left;
-}
-.tbl tbody tr:last-child td { border-bottom: none; }
-.tbl td b { display: inline; font-weight: 600; overflow-wrap: anywhere; }
-.tbl td small { display: block; color: var(--text-dim); font-size: 0.78rem; overflow-wrap: anywhere; }
-.tbl .num { width: 5.5rem; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-
-/* The table's tie back to the chart's colours. Purely decorative — the row already names the app in
-   text — so it is aria-hidden and never the only carrier of a distinction. `inline-block` because
-   it now sits inside a table cell rather than in a flex row. */
-.swatch {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  margin-right: 8px;
-  border-radius: 3px;
-}
-/* `.toolbar` is a stacking grid, which is right for the app filter's three full-width controls and
-   wrong for three things that belong on one line. Two arrows and a date read as a stepper only when
-   the arrows are at the ends of the row they step. */
-.tl-nav {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-/* The stepper keeps its width; only the date between the arrows gives way on a narrow phone.
-
-   `min-width` here rather than on `.btn`, and that is a correction rather than a preference:
-   `padding: 10px 14px` around a one-glyph label lands at 42px, two pixels under the floor a thumb
-   needs, so the arrows failed the tap-target check. Putting the floor on `.btn` fixes them and
-   every other icon-only button at once — and it was measured locally as costing nothing, on this
-   machine's renderer, over the views the suite draws. CI disagreed: at 360px the sheet header's
-   own `\u2715` grew with it and pushed the whole dialog to 362px, so the page scrolled sideways.
-   A width that depends on font metrics is not a number one machine can settle. The general fix is
-   still the right shape, but it has to arrive with the sheet header's grid, not ahead of it. */
+.tl-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .tl-nav .btn { flex: 0 0 auto; min-width: var(--tap); }
-.tl-nav .muted { text-align: center; font-size: 0.85rem; }
+.tl-nav .muted { text-align: center; font-size: 0.88rem; }
+
+/* ---- Regeln ---------------------------------------------------------------- */
+
+.plan-group { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.plan-group:first-child { padding-top: 0; }
+.plan-group:last-child { border-bottom: none; }
+/* Seven 44 px day buttons need 316 px and a card on a 360 px phone has 302, so a phone gets two rows
+   of four; from 480 px they fit on one. */
+.plan-days { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.plan-days .btn { padding: 10px 4px; font-size: 0.9rem; }
+.plan-days .btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 650; }
+@media (min-width: 480px) { .plan-days { grid-template-columns: repeat(7, 1fr); } }
+.plan-times > div:last-child { grid-column: 1 / -1; }
+.plan-task { grid-template-columns: 3fr 2fr auto; align-items: center; }
+.plan-task .btn { min-width: var(--tap); padding: 0; }
+
+.alarm-week { display: grid; gap: 10px; margin-bottom: 8px; }
+.alarm-day { display: grid; grid-template-columns: 1fr 9rem; align-items: center; gap: 10px; }
+.alarm-on { display: flex; align-items: center; gap: 10px; min-height: var(--tap); margin: 0; color: var(--text); font-size: 1rem; }
+.alarm-on input { width: 22px; height: 22px; min-height: 0; margin: 0; }
+.alarm-card h3 { margin: 18px 0 8px; font-size: 1rem; }
+.alarm-card .row { flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.alarm-changes { margin-top: 12px; }
+
+.agenda-entry select { width: 100%; min-height: var(--tap); }
+.agenda-week { display: grid; gap: 10px; }
+.agenda-day .list li { padding: 4px 0; min-height: 0; }
+.agenda-day p { margin: 4px 0 0; }
+.holidays-card .row, .agenda-card .row { flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+@media (max-width: 479px) { .holiday .field-row { grid-template-columns: 1fr; } }
+.agenda-day .label > span { display: block; }
+
+/* One bar for every unsaved form on the page, pinned above the tab bar while something is changed. */
+.savebar {
+  flex-wrap: wrap;
+  position: sticky;
+  bottom: calc(var(--tabbar) + 10px + env(safe-area-inset-bottom));
+  z-index: 11;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: var(--gap);
+  padding: 10px 10px 10px 16px;
+  border-radius: var(--radius);
+  background: var(--text);
+  color: var(--bg);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+}
+.savebar[hidden] { display: none; }
+.savebar > span { flex: 1 1 9rem; }
+.savebar .btn-quiet { color: var(--bg); opacity: 0.8; }
+@media (min-width: 900px) { .savebar { bottom: 16px; } }
 
 /* ---- sheet -------------------------------------------------------------- */
 
@@ -756,33 +766,45 @@ input[type="checkbox"] { width: auto; min-height: auto; }
   border: none;
   padding: 0;
   width: 100%;
-  max-width: 520px;
+  max-width: 100%;
   max-height: 92dvh;
-  border-radius: var(--radius);
+  margin: auto 0 0;
+  border-radius: 20px 20px 0 0;
   background: var(--surface);
   color: var(--text);
+  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.25);
 }
-.sheet::backdrop { background: rgba(0, 0, 0, 0.55); }
+.sheet[open] { display: flex; flex-direction: column; }
+.sheet::backdrop { background: rgba(8, 10, 16, 0.5); }
+@media (prefers-reduced-motion: no-preference) {
+  .sheet[open] { animation: sheet-in 0.18s ease-out; }
+  @keyframes sheet-in { from { transform: translateY(24px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+}
 .sheet-head {
-  position: sticky;
-  top: 0;
-  display: flex;
+  position: sticky; top: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--tap);
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  padding: 12px 14px;
+  padding: 10px 10px 10px 18px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
+  border-radius: 20px 20px 0 0;
 }
-.sheet-body { padding: 14px; overflow-y: auto; }
-.sheet-body svg { width: 100%; height: auto; max-width: 320px; margin: 0 auto; display: block; background: #fff; border-radius: 8px; }
+.sheet-head h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sheet-body { padding: 16px 18px calc(20px + env(safe-area-inset-bottom)); overflow-y: auto; }
+.sheet-body svg:not(.icon) { width: 100%; height: auto; max-width: 320px; margin: 0 auto; display: block; background: #fff; border-radius: 8px; }
+@media (min-width: 900px) {
+  .sheet { margin: auto; max-width: 560px; border-radius: 20px; }
+  .sheet-head { border-radius: 20px 20px 0 0; }
+}
 .code {
   font: 600 1.4rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.14em;
   text-align: center;
   padding: 12px;
   background: var(--surface-2);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   word-break: break-all;
 }
 
@@ -792,91 +814,20 @@ input[type="checkbox"] { width: auto; min-height: auto; }
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  /* The tab bar it used to clear is gone, so this is now just clear of the home indicator. */
-  bottom: calc(20px + env(safe-area-inset-bottom));
-  z-index: 20;
+  bottom: calc(var(--tabbar) + 14px + env(safe-area-inset-bottom));
+  z-index: 30;
+  width: max-content;
   max-width: min(92vw, 460px);
   padding: 11px 16px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--text);
   color: var(--bg);
   font-size: 0.92rem;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
 }
 .toast.error { background: var(--danger); color: #fff; }
-
-/* ---- wider screens ------------------------------------------------------ */
-
-@media (min-width: 720px) {
-  .view {
-    max-width: 1240px;
-    margin: 0 auto;
-    padding: 20px 20px 40px;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0 var(--gap);
-    align-items: start;
-  }
-  .view > .full { grid-column: 1 / -1; }
-}
-
-/* A third column rather than a wider one. Past about 70 characters a line of text stops being
-   easier to read for being longer, and a two-column grid on a 1500 px screen is mostly gutter. */
-@media (min-width: 1180px) {
-  .view { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
+@media (min-width: 900px) { .toast { bottom: 24px; } }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
-
-/* ---- the daily plan (FR-22) ----------------------------------------------- */
-
-/* One group per block, divided by a rule rather than nested cards: a card inside a card on a 360 px
-   phone spends a quarter of the width on borders and padding. */
-.plan-group { padding: 12px 0; border-bottom: 1px solid var(--line); }
-.plan-group:first-child { padding-top: 0; }
-/* Seven 44 px day buttons need 316 px and a card on a 360 px phone has 304, so a phone gets two rows
-   of four; from 480 px they fit on one. A row of 43 px buttons would pass by eye and miss thumbs. */
-.plan-days { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-.plan-days .btn { padding: 10px 4px; font-size: 0.9rem; }
-.plan-days .btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
-@media (min-width: 480px) { .plan-days { grid-template-columns: repeat(7, 1fr); } }
-/* From and To side by side; a time field has a native minimum width, and three to a row pushed the
-   third past the edge of a phone. */
-.plan-times > div:last-child { grid-column: 1 / -1; }
-/* Task and note share the row; the remove control keeps a full tap target at the end of it. */
-.plan-task { grid-template-columns: 3fr 2fr auto; align-items: center; }
-.plan-task .btn { min-width: var(--tap); padding: 0; }
-
-/* Bonuszeit, and the queue of reported tasks. */
-.earned { color: var(--gold); font-weight: 600; margin: 0; }
-.earned.debt { color: var(--danger); }
-.guardian-tasks .list li { padding: 6px 0; }
-/* The task on one line, its state under it — as the other lists put a name over its detail. */
-.guardian-tasks .label > span { display: block; }
-.waiting-card .list li { flex-wrap: wrap; }
-.waiting-card .list li .label { flex: 1 1 12rem; }
-
-/* ---- the alarm clock (FR-23) ------------------------------------------------ */
-
-.alarm-week { display: grid; gap: 6px; margin-bottom: 12px; }
-.alarm-day { display: grid; grid-template-columns: 1fr 9rem; align-items: center; gap: 10px; }
-.alarm-on { display: flex; align-items: center; gap: 10px; min-height: var(--tap); margin: 0; color: var(--text); font-size: 1rem; }
-.alarm-on input { width: 22px; height: 22px; min-height: 0; margin: 0; }
-.alarm-card h3 { margin: 18px 0 8px; font-size: 1rem; }
-.alarm-card .row { flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.alarm-changes { margin-top: 12px; }
-
-/* ---- the agenda and holidays (FR-24) ----------------------------------------- */
-
-.agenda-entry select { width: 100%; min-height: var(--tap); }
-.agenda-week { display: grid; gap: 10px; }
-.agenda-day .list li { padding: 4px 0; min-height: 0; }
-.agenda-day p { margin: 4px 0 0; }
-.holidays-card .row, .agenda-card .row { flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
-/* Two date fields do not fit side by side on a phone: a date input has a native minimum width, and
-   the pair measured 399 px in a 360 px viewport. They stack below 480 px. */
-@media (max-width: 479px) { .holiday .field-row { grid-template-columns: 1fr; } }
-/* The time and title on one line, the place under it — never run together ("SchuleSchulhaus"). */
-.agenda-day .label > span { display: block; }

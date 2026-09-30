@@ -27,18 +27,31 @@ type card struct {
 	Buttons  []string `json:"buttons"`
 }
 
+// deviceCardJS reads everything the console says about "The blue phone": its phone sheet, opened
+// from its row in Übersicht if it is not open already. Since the redesign of 2026-09-30 the sheet is
+// where a phone's facts, badges, warnings and commands live; an open sheet is redrawn from every
+// refresh, so reading it after `refresh()` reads what the server now says.
 const deviceCardJS = `(() => {
-  const cards = Array.from(document.querySelectorAll('#view .card'));
-  const card = cards.find((c) => c.textContent.indexOf('The blue phone') >= 0);
-  if (!card) throw new Error('no card for the device; the home view holds: '
-    + cards.map((c) => c.textContent.slice(0, 40)).join(' | '));
+  const dlg = document.getElementById('sheet');
+  if (!(dlg.open && dlg.dataset.kind === 'device' && document.getElementById('sheet-title').textContent === 'The blue phone')) {
+    const row = Array.from(document.querySelectorAll('#view button.device-row')).find((r) => r.textContent.indexOf('The blue phone') >= 0);
+    if (!row) throw new Error('no row for the device; Übersicht holds: '
+      + Array.from(document.querySelectorAll('#view .device-row')).map((c) => c.textContent.slice(0, 40)).join(' | '));
+    row.click();
+  }
+  const body = document.getElementById('sheet-body');
   return {
-    text: card.textContent,
-    badges: Array.from(card.querySelectorAll('.badge')).map((b) => b.textContent),
-    warnings: Array.from(card.querySelectorAll('p.warn')).map((p) => p.textContent),
-    buttons: Array.from(card.querySelectorAll('button')).map((b) => b.textContent),
+    text: body.textContent,
+    badges: Array.from(body.querySelectorAll('.badge')).map((b) => b.textContent),
+    warnings: Array.from(body.querySelectorAll('.notice')).map((p) => p.textContent),
+    buttons: Array.from(body.querySelectorAll('button')).map((b) => b.textContent),
   };
 })()`
+
+// sheetShowsJS is true once the open phone sheet contains s.
+func sheetShowsJS(s string) string {
+	return "(() => { const d = document.getElementById('sheet'); return d.open && document.getElementById('sheet-body').textContent.indexOf(" + jsString(s) + ") >= 0; })()"
+}
 
 func TestTheConsoleShowsAPhoneThatIsBehindAndWhyItsUpdateFailed(t *testing.T) {
 	// The server hosts build 2; the phone will report build 1. Both numbers come from a real
@@ -82,7 +95,7 @@ func TestTheConsoleShowsAPhoneThatIsBehindAndWhyItsUpdateFailed(t *testing.T) {
 	b.waitFor("!document.getElementById('signin').hidden", 15*time.Second, "the sign-in screen")
 	b.eval("document.querySelector('#signin a.btn-primary').click()", nil)
 	b.waitFor("!document.getElementById('app').hidden", 30*time.Second, "the console to sign in")
-	b.waitFor("document.querySelectorAll('#view .card').length > 0", 15*time.Second, "the home view")
+	b.waitFor("document.querySelectorAll('#view .device-row').length > 0", 15*time.Second, "Übersicht")
 
 	var behind card
 	b.eval(deviceCardJS, &behind)
@@ -91,19 +104,19 @@ func TestTheConsoleShowsAPhoneThatIsBehindAndWhyItsUpdateFailed(t *testing.T) {
 		t.Errorf("the card does not carry the platform's own reason.\nwarnings: %q\ncard: %s",
 			behind.Warnings, behind.Text)
 	}
-	if !strings.Contains(strings.Join(behind.Warnings, "\n"), "did not take the last update") {
+	if !strings.Contains(strings.Join(behind.Warnings, "\n"), "hat das letzte Update nicht übernommen") {
 		t.Errorf("the reason is shown without saying what it is about: %q", behind.Warnings)
 	}
 	// The badge pair: what it runs, and what it could run. Both are needed — "app 0.0.1" alone is a
 	// number with nothing to compare it to, which is what the console showed while the phone was
 	// stuck.
-	if !hasBadge(behind.Badges, "app 0.0.1") {
+	if !hasBadge(behind.Badges, "App 0.0.1") {
 		t.Errorf("the card does not say which build the phone runs: %q", behind.Badges)
 	}
 	if !hasBadge(behind.Badges, "→ 0.0.2") {
 		t.Errorf("the card does not say which build the server offers: %q", behind.Badges)
 	}
-	if !hasButton(behind.Buttons, "Update to 0.0.2") {
+	if !hasButton(behind.Buttons, "Auf 0.0.2 aktualisieren") {
 		t.Errorf("the update button does not name the build it would install: %q", behind.Buttons)
 	}
 
@@ -123,16 +136,12 @@ func TestTheConsoleShowsAPhoneThatIsBehindAndWhyItsUpdateFailed(t *testing.T) {
 		"app_version_name": "0.0.2", "app_version_code": 2, "update_error": reason,
 	})
 	b.eval("refresh()", nil)
-	b.waitFor(
-		"(() => { const c = Array.from(document.querySelectorAll('#view .card'))"+
-			".find((x) => x.textContent.indexOf('The blue phone') >= 0);"+
-			"return !!c && c.textContent.indexOf('0.0.2') >= 0; })()",
-		15*time.Second, "the card to follow the update")
+	b.waitFor(sheetShowsJS("App 0.0.2"), 15*time.Second, "the phone sheet to follow the update")
 
 	var caughtUp card
 	b.eval(deviceCardJS, &caughtUp)
 
-	if joined := strings.Join(caughtUp.Warnings, "\n"); strings.Contains(joined, "did not take the last update") {
+	if joined := strings.Join(caughtUp.Warnings, "\n"); strings.Contains(joined, "hat das letzte Update nicht übernommen") {
 		t.Errorf("the phone runs the build the server hosts and the console still calls its update failed."+
 			"\nA warning that cannot go away is one a parent learns to scroll past.\nwarnings: %q", joined)
 	}
@@ -143,7 +152,7 @@ func TestTheConsoleShowsAPhoneThatIsBehindAndWhyItsUpdateFailed(t *testing.T) {
 	}
 	// ...and the card has not otherwise gone quiet. Without this, a card that failed to render at
 	// all would pass both assertions above.
-	if !hasBadge(caughtUp.Badges, "app 0.0.2") {
+	if !hasBadge(caughtUp.Badges, "App 0.0.2") {
 		t.Errorf("the card stopped naming the build the phone runs: %q", caughtUp.Badges)
 	}
 
@@ -152,16 +161,12 @@ func TestTheConsoleShowsAPhoneThatIsBehindAndWhyItsUpdateFailed(t *testing.T) {
 	// Without this, a card that drew the warning unconditionally would pass everything above.
 	beat(map[string]any{"app_version_name": "0.0.2", "app_version_code": 2, "update_error": ""})
 	b.eval("refresh()", nil)
-	b.waitFor(
-		"(() => { const c = Array.from(document.querySelectorAll('#view .card'))"+
-			".find((x) => x.textContent.indexOf('The blue phone') >= 0);"+
-			"return !!c && c.textContent.indexOf('0.0.2') >= 0; })()",
-		15*time.Second, "the card to follow the update")
+	b.waitFor(sheetShowsJS("App 0.0.2"), 15*time.Second, "the phone sheet to follow the update")
 
 	var current card
 	b.eval(deviceCardJS, &current)
 
-	if joined := strings.Join(current.Warnings, "\n"); strings.Contains(joined, "did not take the last update") {
+	if joined := strings.Join(current.Warnings, "\n"); strings.Contains(joined, "hat das letzte Update nicht übernommen") {
 		t.Errorf("the phone reported the hosted build and the console still shows the old failure: %q", joined)
 	}
 	for _, badge := range current.Badges {
@@ -169,10 +174,10 @@ func TestTheConsoleShowsAPhoneThatIsBehindAndWhyItsUpdateFailed(t *testing.T) {
 			t.Errorf("an up-to-date phone is still offered %q", badge)
 		}
 	}
-	if !hasButton(current.Buttons, "Update app") {
+	if !hasButton(current.Buttons, "App aktualisieren") {
 		t.Errorf("with nothing to offer, the button must go back to its plain label: %q", current.Buttons)
 	}
-	if !hasBadge(current.Badges, "app 0.0.2") {
+	if !hasBadge(current.Badges, "App 0.0.2") {
 		t.Errorf("the card stopped naming the build the phone runs: %q", current.Badges)
 	}
 }

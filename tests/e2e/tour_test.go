@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,6 +71,9 @@ func TestConsoleTour(t *testing.T) {
 	b.phone(phoneWidth, phoneHeight)
 	b.navigate(h.base + "/")
 	b.waitFor("!document.getElementById('signin').hidden", 15*time.Second, "the sign-in screen")
+	var lang string
+	b.eval("navigator.language", &lang)
+	t.Logf("the browser's language: %s", lang)
 	b.screenshot(t, filepath.Join(dir, "phone-00-signin.png"))
 	b.laptop(1440, 900)
 	b.screenshot(t, filepath.Join(dir, "laptop-00-signin.png"))
@@ -81,9 +85,10 @@ func TestConsoleTour(t *testing.T) {
 	b.waitFor("document.querySelectorAll('#child-switcher .pill').length >= 2", 15*time.Second, "the children")
 
 	screens := []struct{ tab, ready string }{
-		{"guardian", "#view *"},
-		{"home", "#view .card"},
-		{"rules", "#view .switch"},
+		{"overview", "#view .child-card"},
+		{"rules", "#view .card"},
+		{"rules/protection", "#view .switch"},
+		{"rules/agenda", "#view .agenda-card"},
 		{"apps", "#view .list li"},
 		{"activity", "#view .card"},
 		{"family", "#view .list li"},
@@ -97,11 +102,21 @@ func TestConsoleTour(t *testing.T) {
 	} {
 		size.set()
 		for n, s := range screens {
-			b.switchTab(t, s.tab, s.ready)
+			b.eval(fmt.Sprintf("location.hash = '#/%s'", s.tab), nil)
+			b.waitFor(fmt.Sprintf("location.hash === '#/%s' && document.querySelector(%q) !== null", s.tab, s.ready),
+				20*time.Second, "the "+s.tab+" view")
 			// Let late fetches (usage, energy) land before the picture is taken.
 			time.Sleep(1500 * time.Millisecond)
 			b.eval("window.scrollTo(0, 0)", nil)
-			b.screenshot(t, filepath.Join(dir, fmt.Sprintf("%s-%d%d-%s.png", size.name, i, n+1, s.tab)))
+			b.screenshot(t, filepath.Join(dir, fmt.Sprintf("%s-%d%d-%s.png", size.name, i, n+1, strings.ReplaceAll(s.tab, "/", "-"))))
 		}
+		// The phone sheet, from the first phone row that opens one.
+		b.eval("location.hash = '#/overview'", nil)
+		b.waitFor("document.querySelector('#view button.device-row') !== null", 20*time.Second, "a phone row")
+		b.eval("document.querySelector('#view button.device-row').click()", nil)
+		b.waitFor("document.getElementById('sheet').open", 10*time.Second, "the phone sheet")
+		time.Sleep(500 * time.Millisecond)
+		b.screenshot(t, filepath.Join(dir, fmt.Sprintf("%s-%d9-phone-sheet.png", size.name, i)))
+		b.eval("document.getElementById('sheet-close').click()", nil)
 	}
 }

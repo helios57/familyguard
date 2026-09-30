@@ -60,13 +60,13 @@ func TestTheConsoleSaysWhyTheAdFilterIsNotRunning(t *testing.T) {
 	b.waitFor("!document.getElementById('signin').hidden", 15*time.Second, "the sign-in screen")
 	b.eval("document.querySelector('#signin a.btn-primary').click()", nil)
 	b.waitFor("!document.getElementById('app').hidden", 30*time.Second, "the console to sign in")
-	b.waitFor("document.querySelectorAll('#view .card').length > 0", 15*time.Second, "the home view")
+	b.waitFor("document.querySelectorAll('#view .device-row').length > 0", 15*time.Second, "Übersicht")
 
 	var home card
 	b.eval(deviceCardJS, &home)
 	warnings := strings.Join(home.Warnings, "\n")
 
-	if !strings.Contains(warnings, "The ad filter is not running on this phone") {
+	if !strings.Contains(warnings, "Der Werbefilter läuft auf diesem Handy nicht") {
 		t.Errorf("the card does not say the filter is off on a phone that reported exactly that.\n"+
 			"warnings: %q\ncard: %s", home.Warnings, home.Text)
 	}
@@ -77,7 +77,7 @@ func TestTheConsoleSaysWhyTheAdFilterIsNotRunning(t *testing.T) {
 	// The guess must be GONE, not merely accompanied. Shown alongside a real reason it sends a
 	// parent to check a list that downloaded and a connection that is up — which is how an hour
 	// went into the wrong diagnosis.
-	if strings.Contains(warnings, "may not have downloaded") {
+	if strings.Contains(warnings, "vielleicht nicht geladen") {
 		t.Errorf("the card still guesses at the remedy next to the phone's own answer: %q", home.Warnings)
 	}
 
@@ -88,15 +88,15 @@ func TestTheConsoleSaysWhyTheAdFilterIsNotRunning(t *testing.T) {
 	// Awaited, not fired: `refresh` is async, and reading the card out of the same turn would be
 	// asserting on the view the previous heartbeat drew.
 	b.eval("(async () => { await refresh(); return true; })()", nil)
-	b.waitFor("document.querySelectorAll('#view .card').length > 0", 15*time.Second, "the home view again")
+	b.waitFor(sheetShowsJS("Werbefilter läuft mit"), 15*time.Second, "the phone sheet to follow the phone")
 
 	var fixed card
 	b.eval(deviceCardJS, &fixed)
 	quiet := strings.Join(fixed.Warnings, "\n")
-	if strings.Contains(quiet, why) || strings.Contains(quiet, "ad filter is not running") {
+	if strings.Contains(quiet, why) || strings.Contains(quiet, "Werbefilter läuft auf diesem Handy nicht") {
 		t.Errorf("the card still explains a tunnel that is up.\nwarnings: %q", fixed.Warnings)
 	}
-	if !strings.Contains(fixed.Text, "Ad filter: running") {
+	if !strings.Contains(fixed.Text, "Werbefilter läuft mit") {
 		t.Errorf("the card does not report the tunnel the phone says is up.\ncard: %s", fixed.Text)
 	}
 }

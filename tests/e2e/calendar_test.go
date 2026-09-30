@@ -198,14 +198,13 @@ func TestTheAdminAddsACalendarInTheConsole(t *testing.T) {
 	child := h.newChild(primary.Token, "Mira")
 	h.patchPolicy(primary.Token, child.ID, map[string]any{"timezone": "Europe/Zurich"})
 	b := signInBrowser(t, h, primaryParent)
-	b.eval(`document.querySelector('.tab[data-tab="rules"]').click()`, nil)
-	b.waitFor(`!!document.querySelector('#view .agenda-card input[data-calendar="url"]')`, 15*time.Second, "the calendar field")
+	b.switchTab(t, "rules/agenda", "#view .agenda-card input[data-calendar=\"url\"]")
 	b.eval(`(() => {
 	  const i = document.querySelector('#view .agenda-card input[data-calendar="url"]');
 	  i.value = '`+srv.URL+`/cal.ics'; i.dispatchEvent(new Event('input', { bubbles: true }));
 	  document.querySelector('#view .agenda-card button[data-calendar="save"]').click();
 	})()`, nil)
-	b.waitFor(`(document.querySelector('#view .calendar-status') || {}).textContent?.includes('2 events')`, 15*time.Second, "the calendar's status to say what it read")
+	b.waitFor(`(document.querySelector('#view .calendar-status') || {}).textContent?.includes('2 Termine')`, 15*time.Second, "the calendar's status to say what it read")
 	var cal calendarDTO
 	h.call(http.MethodGet, "/children/"+child.ID+"/calendar", primary.Token, nil).expect(http.StatusOK).decode(&cal)
 	if cal.URL != srv.URL+"/cal.ics" {
@@ -214,7 +213,7 @@ func TestTheAdminAddsACalendarInTheConsole(t *testing.T) {
 	b.measure(t, "rules/calendar").check(t, "rules/calendar")
 	var week string
 	b.eval(`document.querySelector('#view .agenda-week').textContent`, &week)
-	for _, want := range []string{"14:00–14:30 Elterngespräch", "calendar", "Schulreise", "all day"} {
+	for _, want := range []string{"14:00–14:30 Elterngespräch", "Kalender", "Schulreise", "ganzer Tag"} {
 		if !strings.Contains(week, want) {
 			t.Errorf("the week does not say %q: %q", want, week)
 		}

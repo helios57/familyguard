@@ -288,22 +288,25 @@ rather than assumed.
 
 **Mobile-first (FR-13.2).** The parent uses this from a phone. The base stylesheet targets a 360 px
 portrait viewport and widens with `min-width` media queries; there are no fixed pixel widths and no
-horizontal page scroll. Navigation sits at the top at every width: below 900 px it is a drawer
-opened from a ☰ button, and at 900 px and above it is a row of links in the header. There is only
-**one** navigation in the DOM — `app.js` moves the `<nav>` element and the child switcher between
-the header and the drawer as the viewport crosses that breakpoint, rather than writing each twice
-and keeping the copies in sync. The drawer is a `<dialog>` opened with `showModal()`, so the focus
-trap, the Escape key and the backdrop come from the platform instead of from a hand-written key
-handler. Tables reflow into stacked cards below 720 px, the content grid widens to two columns at
-720 px and three at 1180 px, and every interactive element is at least 44 px tall.
+horizontal page scroll. There is **one** navigation element, `#mainnav`, and the stylesheet lays it
+out twice: a bar pinned to the bottom of a phone, within reach of a thumb, and a sidebar from 900 px.
+No script moves it and nothing duplicates it. The five destinations are *Übersicht* (every child at a
+glance, and the page a guardian gets), *Regeln* (with the sub-pages *Zeit*, *Schutz*, *Agenda*),
+*Apps*, *Aktivität* and *Familie*. Everything about one phone — its facts, its warnings, its commands
+— is in a sheet opened from its row in Übersicht: a `<dialog>` opened with `showModal()`, a bottom
+sheet on a phone and a panel on a laptop, so the focus trap, the Escape key and the backdrop come from
+the platform. Every interactive element is at least 44 px in both directions.
 
-> This replaced a bottom tab bar, which the stylesheet had defended on the grounds that a sidebar
-> "would mean maintaining two navigations". The objection was right and is answered by moving the
-> node rather than duplicating it. It does cost something real: opening the menu is a reach to the
-> top-left corner, which is the least thumb-friendly part of a large phone. The destinations inside
-> the drawer are pushed to its lower half to keep the rest of the interaction in reach, but the
-> opening tap is a genuine regression against "navigation reachable one-handed", accepted on the
-> owner's explicit preference for a top navigation. Inputs are 16 px, below which iOS Safari zooms the page
+> **The navigation has moved twice, both times at the owner's request.** On 2026-09-03 the bottom tab
+> bar became a top header with a drawer ("the bottom tab bar should be at the top"); on 2026-09-30 the
+> redesign the owner approved ("Continue till it's finished") brought a bottom bar back, with the
+> header holding only the family and the child switcher. The drawer's cost was a reach to the top
+> corner for every navigation; the bar's is 64 px of permanent chrome, which the view reserves so
+> nothing is ever underneath it.
+
+**One language (FR-13.5).** The console is German — Swiss spelling (ss, never ß), 24-hour times, the
+SI units "min" and "h" — and so is the phone, including the screens a parent reads on it; the console
+names the phone's buttons by the words the phone shows. Inputs are 16 px, below which iOS Safari zooms the page
 on focus and leaves it zoomed. The viewport meta sets `viewport-fit=cover` and does **not** set
 `user-scalable=no` or a `maximum-scale`, so a parent can still zoom in on a small label. The
 provisioning QR renders at the full width of a phone screen, and a web app manifest makes the

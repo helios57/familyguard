@@ -113,7 +113,9 @@ const timelineCardJS = `((name) => {
   return {
     text: card.textContent,
     badges: Array.from(card.querySelectorAll('.badge')).map((b) => b.textContent),
-    warnings: Array.from(card.querySelectorAll('p.warn')).map((p) => p.textContent),
+    // Every warning block and note on the card: the notices, and the one-line explanation of a
+    // phone that has never reported its hours.
+    warnings: Array.from(card.querySelectorAll('.notice, p.warn, [data-chart="never-reported"]')).map((p) => p.textContent),
     aria: chart ? (chart.getAttribute('aria-label') || '') : '',
     columns: Array.from(card.querySelectorAll('.hr-col')).map((c) => {
       const fill = c.querySelector('.hr-fill');
@@ -558,8 +560,8 @@ func TestTheConsoleDrawsWhatRanWhen(t *testing.T) {
 	// owner's ask — the chart and the table are "per day" only if the day can be changed — and it
 	// is also the third state the chart has: hours that exist and are all empty, from a phone that
 	// HAS reported. That must read as a quiet day, never as the phone that has never said.
-	b.eval(fmt.Sprintf(clickDayJS, f.device.Name, "Previous day"), nil)
-	b.waitFor("document.body.textContent.indexOf('The screen was not on at any point on this day.') >= 0",
+	b.eval(fmt.Sprintf(clickDayJS, f.device.Name, "Vorheriger Tag"), nil)
+	b.waitFor("document.body.textContent.indexOf('Der Bildschirm war an diesem Tag nie an.') >= 0",
 		20*time.Second, "the card to step back a day")
 
 	var back timelineCard
@@ -572,7 +574,7 @@ func TestTheConsoleDrawsWhatRanWhen(t *testing.T) {
 			t.Errorf("yesterday holds a used hour %q; everything the fixture wrote is filed today", col.Title)
 		}
 	}
-	if !strings.Contains(back.Text, "No app was open on this day.") {
+	if !strings.Contains(back.Text, "An diesem Tag war keine App offen.") {
 		t.Errorf("yesterday's table does not say the day was empty: %q", back.Text)
 	}
 	if len(back.Warnings) != 0 {
@@ -588,11 +590,11 @@ func TestTheConsoleDrawsWhatRanWhen(t *testing.T) {
 
 	var silent timelineCard
 	b.eval(fmt.Sprintf(timelineCardJS, "The spare phone"), &silent)
-	if !strings.Contains(strings.Join(silent.Warnings, "\n"), "never reported when its screen was on") {
+	if !strings.Contains(strings.Join(silent.Warnings, "\n"), "noch nie gemeldet, wann sein Bildschirm an war") {
 		t.Errorf("the silent phone's card does not say it has never reported: %q\n%s",
 			silent.Warnings, silent.Text)
 	}
-	if strings.Contains(silent.Text, "The screen was not on at any point on this day.") {
+	if strings.Contains(silent.Text, "Der Bildschirm war an diesem Tag nie an.") {
 		t.Errorf("the silent phone is drawn as a child who did not switch their phone on: %q", silent.Text)
 	}
 	if len(silent.Columns) != 0 {

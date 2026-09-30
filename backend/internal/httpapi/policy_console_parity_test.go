@@ -34,17 +34,28 @@ func TestTheConsoleCanSetEveryPolicyFieldTheApiAccepts(t *testing.T) {
 		t.Fatalf("could not open the console (%v): a check that scans nothing reports clean for "+
 			"the same reason a passing one does", err)
 	}
-	raw, err := fs.ReadFile(assets, "app.js")
-	if err != nil {
-		t.Fatalf("could not read app.js: %v", err)
+	// Every script, not app.js alone: since 2026-09-30 each view is its own file, and the policy
+	// controls live in rules.js. A scan of one file would report them all missing — or, worse, pass
+	// over a control that moved out of the file it reads.
+	scripts, err := fs.Glob(assets, "*.js")
+	if err != nil || len(scripts) < 2 {
+		t.Fatalf("the console ships %d script(s) (%v): this check would scan almost nothing", len(scripts), err)
 	}
-	app := string(raw)
+	var all strings.Builder
+	for _, name := range scripts {
+		raw, err := fs.ReadFile(assets, name)
+		if err != nil {
+			t.Fatalf("could not read %s: %v", name, err)
+		}
+		all.Write(raw)
+	}
+	app := all.String()
 
 	// A positive control. Without it, a renamed or emptied asset would make every field below
 	// "missing" and read as a console that lost its Rules tab rather than as a test that lost its
 	// input.
 	if !strings.Contains(app, "'/children/' + state.childId + '/policy'") {
-		t.Fatalf("app.js does not contain the policy PATCH call at all: this test is scanning the "+
+		t.Fatalf("the console does not contain the policy PATCH call at all: this test is scanning the "+
 			"wrong thing, so its verdict about the %d fields below means nothing",
 			reflect.TypeOf(patchPolicyRequest{}).NumField())
 	}

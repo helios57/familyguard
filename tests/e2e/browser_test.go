@@ -258,6 +258,10 @@ func startBrowser(t *testing.T) *browser {
 		"--user-data-dir="+dir,
 		"--no-first-run",
 		"--no-default-browser-check",
+		// The family's phones run in German, and the console is German: a time field then shows
+		// 21:00 where an en-US browser shows 09:00 PM, which is a different width at 360 px. The
+		// page is measured as the people using it see it.
+		"--lang=de-CH",
 		"--disable-extensions",
 		"--disable-background-networking",
 		"--disable-component-update",
@@ -280,6 +284,10 @@ func startBrowser(t *testing.T) *browser {
 	// to start prints the reason there, and the alternative is a timeout with no cause.
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
+	// --lang alone is not enough on Linux: headless Chrome takes its locale — and with it a time
+	// field's 24-hour display — from the environment. Measured 2026-09-30: with only the flag the
+	// console still drew "09:00 PM".
+	cmd.Env = append(os.Environ(), "LANGUAGE=de_CH:de", "LANG=de_CH.UTF-8", "LC_ALL=de_CH.UTF-8")
 	// Its own process group, so the cleanup can kill every process Chrome forked rather than only
 	// the one it started. Killing the parent alone leaves the helpers running, which is what makes
 	// the profile directory refuse to be removed and, on a loaded machine, leaves browsers behind.

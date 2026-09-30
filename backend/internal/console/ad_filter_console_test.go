@@ -21,17 +21,12 @@ import (
 //
 // The assets come out of the embedded FS, which is the copy that ships, not a file on disk.
 func TestTheAdFilterIsReportedOnlyFromMeasurements(t *testing.T) {
-	raw, err := assets.ReadFile("assets/app.js")
-	if err != nil {
-		t.Fatalf("could not read the embedded console (%v): a check that scans nothing reports "+
-			"clean for the same reason a passing one does", err)
-	}
-	js := string(raw)
+	js := consoleScript(t)
 
 	// Calibration first: an empty result and a search that never ran are the same shape.
 	for _, anchor := range []string{"ad_filter_running", "ad_filter_rules", "ad_filter_list_url", "badge warn"} {
 		if !strings.Contains(js, anchor) {
-			t.Fatalf("the embedded app.js does not contain %q at all: this test is scanning the "+
+			t.Fatalf("the embedded console does not contain %q at all: this test is scanning the "+
 				"wrong file, and every check below would pass vacuously", anchor)
 		}
 	}
@@ -52,20 +47,34 @@ func TestTheAdFilterIsReportedOnlyFromMeasurements(t *testing.T) {
 	//    Read backwards from the badge's own text, because the guard sits BEFORE the state test in
 	//    the expression — a forward scan from `ad_filter_running` would sail straight past it and
 	//    report a defect that is not there.
-	const notRunning = "ad filter not running"
-	at := strings.Index(js, notRunning)
-	if at < 0 {
-		t.Fatalf("the console never says %q, so there is no badge to judge", notRunning)
+	//
+	//    EVERY place the console says it, not the first: since 2026-09-30 it is said twice — the
+	//    phone row's one-line warning and the phone sheet's badge — and a check of the first alone
+	//    stayed green with the badge's condition deleted (probe G2).
+	const notRunning = "Werbefilter läuft nicht"
+	sites := 0
+	for rest, offset := js, 0; ; {
+		i := strings.Index(rest, notRunning)
+		if i < 0 {
+			break
+		}
+		at := offset + i
+		sites++
+		before := js[max(0, at-400):at]
+		if !strings.Contains(before, "desired.ad_filter") {
+			t.Errorf("%q (occurrence %d) is drawn without checking that the filter was asked for:\n\t%s\n"+
+				"A warning about a setting nobody turned on is a warning a parent learns to skip.",
+				notRunning, sites, strings.TrimSpace(before))
+		}
+		if !strings.Contains(before, "st.ad_filter_running === false") {
+			t.Errorf("%q (occurrence %d) is not conditioned on a measured false:\n\t%s", notRunning, sites,
+				strings.TrimSpace(before))
+		}
+		offset = at + len(notRunning)
+		rest = js[offset:]
 	}
-	before := js[max(0, at-400):at]
-	if !strings.Contains(before, "desired.ad_filter") {
-		t.Errorf("the %q badge is drawn without checking that the filter was asked for:\n\t%s\n"+
-			"A warning about a setting nobody turned on is a warning a parent learns to skip.",
-			notRunning, strings.TrimSpace(before))
-	}
-	if !strings.Contains(before, "st.ad_filter_running === false") {
-		t.Errorf("the %q badge is not conditioned on a measured false:\n\t%s", notRunning,
-			strings.TrimSpace(before))
+	if sites == 0 {
+		t.Fatalf("the console never says %q, so there is no warning to judge", notRunning)
 	}
 
 	// 3. A parent must be able to switch it on AND give it a list. The switch alone filters
