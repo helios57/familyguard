@@ -9,10 +9,10 @@ package e2e
 // The property is the phone's serial number, and it is compared with the one read over the
 // emulator's ordinary adb connection, so the answer cannot have come from anywhere else.
 //
-// What the emulator cannot show: Wireless debugging. An emulator's adbd has no mDNS announcement
-// and no TLS pairing, so this test gives the port explicitly (`--port`) and uses adbd's plain TCP
-// mode. Port discovery and the device-owner switch for Wireless debugging are exercised only on the
-// real phone, and IMPLEMENTATION_PLAN records them as such.
+// This test gives the port explicitly (`--port`) and uses adbd's plain TCP mode, so `adb connect`
+// needs no pairing. Finding the Wireless-debugging port is the next test's: API 33 and API 37
+// emulators run Wireless debugging over their virtual Wi-Fi (measured 2026-09-30), so it is proven
+// there; only pairing still needs a code read off a screen.
 //
 // Driven by tests/android/remote-adb.sh. Run bare, it skips: there is no device.
 
@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -184,6 +185,116 @@ func TestRemoteADBReachesARealPhonesAdbd(t *testing.T) {
 	for d.debugNoticeShown() {
 		if time.Now().After(gone) {
 			t.Fatal("the session is over and the phone still says a parent is connected")
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// allowWirelessDebugging switches Wireless debugging on the way a person at the phone does — the
+// setting, then "Always allow on this network" and Allow on the dialog Android puts up for a network
+// it has not trusted yet — and returns the TLS port adbd then listens on. An API 37 emulator runs
+// Wireless debugging over its virtual Wi-Fi and announces the port through the framework's
+// NsdManager, exactly as a phone does.
+//
+// The port is read from the system's own log: "Received tls port=N" from the framework on API 37,
+// "TlsServer running on port N" from adbd on API 33, where adbd announces the port itself.
+// service.adb.tls.port is empty on API 37 even while adbd listens — measured 2026-09-30, so the
+// property the first version of this helper polled made the test fail before the phone was asked.
+func (d *androidDevice) allowWirelessDebugging(t *testing.T) int {
+	t.Helper()
+	d.mustRun(30*time.Second, "shell", "settings", "put", "global", "adb_wifi_enabled", "1")
+	re := regexp.MustCompile(`(?:Received tls port=|TlsServer running on port )(\d+)`)
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		out, _ := d.run(20*time.Second, "shell", "logcat", "-d", "-s", "AdbDebuggingManager:*", "adbd:*")
+		if all := re.FindAllStringSubmatch(out, -1); len(all) > 0 {
+			var port int
+			fmt.Sscan(all[len(all)-1][1], &port)
+			if port > 0 {
+				return port
+			}
+		}
+		if d.tapText(t, "Always allow on this network") {
+			d.tapText(t, "Allow")
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Wireless debugging never started: the system never logged the port adbd took")
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+// FR-19.3 with the ad filter on: the phone finds its own Wireless-debugging port with nobody at the
+// screen to read it off. The family phones run the filter all the time, and the first real session
+// (2026-09-27) failed here — "Wireless debugging is on but announced no adb port" — so a parent had
+// to ask for the port and pass it with --port. This test gives no port.
+//
+// Not `adb connect`: adb over TLS needs this host paired, and pairing needs a code read off the
+// screen. What is asserted instead is the half this bug is about — the phone connected to adbd on
+// the port adbd itself says it holds, and found it on its own loopback.
+//
+// Driven by tests/android/remote-adb-wireless.sh; run on its own it SKIPS.
+func TestRemoteADBFindsWirelessDebuggingWithTheFilterOn(t *testing.T) {
+	d := androidDeviceFromEnv(t)
+	d.dumpDeviceLogOnFailure()
+
+	h := newHarness(t, withPublicHost(emulatorHostAlias))
+	deviceBase := fmt.Sprintf("http://%s:%d", emulatorHostAlias, h.port)
+
+	parent := h.signIn(primaryParent)
+	child := h.newChild(parent.Token, "Ada")
+	h.patchPolicy(parent.Token, child.ID, map[string]any{"allow_debugging": true})
+	device := h.newDevice(parent.Token, child.ID, "Ada's phone")
+	_, enrollToken := h.provision(parent.Token, device.ID)
+	d.enroll(deviceBase, enrollToken)
+	rebooted := time.Now()
+	d.reboot()
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		view := h.deviceView(parent.Token, device.ID)
+		if view.State != nil && view.State.LastSeenAt != nil && view.State.LastSeenAt.After(rebooted) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the phone never reported in after the reboot; its service is not running")
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	filterUp(t, h, parent.Token, child.ID, device.ID)
+	if _, ok := d.tunnelRoutes(); !ok {
+		t.Fatal("the server says the filter runs, and Android holds no tunnel: this would test nothing")
+	}
+	tlsPort := d.allowWirelessDebugging(t)
+	t.Logf("adbd listens for Wireless debugging on %d, with the filter's tunnel up", tlsPort)
+
+	env := map[string]string{"FAMILYGUARD_URL": h.base, "FAMILYGUARD_TOKEN": mintKey(t, h, "e2e-adb-wireless")}
+	relay := startADBRelay(t, env, device.ID)
+	relay.awaitPhone(t, 2*time.Minute)
+
+	// The acknowledgement follows the stream by a moment: the phone splices first and reports after,
+	// so "waiting for adb" can be read while the command is still DELIVERED. Measured 2026-09-30.
+	acked := time.Now().Add(30 * time.Second)
+	for {
+		var cmds struct {
+			Commands []commandDTO `json:"commands"`
+		}
+		h.call(http.MethodGet, "/devices/"+device.ID+"/commands", parent.Token, nil).expect(http.StatusOK).decode(&cmds)
+		for _, c := range cmds.Commands {
+			if c.Type == "OPEN_DEBUG_STREAM" && c.State == "ACKED" && c.Result["state"] == "connected" {
+				if got := fmt.Sprint(c.Result["port"]); got != fmt.Sprint(tlsPort) {
+					t.Fatalf("the phone connected to port %s; adbd's Wireless-debugging port is %d", got, tlsPort)
+				}
+				// Found on the phone's own loopback, so it did not depend on mDNS — the layer that
+				// failed on the family phone and that no emulator reproduced.
+				if by := fmt.Sprint(c.Result["found_by"]); by != "loopback" {
+					t.Fatalf("the phone found adbd by %q, not on its own loopback", by)
+				}
+				return
+			}
+		}
+		if time.Now().After(acked) {
+			t.Fatalf("no OPEN_DEBUG_STREAM acknowledged as connected: %+v", cmds.Commands)
 		}
 		time.Sleep(time.Second)
 	}

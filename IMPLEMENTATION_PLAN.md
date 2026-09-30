@@ -4024,7 +4024,7 @@ proven.
 | FR-16 managed applications | 12 | four layers, and the one that decided the design is the device. Server: `TestAnUploadedAPKIsReadRatherThanDescribed`, `TestMultipartAndRawBodyAgree`, `TestTwoVersionsOfOneAppBothLive`, `TestTheSameFileTwiceIsNotAConflict`, `TestAPackageSignedByAnotherKeyIsRefused`, `TestWhatIsNotAnAPKIsRefusedAsSuch`, `TestTheDirectoryOnTheNodeIsAlsoASource`, `TestADeploymentWithoutAnAPKDirSaysSo`, `TestDeletingAnAppRemovesItsFileToo`, `TestAManagedAppDownloadNeedsADeviceCredential`, plus `internal/apk`'s parser tests. Policy: `TestDeclaringAnAppReachesThePhoneAsSomethingItCanFetch`, `TestAnUpgradeIsANewVersionInTheSamePolicy`, `TestWithdrawingAnAppRemovesItFromThePolicy`, `TestDeclaringSomethingTheCatalogDoesNotHaveIsRefused`, `TestTheConsoleSeesADeclarationWithNothingBehindIt`; the shared vectors carry three new cases so both engines normalise a declared set identically. JVM: `ManagedAppApplierTest` (12) and `AppUpdaterTest`'s four new cases. **Device: `ManagedInstallTest`** — the restriction matrix in [12.1](#121--which-restrictions-bind-the-device-owner-measured-on-a-phone-rather-than-argued-from-the-source), the install→upgrade→withdraw lifecycle against a real second application, and `getInstallSourceInfo` as a real filter. **Calibrated 11/11** ([12.2](#122--the-jvm-calibration-including-one-break-that-proved-a-test-binds-to-nothing)), and the record includes one assertion that binds to nothing at the JVM layer and says so. **Not proven:** any of it on hardware rather than an emulator, and the API 29 floor |
 | FR-17 API keys | 12 | e2e `TestAnAPIKeyIsTheSameParent`, `TestTheTokenIsShownOnceAndNeverAgain`, `TestRevokingAKeyEndsItImmediately`, `TestAKeyCannotMintACredential`, `TestAKeyThatWasNeverIssuedIsNotDistinguishable`, `TestOnlyThePrimaryAdminMintsKeys`, `TestAKeyNeedsAName`, `TestTheAuditTrailTellsAScriptFromAPerson` — the last two of those are the ones that matter most: a key must not be able to mint a credential that outlives its own revocation, and an audit row must say a script acted rather than a person |
 | FR-18 family blocklist | 14 | e2e `TestTheCuratedBlocklistIsSeededAndReachesAPhone`, `TestTheBlocklistCoversAChildAddedAfterIt`, `TestAChildAllowExemptsOnlyThatChild`, `TestTheCriticalWhitelistOutranksTheBlocklist`, `TestDeletingACuratedEntryIsPermanent`, `TestABlocklistChangeBumpsEveryChildsPolicyVersion`, `TestTheBlocklistIsReachableByAPIKeyAndGuardedByRole`, `TestTheBlocklistRefusesWhatCanNeverMatchAnApp`, `TestTheBlocklistIsAudited`; three shared vectors replayed by **both** engines. The four that carry the requirement rather than the plumbing: the phone is told to hide packages **no inventory reported** (an implementation that blocks only what it can see leaves the installer stub that puts Facebook back); a child created *after* the entry is covered by it; one child's ALLOW exempts that child and a **second child is the control** that the entry did not simply vanish; and the device's own dialer, put on the list deliberately, is neither hidden nor suspended — with a non-critical package blocked in the same call, so an implementation that ignored the list entirely could not pass by doing nothing. `TestDeletingACuratedEntryIsPermanent` restarts the server, which is the only thing that separates "seeded once" from "re-applied on boot". **Calibrated 3/3 on the engine** (drop the union / drop the ALLOW carve-out / apply the list after the critical whitelist), each break red in the vector that owns the property and green on restore. **Not proven:** any of it on hardware — no phone has yet reported one of these packages back as hidden. `com.spotify.music` was added as a parent row on the live database in 16.7 and is in the same position: the app is not installed on the only enrolled phone, so the entry is pre-emptive by design |
-| FR-19 remote debugging | 31 | e2e `TestRemoteADBRelaysBytesBothWays`, `TestRemoteADBStreamBelongsToOnePhone`, `TestRemoteADBIsRefusedWhileDebuggingIsOff`, `TestRemoteADBCarriesThePhonesReason`, `TestRemoteADBOutlivesTheRequestTimeout`; JVM `CommandHandlersTest`. **Device:** `TestRemoteADBReachesARealPhonesAdbd` (`tests/android/remote-adb.sh`). Calibration in Phase 31 |
+| FR-19 remote debugging | 31, 48 | e2e `TestRemoteADBRelaysBytesBothWays`, `TestRemoteADBStreamBelongsToOnePhone`, `TestRemoteADBIsRefusedWhileDebuggingIsOff`, `TestRemoteADBCarriesThePhonesReason`, `TestRemoteADBOutlivesTheRequestTimeout`; JVM `CommandHandlersTest`, `LoopbackAdbProbeTest`. **Device:** `TestRemoteADBReachesARealPhonesAdbd` (`tests/android/remote-adb.sh`), `TestRemoteADBFindsWirelessDebuggingWithTheFilterOn` (`tests/android/remote-adb-wireless.sh`, API 33 and 37). Calibration in Phases 31 and 48 |
 | FR-20 roles and rights | 34 | e2e `TestEveryParentRouteDeclaresWhoMayCallIt`, `TestParentRoutesInstallTheRoleCheck`, `TestAGuardianMayCallExactlyTheGuardianAllowlist`, `TestAGuardianIsRefusedEverythingOutsideTheGuardianWindow`, `TestOnlyThePrimaryAdminChangesRolesAndNeverTheirOwn`, `TestARoleChangeTakesEffectOnTheNextRequest`, `TestADemotedParentsKeyIsDemotedWithThem`, `TestThePrimaryAdminPicksAndChangesRole`, `TestAnAdminHasTheGuardianWindowAsTheFirstTab`. Calibration in Phase 34 |
 | FR-21 pause and today's time | 35 | e2e `TestAGuardianPausesAndTakesTimeAway`, `TestAGuardianCanPauseAndBadRequestsSayWhy`, `TestTodaysTimeGoesDownAsWellAsUp`, `TestAReductionWithoutALimitSaysSo`, `TestFgctlPausesAndAdjustsTime`; the shared vectors (`TestAPauseTakesEverythingButCallsAndMessages`, `TestUnpausingDuringBedtimeLeavesBedtime`) replayed by both engines. **Device:** `TestAPauseSuspendsAppsOnARealPhone` (`tests/android/pause.sh`). Calibration in Phase 35 |
 | FR-22 daily plan and earned time | 36 | e2e `TestAConfirmedGroupEarnsTimeThatCarriesTheDay`, `TestACreditLastsSevenDaysCountingItsOwn`, `TestAnOverdraftIsADebtTheNextCreditSettles`, `TestAReportOutsideItsDaysIsRefusedAndDecisionsAreChecked`, `TestAGuardianConfirmsTasksAndSeesBonuszeit`, `TestABonusAppWithoutEarnedTimeSaysWhyItIsPaused`, `TestFgctlDrivesTheDailyPlan`, `TestEarnedTimeReachesTheEngine`; JVM `DayPlanTest`, `EarnedAccountTest`, `EarnedAttributionTest`. **Device:** `TestABonusAppOpensOnlyWithEarnedTimeOnARealPhone` (`tests/android/bonus.sh`). Calibration in Phase 36 |
@@ -7135,7 +7135,7 @@ open); the system property that holds it is not readable by an app. The phone di
 announcement through `NsdManager` — keeping only an address that is one of its own, so a laptop on
 the same Wi-Fi can never receive a child's session. When nothing is announced it asks for
 `adb_wifi_enabled` as device owner, reads it back, and says in words why not if it did not take.
-`--port` overrides discovery.
+`--port` overrides discovery. *(Since 0.6.32 the phone first looks on its own loopback — Phase 48.)*
 
 **The phone shows it.** A notification on its own channel, at default importance, for as long as
 any stream is open.
@@ -8503,3 +8503,54 @@ rest, by push: the Android 13 phone in 21 s, the Android 16 phone in 1 min 35 s,
 0.6.31 with no update error. **Play Protect let this build through on the Android 13 phone**, which
 had refused 0.6.30 — so it now carries the Play Store fix of Phase 46 too. Whether a Jellyfin client
 is installed on either phone is not measured: the phones report usage, not their installed packages.
+
+## Phase 48 — the phone finds its own adb port without the network (0.6.32, FR-19.3)
+
+The owner, 2026-09-29, on the remote-adb gap that the first real session left (2026-09-27, the
+Android 13 phone): *"I want it fixed properly"*. There, with the ad filter on, mDNS announced the
+pairing service and never the connection service — *"Wireless debugging is on but announced no adb
+port within 13 s"* — and a person had to read the port off the screen and pass `--port`.
+
+**Not reproduced, and that is recorded rather than guessed at.** The same situation — device owner,
+the filter's tunnel up, Wireless debugging on, no port given — was built on an API 37 and an API 33
+emulator; both run Wireless debugging over their virtual Wi-Fi, which the old test comment said an
+emulator could not. mDNS found the port on both, and again with Wireless debugging on for three
+minutes before the search. The two platforms announce it differently (API 33: adbd itself, logging
+`TlsServer running on port N`; API 37: the framework's NsdManager, logging `Received tls port=N`;
+`service.adb.tls.port` is empty on API 37). Whatever broke mDNS on the family phone — its vendor
+build, its network — is not something an emulator has.
+
+**The fix removes the dependency instead.** `LoopbackAdbProbe`: adbd listens on every address,
+127.0.0.1 included, on a port from the kernel's ephemeral range (`/proc/sys/net/ipv4/ip_local_port_range`,
+32768–60999 by default), and on that port answers adb's CNXN with **STLS** — measured on the API 33
+emulator through `adb forward`. The classic adbd answers CNXN or AUTH, the pairing service expects a
+TLS hello. So the phone sweeps its own loopback, 32 threads, 200 ms connect and 500 ms read
+timeouts, a 4 s deadline, and keeps the one listener that answers STLS. It cannot pick another
+device's adbd, because loopback never leaves the phone. mDNS stays as the second way; after the
+phone switches Wireless debugging on, mDNS's wait for the announcement doubles as the wait for adbd
+to start, followed by one more sweep. The acknowledgement names which way it was found
+(`found_by: loopback | mdns | given`).
+
+### 48.1 — tests and calibration
+
+- Kotlin unit `LoopbackAdbProbeTest` (4), real sockets on the test machine's loopback: the STLS
+  listener among a classic adbd, an HTTP server and a silent one; nothing answering STLS is null; four
+  silent listeners cost their read timeout and not the search; the range read from the kernel's line.
+  Kotlin unit total 967.
+- Device `TestRemoteADBFindsWirelessDebuggingWithTheFilterOn` (`tests/android/remote-adb-wireless.sh`):
+  the tunnel up and read back from Android's own record, Wireless debugging switched on and its
+  network trusted as a person would, then `fgctl adb` with no port — the phone must connect to the
+  port adbd logged, found on its loopback. **PASS on API 33 and on API 37.**
+
+| # | the one value | measured |
+|---|---|---|
+| L1 | the probe accepts CNXN instead of STLS | **RED**: picked the classic adbd's port |
+| L2 | no read timeout | **RED**: *four silent listeners held the search for 4506 ms* |
+| L3 | the range parser ignores its input | **RED** (the stub): *expected 40000..50999* |
+| D1 | device, API 37: the phone skips the loopback probe | **RED**: *the phone found adbd by "mdns", not on its own loopback* — first attempt NOT COUNTED: the command reached the resting phone 18 s into the server's 30 s wait and the mDNS search did not finish in the rest, a red for another reason; retaken |
+
+The first version of the test's own helper polled `service.adb.tls.port`, empty on API 37, and went
+red before the phone was ever asked; the first API 33 run did the same on the other log line. Neither
+counted. **4 probes, 4 red. Cumulative: 342 probes.** Not measured: the family's Android 13 phone
+itself — the next remote session there is the read-back, and its acknowledgement will say
+`found_by`.

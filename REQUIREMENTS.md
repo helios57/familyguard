@@ -594,10 +594,12 @@ below is about who can open it, what it can reach, and who can see that it is op
 - FR-19.2 The phone dials back, authenticated with its own device token, and a session belongs to
   exactly one phone: another phone presenting the same session id is refused, and a session id is
   good for one dial.
-- FR-19.3 The phone finds its own Wireless debugging port — adbd picks a new one each time and
-  announces it only over mDNS — and connects to it on its own loopback. When Wireless debugging is
-  off, the phone asks for it as device owner and reads the setting back. A parent can also name the
-  port the phone shows. **Pairing is the one step that needs a person at the phone**: only the phone
+- FR-19.3 The phone finds its own Wireless debugging port — adbd picks a new one each time — and
+  connects to it on its own loopback. It looks on the loopback first, for the listener that answers
+  the adb greeting with STLS, so it depends neither on mDNS nor on the network (0.6.32: on the
+  family's Android 13 phone mDNS never announced the port while the ad filter ran); mDNS is the
+  second way. When Wireless debugging is off, the phone asks for it as device owner and reads the
+  setting back. A parent can also name the port the phone shows. **Pairing is the one step that needs a person at the phone**: only the phone
   can show a pairing code, and that is where Android keeps the decision about which computers it
   trusts.
 - FR-19.4 The server relays and nothing more. It never speaks adb and cannot read what it carries:

@@ -57,6 +57,7 @@ class RemoteDebug(
     context: Context,
     private val api: ApiClient,
     private val finder: AdbPortFinder = AdbPortFinder(context),
+    private val probe: LoopbackAdbProbe = LoopbackAdbProbe(),
     /** null when Wireless debugging is on, or why it is not. See the gateway for the read-back. */
     private val switchOn: () -> String? = { DpmRestrictionGateway.switchWirelessDebuggingOn(context) },
 ) {
@@ -83,18 +84,44 @@ class RemoteDebug(
 
         val service = if (target == "pair") AdbPortFinder.Service.PAIRING else AdbPortFinder.Service.CONNECT
         var enabledNote: String? = null
+        var foundBy = "given"
         val adbd: Socket = if (explicitPort > 0) {
             connectLocal(listOf(LOOPBACK), explicitPort)
                 ?: return CommandOutcome.Failed("nothing on this phone accepts connections on port $explicitPort")
-        } else {
-            var found = finder.find(service)
-            if (found == null && service == AdbPortFinder.Service.CONNECT) {
+        } else if (service == AdbPortFinder.Service.CONNECT) {
+            // The phone's own loopback first: it cannot answer with another device's adbd and does
+            // not depend on mDNS, which on the family's Android 13 phone never announced this port
+            // while the ad filter ran. mDNS second, for whatever the probe cannot see.
+            var local = probe.find()
+            var announced: AdbPortFinder.Found? = null
+            if (local == null) announced = finder.find(service)
+            if (local == null && announced == null) {
                 enabledNote = switchOn()
-                if (enabledNote == null) found = finder.find(service, ENABLE_WAIT_MILLIS)
+                if (enabledNote == null) {
+                    // mDNS listens for the announcement, which is also the wait for adbd to start;
+                    // one more sweep of the loopback covers a phone whose announcement never comes.
+                    announced = finder.find(service, ENABLE_WAIT_MILLIS)
+                    if (announced == null) local = probe.find()
+                }
             }
-            if (found == null) {
-                return CommandOutcome.Failed(notFound(service, enabledNote))
+            when {
+                local != null -> {
+                    foundBy = "loopback"
+                    connectLocal(listOf(LOOPBACK), local)
+                        ?: return CommandOutcome.Failed("adb answered on port $local of this phone and then refused a connection")
+                }
+                announced != null -> {
+                    foundBy = "mdns"
+                    connectLocal(listOf(LOOPBACK, announced.address), announced.port)
+                        ?: return CommandOutcome.Failed(
+                            "adb announced port ${announced.port} on this phone and refused a connection to it"
+                        )
+                }
+                else -> return CommandOutcome.Failed(notFound(service, enabledNote))
             }
+        } else {
+            foundBy = "mdns"
+            val found = finder.find(service) ?: return CommandOutcome.Failed(notFound(service, enabledNote))
             connectLocal(listOf(LOOPBACK, found.address), found.port)
                 ?: return CommandOutcome.Failed(
                     "adb announced port ${found.port} on this phone and refused a connection to it"
@@ -114,6 +141,7 @@ class RemoteDebug(
                 put("state", "connected")
                 put("target", target)
                 put("port", adbd.port.toString())
+                put("found_by", foundBy)
                 enabledNote?.let { put("note", it) }
             }
         )
@@ -124,9 +152,9 @@ class RemoteDebug(
         service == AdbPortFinder.Service.PAIRING ->
             "no pairing service is announced on this phone: open Developer options → Wireless debugging → " +
                 "Pair device with pairing code, and keep that screen open"
-        else -> "Wireless debugging is on but announced no adb port within " +
-            "${(AdbPortFinder.DEFAULT_TIMEOUT_MILLIS + ENABLE_WAIT_MILLIS) / 1000} s; the phone may be off " +
-            "Wi-Fi, or waiting for someone to allow debugging on this network on its screen"
+        else -> "no adb listens for Wireless debugging on this phone, on its own loopback or announced " +
+            "over mDNS, within ${(2 * LoopbackAdbProbe.DEFAULT_DEADLINE_MILLIS + AdbPortFinder.DEFAULT_TIMEOUT_MILLIS + ENABLE_WAIT_MILLIS) / 1000} s; " +
+            "the phone may be off Wi-Fi, or waiting for someone to allow debugging on this network on its screen"
     }
 
     private fun connectLocal(addresses: List<InetAddress>, port: Int): Socket? {
