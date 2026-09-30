@@ -8554,3 +8554,10 @@ red before the phone was ever asked; the first API 33 run did the same on the ot
 counted. **4 probes, 4 red. Cumulative: 342 probes.** Not measured: the family's Android 13 phone
 itself — the next remote session there is the read-back, and its acknowledgement will say
 `found_by`.
+
+### 48.2 — live
+
+Deployed 2026-09-30 as **0.6.32** (image `sha256:0684e999…e79b`, APK `2c041000…3d9b`, versionCode 41),
+server first, `/dpc.apk` read back byte-identical. *Update app* was acknowledged by both phones by
+push — the Android 16 phone in 4 s, the Android 13 phone in 53 s — and both report 0.6.32 with no
+update error; Play Protect let the Android 13 phone's install through again.
