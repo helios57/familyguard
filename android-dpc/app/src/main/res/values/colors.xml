@@ -3,4 +3,8 @@
     <!-- Earned time (Bonuszeit, FR-22) is gold everywhere. A dark goldenrod on light backgrounds,
          a warm gold on dark ones: both pass 4.5:1 against the theme's surface. -->
     <color name="earned_gold">#8A6100</color>
+    <!-- The other two kinds of time (FR-28.3), the console's colours: Tageszeit green, Extrazeit
+         teal — never gold, which is Bonuszeit's alone. -->
+    <color name="daily_green">#16794A</color>
+    <color name="extra_teal">#0A6C7D</color>
 </resources>

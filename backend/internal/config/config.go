@@ -157,6 +157,12 @@ type Config struct {
 	FCMAPIKey        string
 	FCMSenderID      string
 	FCMEndpoint      string
+
+	// WebPushExtraHosts are host[:port] values a parent browser's push address may name besides the
+	// browsers' own push services (FR-28.4), over http too — for a bench that receives its own
+	// pushes, never for a deployment: the address is a parent's input and the request leaves the
+	// cluster.
+	WebPushExtraHosts []string
 }
 
 // Load reads and validates configuration from the environment. It returns every problem it finds,
@@ -225,6 +231,12 @@ func Load() (*Config, error) {
 	c.FCMEndpoint = envOr("FCM_ENDPOINT", "https://fcm.googleapis.com")
 	if c.FCMCredentials != "" && (c.FCMApplicationID == "" || c.FCMAPIKey == "" || c.FCMSenderID == "") {
 		fail("FCM_CREDENTIALS is set, so FCM_APPLICATION_ID, FCM_API_KEY and FCM_SENDER_ID are required too")
+	}
+
+	for _, h := range strings.Split(os.Getenv("WEB_PUSH_EXTRA_HOSTS"), ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			c.WebPushExtraHosts = append(c.WebPushExtraHosts, h)
+		}
 	}
 
 	if c.DatabaseURL == "" {

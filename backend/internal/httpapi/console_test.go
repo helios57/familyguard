@@ -52,6 +52,7 @@ var wantContentType = map[string]string{
 	"/family.js":            "text/javascript",
 	"/manifest.webmanifest": "application/manifest+json",
 	"/icon.svg":             "image/svg+xml",
+	"/sw.js":                "text/javascript; charset=utf-8",
 }
 
 func TestConsoleServesEveryRoute(t *testing.T) {

@@ -231,6 +231,9 @@ type browser struct {
 	// ever executed, in any browser, ever. Diagnosing that took a throwaway probe test. With this
 	// slice the same failure prints the SyntaxError and its line number.
 	pageErrors []string
+	// swRegistrations are the service-worker registration ids the page reported once
+	// ServiceWorker.enable is on (FR-28.4): the handle a push is delivered to.
+	swRegistrations map[string]string // registration id -> scope URL
 }
 
 // startBrowser launches headless Chrome and attaches to its first page.
@@ -470,6 +473,11 @@ func (b *browser) recordIfPageError(frame []byte) {
 	var event struct {
 		Method string `json:"method"`
 		Params struct {
+			Registrations []struct {
+				RegistrationID string `json:"registrationId"`
+				ScopeURL       string `json:"scopeURL"`
+				IsDeleted      bool   `json:"isDeleted"`
+			} `json:"registrations"`
 			ExceptionDetails struct {
 				Text       string `json:"text"`
 				LineNumber int    `json:"lineNumber"`
@@ -490,6 +498,17 @@ func (b *browser) recordIfPageError(frame []byte) {
 		return
 	}
 	switch event.Method {
+	case "ServiceWorker.workerRegistrationUpdated":
+		if b.swRegistrations == nil {
+			b.swRegistrations = map[string]string{}
+		}
+		for _, r := range event.Params.Registrations {
+			if r.IsDeleted {
+				delete(b.swRegistrations, r.RegistrationID)
+			} else {
+				b.swRegistrations[r.RegistrationID] = r.ScopeURL
+			}
+		}
 	case "Runtime.exceptionThrown":
 		d := event.Params.ExceptionDetails
 		text := d.Text

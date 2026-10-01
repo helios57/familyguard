@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="earned_gold">#F2C14E</color>
+    <color name="daily_green">#5AD19B</color>
+    <color name="extra_teal">#6FD6E6</color>
 </resources>

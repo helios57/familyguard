@@ -21,6 +21,7 @@ async function loadOverview() {
   state.children = children;
   renderChildSwitcher();
   const admin = isAdmin();
+  state.push = await pushState();
   return Promise.all(children.map(async (child) => {
     // A guardian cannot set a phone up, so a phone that is not enrolled is nothing to them.
     const all = (await api('/devices?child_id=' + encodeURIComponent(child.id))).devices || [];
@@ -53,9 +54,12 @@ function renderOverview(profiles) {
         el('button', { class: 'btn btn-primary', type: 'button', text: 'Kind hinzufügen', onclick: addChild }))
       : emptyCard('family', 'Noch kein Profil', 'Ein Admin richtet die Profile ein.')];
   }
+  const offer = notifyCard(true);
   return [
     waitingCard(profiles),
+    offer,
     el('div', { class: 'cols' }, profiles.map(childCard)),
+    offer ? null : notifyCard(false),
   ];
 }
 
@@ -83,12 +87,12 @@ function childStatus(child, devices, today) {
   if (!enrolled.length) return { cls: '', word: 'Kein Handy', reason: 'Noch kein Handy eingerichtet.' };
   const reasons = enrolled.map((d) => d.desired && d.desired.suspend_reason).filter(Boolean);
   if (reasons.includes('BEDTIME')) return { cls: 'paused', word: 'Schlafenszeit', reason: 'Apps sind bis zum Morgen pausiert.' };
-  if (reasons.includes('QUOTA')) return { cls: 'paused', word: 'Limit erreicht', reason: 'Das Tageslimit ist aufgebraucht.' };
+  if (reasons.includes('QUOTA')) return { cls: 'paused', word: 'Zeit aufgebraucht', reason: 'Tages- und Extrazeit sind für heute aufgebraucht.' };
   if (reasons.length) return { cls: 'paused', word: 'Pausiert', reason: 'Apps pausiert: ' + guardianReason(reasons[0]) + '.' };
   // The limit is used up and the apps are still open: that is earned time being spent, and a card
   // reading "Frei" beside a full red bar contradicts itself (tour, 2026-10-01).
   if (enrolled.some((d) => onEarnedTime(d.desired)) && earnedLeft(today) > 0) {
-    return { cls: 'gold', word: 'Bonuszeit', reason: 'Tageslimit aufgebraucht — läuft mit Bonuszeit.' };
+    return { cls: 'gold', word: 'Bonuszeit', reason: 'Tages- und Extrazeit aufgebraucht — läuft mit Bonuszeit.' };
   }
   const online = enrolled.some((d) => d.dev.state && d.dev.state.online);
   return { cls: 'ok', word: 'Frei', reason: online ? 'Apps sind offen.' : 'Apps sind offen · Handy gerade nicht erreichbar.' };
@@ -104,19 +108,84 @@ function earnedLeft(today) {
 }
 
 function guardianReason(reason) {
-  return ({ PAUSED: 'pausiert', QUOTA: 'Tageslimit erreicht', BEDTIME: 'Schlafenszeit', EARNED: 'keine Bonuszeit mehr' })[reason] || reason.toLowerCase();
+  return ({ PAUSED: 'pausiert', QUOTA: 'Zeit für heute aufgebraucht', BEDTIME: 'Schlafenszeit', EARNED: 'keine Bonuszeit mehr' })[reason] || reason.toLowerCase();
 }
 
-/* "Heute 40 min von 45 min (15 min weniger)": the day against the limit in force, with today's
-   adjustment said in words rather than folded silently into the number. */
+/* The day's time, said as the three kinds it is made of, each with when it ends — the owner's words
+   (2026-10-01): "bonus time stays a week, additional time stays till midnight, daily time is reset
+   at midnight". Before, the card said "Heute 2 h 41 min von 2 h (inkl. 15 min extra)" and a gold
+   "Bonuszeit" line, and the +15 button was gold too: three different kinds of time in one colour
+   and two sentences, and a parent could not tell which one +15 gave.
+
+     Tageszeit — the daily limit; it starts over every midnight.
+     Extrazeit — what a parent gave (or took) for today, by hand or by answering a request; it ends
+                 at midnight.
+     Bonuszeit — earned with the plan's tasks; it stays seven days and is spent after the other two.
+
+   Above them, per phone, the one number a parent asks for — how much is left now, all kinds
+   together — and what was used. */
+function timeBlock(enrolled, today) {
+  const block = el('div', { class: 'time-block stack' });
+  const known = enrolled.filter((d) => d.desired);
+  for (const { dev, desired } of enrolled) {
+    if (!desired) block.append(el('p', { class: 'muted', text: dev.name + ': noch keine Angaben vom Handy.' }));
+  }
+  if (!known.length) return block.childElementCount ? block : null;
+  const e = (today && today.earned) || {};
+  const bonusLeft = e.left_minutes || 0;
+  for (const { dev, desired } of known) {
+    const used = desired.used_minutes || 0;
+    const name = known.length > 1 ? dev.name + ': ' : '';
+    if ((desired.daily_limit_minutes || 0) <= 0) {
+      block.append(el('p', { class: 'time-left', 'data-left': '' },
+        el('small', { text: name + fmtMinutes(used) + ' benutzt · kein Tageslimit' })));
+      continue;
+    }
+    const left = Math.max(0, (desired.quota_minutes || 0) - used) + Math.max(0, bonusLeft);
+    block.append(
+      el('p', { class: 'time-left', 'data-left': String(left) },
+        el('b', { text: name + (left > 0 ? 'Noch ' + fmtMinutes(left) : 'Keine Zeit mehr') }),
+        el('small', { text: fmtMinutes(used) + ' benutzt' })),
+      timeMeter(desired, bonusLeft));
+  }
+  const limited = known.map((k) => k.desired).find((d) => (d.daily_limit_minutes || 0) > 0);
+  const hasPlan = !!(today && today.groups && today.groups.length);
+  if (!limited && !hasPlan && !bonusLeft) return block;
+
+  const rows = [];
+  const kind = (key, cls, term, value, hint) => rows.push(
+    el('dt', { class: cls, text: term }),
+    el('dd', { class: cls, 'data-kind': key, text: value }),
+    el('dd', { class: 'hint', 'data-hint': key, text: hint }));
+  if (limited) {
+    const extra = limited.bonus_minutes || 0;
+    kind('daily', '', 'Tageszeit', fmtMinutes(limited.daily_limit_minutes), 'jeden Tag, ab Mitternacht neu');
+    kind('extra', 'extra', 'Extrazeit',
+      extra > 0 ? '+' + fmtMinutes(extra) : extra < 0 ? '−' + fmtMinutes(-extra) : 'keine',
+      extra < 0 ? 'heute weniger, bis Mitternacht' : 'nur heute, bis Mitternacht');
+  }
+  const next = (e.credits || []).find((c) => c.minutes > 0);
+  kind('bonus', bonusLeft < 0 ? 'bonus debt' : 'bonus', 'Bonuszeit',
+    bonusLeft < 0 ? '−' + fmtMinutes(-bonusLeft) : fmtMinutes(bonusLeft),
+    bonusLeft < 0 ? 'zu viel gebraucht, wird mit der nächsten verrechnet'
+      : next && bonusLeft > 0
+        // "bis" when all of it ends that day; "davon nur bis" only when part of it ends sooner.
+        ? (next.minutes >= bonusLeft ? 'bleibt bis ' : fmtMinutes(next.minutes) + ' davon nur bis ') + fmtDayDe(next.expires_on)
+        : 'für erledigte Aufgaben, bleibt 7 Tage');
+  block.append(el('dl', { class: 'time-kinds' }, rows));
+  return block;
+}
+
+/* One phone's day in a line, for the phone sheet: "Heute 40 min von 1 h 45 min benutzt (mit 15 min
+   Extrazeit)". The child's card says the kinds of time apart; this is the phone's own count. */
 function guardianToday(desired) {
   const used = desired.used_minutes || 0;
   const limit = desired.daily_limit_minutes || 0;
-  if (limit <= 0) return 'Heute ' + fmtMinutes(used) + ' (kein Tageslimit)';
-  const bonus = desired.bonus_minutes || 0;
-  return 'Heute ' + fmtMinutes(used) + ' von ' + fmtMinutes(desired.quota_minutes || 0)
-    + (bonus > 0 ? ' (inkl. ' + fmtMinutes(bonus) + ' extra)' : '')
-    + (bonus < 0 ? ' (' + fmtMinutes(-bonus) + ' weniger)' : '');
+  if (limit <= 0) return 'Heute ' + fmtMinutes(used) + ' benutzt (kein Tageslimit)';
+  const extra = desired.bonus_minutes || 0;
+  return 'Heute ' + fmtMinutes(used) + ' von ' + fmtMinutes(desired.quota_minutes || 0) + ' benutzt'
+    + (extra > 0 ? ' (mit ' + fmtMinutes(extra) + ' Extrazeit)' : '')
+    + (extra < 0 ? ' (' + fmtMinutes(-extra) + ' weniger)' : '');
 }
 
 /* Time used against the quota as one bar. A limit exists when the plain limit says so: the quota can
@@ -144,22 +213,10 @@ function childCard(profile) {
         el('div', { class: 'state-line', text: status.reason })),
       el('span', { class: 'chip ' + status.cls, 'data-state': status.word, text: status.word })));
 
-  let hasLimit = false;
-  const time = el('div', { class: 'time-block' });
-  for (const { dev, desired } of enrolled) {
-    if (!desired) {
-      time.append(el('p', { class: 'muted', text: dev.name + ': noch keine Angaben vom Handy.' }));
-      continue;
-    }
-    // Whether there is a limit comes from the plain limit, never from the quota (FR-21).
-    const limited = (desired.daily_limit_minutes || 0) > 0;
-    hasLimit = hasLimit || limited;
-    time.append(el('p', { class: 'today', text: (enrolled.length > 1 ? dev.name + ' — ' : '') + guardianToday(desired) }));
-    if (limited) time.append(timeMeter(desired, earnedLeft(today)));
-  }
-  if (time.childElementCount) card.append(time);
-  const earned = guardianEarned(today);
-  if (earned) card.append(earned);
+  // Whether there is a limit comes from the plain limit, never from the quota (FR-21).
+  const hasLimit = enrolled.some(({ desired }) => desired && (desired.daily_limit_minutes || 0) > 0);
+  const time = timeBlock(enrolled, today);
+  if (time) card.append(time);
 
   // Nothing to pause or give time to until a phone is there to carry it.
   if (enrolled.length) card.append(quickActions(child, enrolled, hasLimit));
@@ -205,8 +262,8 @@ function quickActions(child, enrolled, hasLimit) {
   const buttons = [];
   if (hasLimit) {
     buttons.push(el('button', {
-      class: 'btn btn-gold', type: 'button', 'data-minutes': '15',
-      'aria-label': '15 Minuten mehr für heute für ' + child.name,
+      class: 'btn btn-extra', type: 'button', 'data-minutes': '15',
+      'aria-label': '15 Minuten Extrazeit für heute für ' + child.name,
       onclick: () => giveTime(child, 15),
     }, icon('plus'), '15 min'));
   }
@@ -225,7 +282,7 @@ function quickActions(child, enrolled, hasLimit) {
     el('button', {
       class: 'btn btn-quiet', type: 'button', 'data-action': 'time-sheet',
       onclick: () => openTimeSheet(child),
-    }, icon('clock'), 'Zeit für heute anpassen'));
+    }, icon('clock'), 'Extrazeit anpassen'));
 }
 
 /* +15 min, and in the sheet −15 · +30 · +60: extra minutes for the child's current day only
@@ -241,13 +298,13 @@ function giveTime(child, minutes) {
 
 function openTimeSheet(child) {
   const change = (minutes) => el('button', {
-    class: 'btn' + (minutes > 0 ? ' btn-gold' : ''), type: 'button', 'data-minutes': String(minutes),
-    text: (minutes > 0 ? '+' : '−') + Math.abs(minutes) + ' min',
+    class: 'btn' + (minutes > 0 ? ' btn-extra' : ''), type: 'button', 'data-minutes': String(minutes),
+    text: minutes > 0 ? '+' + minutes + ' min' : minutes * -1 + ' min weniger',
     'aria-label': Math.abs(minutes) + (minutes > 0 ? ' Minuten mehr' : ' Minuten weniger') + ' für heute',
     onclick: () => giveTime(child, minutes),
   });
-  openSheet('Zeit für ' + child.name, el('div', { class: 'stack' },
-    el('p', { class: 'muted', text: 'Gilt nur für heute. Das Handy übernimmt es innert Sekunden.' }),
+  openSheet('Extrazeit für ' + child.name, el('div', { class: 'stack' },
+    el('p', { class: 'muted', text: 'Gilt nur heute, bis Mitternacht. Die Tageszeit und die Bonuszeit bleiben, wie sie sind. Das Handy übernimmt es innert Sekunden.' }),
     el('div', { class: 'btn-grid' }, change(15), change(30), change(60), change(-15))), 'time');
 }
 
@@ -286,25 +343,6 @@ function pauseButton(child) {
 
 /* ---- Bonuszeit and today's tasks (FR-22) ------------------------------------ */
 
-/* The gold line: Bonuszeit left today, and what expires next. A negative balance is a debt the next
-   earned minutes settle, and it is said as one rather than drawn as zero. */
-function guardianEarned(today) {
-  if (!today) return null;
-  const e = today.earned || {};
-  if (!today.groups.length && !e.available_minutes && !e.spent_minutes) return null;
-  const left = e.left_minutes || 0;
-  const next = (e.credits || []).find((c) => c.minutes > 0);
-  return el('p', { class: 'earned' + (left < 0 ? ' debt' : ''),
-    text: left < 0
-      ? 'Bonuszeit: −' + fmtMinutes(-left) + ' (wird mit der nächsten verrechnet)'
-      : 'Bonuszeit: ' + fmtMinutes(left)
-        + (e.spent_minutes > 0 ? ' (heute ' + fmtMinutes(e.spent_minutes) + ' gebraucht)' : '')
-        // "gültig bis" when all of it ends that day; "davon" only when part of it ends sooner.
-        + (next && left > 0
-          ? (next.minutes >= left ? ' · gültig bis ' : ' · ' + fmtMinutes(next.minutes) + ' davon bis ') + fmtDayDe(next.expires_on)
-          : '') });
-}
-
 /* One decision on one task of today: Bestätigen, Nicht erledigt, or Rückgängig. */
 function decideTask(child, task, decision, label) {
   return el('button', {
@@ -323,6 +361,21 @@ function decideTask(child, task, decision, label) {
    a full one stops being read. */
 function waitingCard(profiles) {
   const rows = [];
+  // FR-28: a child asking for more time comes first — it is the one a child is waiting on right now.
+  for (const { child, today } of profiles) {
+    for (const r of (today && today.time_requests) || []) {
+      if (r.state !== 'OPEN') continue;
+      rows.push(el('li', { 'data-request': r.id },
+        el('span', { class: 'label' },
+          el('b', { text: child.name + ' bittet um ' + fmtMinutes(r.minutes) + ' mehr' }),
+          r.note ? el('small', { class: 'request-note', text: '«' + r.note + '»' }) : null,
+          el('small', { text: fmtTime(r.requested_at) + ' · Extrazeit gilt nur heute, bis Mitternacht' })),
+        el('div', { class: 'row-actions' },
+          answerRequest(child, r, r.minutes),
+          r.minutes > 15 ? answerRequest(child, r, 15) : null,
+          answerRequest(child, r, 0))));
+    }
+  }
   for (const { child, today } of profiles) {
     for (const g of (today && today.groups) || []) {
       for (const t of g.tasks) {
@@ -343,6 +396,22 @@ function waitingCard(profiles) {
       el('h2', { text: 'Wartet auf dich' }),
       el('span', { class: 'badge gold', text: String(rows.length) })),
     el('ul', { class: 'list' }, rows));
+}
+
+/* One answer to a request: give its minutes (or fewer) as today's Extrazeit, or say no. */
+function answerRequest(child, r, minutes) {
+  const label = minutes > 0 ? '+' + fmtMinutes(minutes) : 'Nein';
+  return el('button', {
+    class: 'btn' + (minutes === r.minutes ? ' btn-extra solid' : minutes > 0 ? ' btn-extra' : ' btn-quiet'),
+    type: 'button', text: label, 'data-answer': String(minutes),
+    'aria-label': minutes > 0 ? fmtMinutes(minutes) + ' Extrazeit für ' + child.name + ' geben' : 'Anfrage von ' + child.name + ' ablehnen',
+    onclick: () => act(minutes > 0 ? child.name + ': +' + fmtMinutes(minutes) : child.name + ': Nein', async () => {
+      await api('/children/' + child.id + '/time-requests/' + r.id + '/decision', {
+        method: 'POST', body: minutes > 0 ? { decision: 'grant', minutes } : { decision: 'decline' },
+      });
+      refresh();
+    }),
+  });
 }
 
 const TASK_STATE = { OPEN: 'offen', REPORTED: 'gemeldet', CONFIRMED: 'bestätigt', REJECTED: 'nicht erledigt' };
@@ -772,4 +841,99 @@ async function showRecovery(dev) {
     step(2, 'Im Browser des Handys /dpc.apk auf dieser Seite öffnen und darüber installieren. Die Einstellungen bleiben.'),
     step(3, 'Hier: «Handy ersetzen», für einen neuen Einrichtungscode.'),
     step(4, 'Auf dem Handy: FamilyGuard › Wiederherstellung › Handy neu verbinden, und diesen Code eintippen.')), 'recovery');
+}
+
+/* ---- notifications on this device (FR-28.4) ---------------------------------------- */
+
+/* A child asking for more time waits for an answer; a console nobody has open cannot give one. So
+   the browser is offered Web Push: the server sends, the service worker (sw.js) shows it, and a tap
+   opens Übersicht. Per browser, because the subscription is the browser's.
+
+   Offered once at the top, until it is on or put off with "Später"; after that it is one quiet line
+   at the bottom, where it can always be switched. */
+const PUSH_LATER_KEY = 'fg.push.later';
+
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+async function pushState() {
+  if (!pushSupported()) return { supported: false };
+  try {
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    const sub = reg && await reg.pushManager.getSubscription();
+    if (!sub) return { supported: true, subscribed: false };
+    const r = await api('/push/subscription/status', { method: 'POST', body: { endpoint: sub.endpoint } });
+    // The browser holds a subscription the server does not (another parent signed in on it since,
+    // or the push service once said it was gone): it is handed over again rather than shown as off.
+    if (!r.subscribed) await api('/push/subscription', { method: 'PUT', body: sub.toJSON() });
+    return { supported: true, subscribed: true };
+  } catch (e) {
+    return { supported: true, subscribed: false };
+  }
+}
+
+function b64urlBytes(s) {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+async function enablePush() {
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    throw new Error('der Browser erlaubt keine Benachrichtigungen. Erlaube sie in den Website-Einstellungen.');
+  }
+  const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+  await navigator.serviceWorker.ready;
+  const { public_key: key } = await api('/push/key');
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlBytes(key) });
+  await api('/push/subscription', { method: 'PUT', body: sub.toJSON() });
+}
+
+async function disablePush() {
+  const reg = await navigator.serviceWorker.getRegistration('/');
+  const sub = reg && await reg.pushManager.getSubscription();
+  if (!sub) return;
+  await api('/push/subscription', { method: 'DELETE', body: { endpoint: sub.endpoint } });
+  await sub.unsubscribe();
+}
+
+function notifyCard(prominent) {
+  const p = state.push || { supported: false };
+  let later = false;
+  try { later = localStorage.getItem(PUSH_LATER_KEY) === '1'; } catch (e) { /* private window */ }
+  const offerTop = !p.subscribed && !later;
+  if (prominent !== offerTop) return null;
+  const why = 'Damit du sofort erfährst, wenn ein Kind um mehr Zeit bittet oder eine Aufgabe erledigt hat — auch wenn diese Seite zu ist.';
+  if (!p.supported) {
+    if (prominent) return null;
+    return el('p', { class: 'muted notify-line', 'data-push': 'unsupported',
+      text: /iPhone|iPad/.test(navigator.userAgent)
+        ? 'Benachrichtigungen: auf dem iPhone zuerst «Zum Home-Bildschirm» hinzufügen und von dort öffnen.'
+        : 'Benachrichtigungen: dieser Browser kann keine.' });
+  }
+  const on = () => act('Benachrichtigungen an', async () => { await enablePush(); refresh(); });
+  if (prominent) {
+    return el('div', { class: 'card full notice-card', 'data-push': 'offer' },
+      el('div', { class: 'card-head' }, el('h2', { text: 'Benachrichtigungen' })),
+      el('p', { class: 'muted', text: why }),
+      el('div', { class: 'row-actions' },
+        el('button', { class: 'btn btn-quiet', type: 'button', text: 'Später', onclick: () => {
+          try { localStorage.setItem(PUSH_LATER_KEY, '1'); } catch (e) { /* private window */ }
+          refresh();
+        } }),
+        el('button', { class: 'btn btn-primary', type: 'button', 'data-action': 'push-on', onclick: on }, icon('bell'), 'Einschalten')));
+  }
+  return el('div', { class: 'notify-line', 'data-push': p.subscribed ? 'on' : 'off' },
+    el('span', { class: 'muted', text: p.subscribed ? 'Benachrichtigungen auf diesem Gerät: an' : 'Benachrichtigungen auf diesem Gerät: aus' }),
+    p.subscribed
+      ? el('button', { class: 'btn btn-quiet', type: 'button', 'data-action': 'push-off', text: 'Ausschalten',
+        onclick: () => act('Benachrichtigungen aus', async () => { await disablePush(); refresh(); }) })
+      : el('button', { class: 'btn btn-quiet', type: 'button', 'data-action': 'push-on', text: 'Einschalten', onclick: on }));
+}
+
+// An open console redraws when a push arrives rather than at its next event.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.type === 'push') nudgeRefresh(300); });
 }

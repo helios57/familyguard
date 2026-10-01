@@ -139,11 +139,12 @@ function screenTimeCard(data) {
         el('input', { id: 'bt-start', type: 'time', value: p.bedtime_start, onchange: (e) => savePolicy({ bedtime_start: e.target.value }, 'Schlafenszeit ab ' + e.target.value) })),
       el('div', {}, el('label', { for: 'bt-end', text: 'Endet' }),
         el('input', { id: 'bt-end', type: 'time', value: p.bedtime_end, onchange: (e) => savePolicy({ bedtime_end: e.target.value }, 'Schlafenszeit bis ' + e.target.value) }))),
-    el('div', {}, el('label', { for: 'quota', text: 'Bildschirmzeit pro Tag (Minuten, 0 = kein Limit)' }),
+    el('div', {}, el('label', { for: 'quota', text: 'Tageszeit: Bildschirmzeit pro Tag (Minuten, 0 = kein Limit)' }),
       el('input', {
         id: 'quota', type: 'number', min: '0', max: '1440', inputmode: 'numeric', value: p.daily_limit_minutes,
-        onchange: (e) => savePolicy({ daily_limit_minutes: Number(e.target.value) }, 'Tageslimit ' + fmtMinutes(Number(e.target.value))),
+        onchange: (e) => savePolicy({ daily_limit_minutes: Number(e.target.value) }, 'Tageszeit ' + fmtMinutes(Number(e.target.value))),
       })),
+    timeKindsHelp(),
     // Editable, not prose: this is the zone every other time on the page is measured against —
     // bedtime, the daily reset and therefore the quota.
     el('div', {}, el('label', { for: 'tz', text: 'Zeitzone' }),
@@ -365,7 +366,7 @@ function planCard() {
         onclick: () => restructure(() => draft.groups.push(newPlanGroup())),
       }, icon('plus'), 'Gruppe')),
     help('Aufgaben, die das Kind auf dem Handy abhakt — sind alle einer Gruppe bestätigt, gibt es Bonuszeit.',
-      'Wenn du oder eine Betreuungsperson jede Aufgabe einer Gruppe bestätigt habt, gibt es deren Minuten als Bonuszeit — nutzbar nach dem Tageslimit, in der Schlafenszeit und für Bonus-Apps. Verdiente Zeit gilt 7 Tage.'),
+      'Wenn du oder eine Betreuungsperson jede Aufgabe einer Gruppe bestätigt habt, gibt es deren Minuten als Bonuszeit — nutzbar nach der Tages- und Extrazeit, in der Schlafenszeit und für Bonus-Apps. Bonuszeit bleibt 7 Tage.'),
     draft.groups.length
       ? el('div', { class: 'stack' }, draft.groups.map(group))
       : el('p', { class: 'muted', text: 'Noch kein Plan. Füge eine Gruppe hinzu — zum Beispiel «Morgen», 07:00–08:00, mit «Zähne putzen» und «Bett machen».' }));
@@ -611,4 +612,13 @@ function calendarBlock(data) {
     el('div', { class: 'row' },
       el('button', { class: 'btn btn-primary', type: 'button', text: 'Kalender speichern', 'data-calendar': 'save', onclick: save }),
       cal.url ? el('button', { class: 'btn btn-quiet btn-danger', type: 'button', text: 'Entfernen', 'data-calendar': 'remove', onclick: remove }) : null));
+}
+
+/* The three kinds of time, said once where the limit is set, in the words the child's card and the
+   phone use (FR-28.3). */
+function timeKindsHelp() {
+  return help('So funktioniert die Zeit: Tageszeit, Extrazeit, Bonuszeit',
+    'Tageszeit — die Bildschirmzeit pro Tag. Sie beginnt jeden Tag um Mitternacht neu; was nicht gebraucht wird, verfällt.',
+    'Extrazeit — Minuten, die du für heute dazugibst (+15 in der Übersicht, oder als Antwort, wenn das Kind auf dem Handy um mehr Zeit bittet). Sie gilt nur heute, bis Mitternacht.',
+    'Bonuszeit — verdient mit erledigten Aufgaben. Sie bleibt 7 Tage und wird erst gebraucht, wenn Tages- und Extrazeit aufgebraucht sind, in der Schlafenszeit und für Bonus-Apps.');
 }

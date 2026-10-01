@@ -14,6 +14,7 @@ import (
 	"github.com/helios57/familyguard/backend/internal/earned"
 	"github.com/helios57/familyguard/backend/internal/enforce"
 	"github.com/helios57/familyguard/backend/internal/store"
+	"github.com/helios57/familyguard/backend/internal/webpush"
 )
 
 // FR-22: a profile's daily plan, today's tasks, and the earned time they are worth.
@@ -162,6 +163,10 @@ type todayView struct {
 	Day    string       `json:"day"`
 	Groups []todayGroup `json:"groups"`
 	Earned todayEarned  `json:"earned"`
+	// TimeRequests are today's "Mehr Zeit erbitten", newest first (FR-28); TimeRequestsLeft is how
+	// many more the child may send today.
+	TimeRequests     []store.TimeRequest `json:"time_requests"`
+	TimeRequestsLeft int                 `json:"time_requests_left"`
 }
 
 // weekdayBit is a day's bit in plan_groups.weekdays: Monday 1 … Sunday 64.
@@ -228,6 +233,10 @@ func (s *Server) today(ctx context.Context, childID uuid.UUID) (*todayView, erro
 		AvailableMinutes: balance.AvailableToday, SpentMinutes: spent[day],
 		LeftMinutes: balance.AvailableToday - spent[day], Credits: balance.Credits,
 	}
+	if view.TimeRequests, err = s.store.TimeRequestsForDay(ctx, childID, day); err != nil {
+		return nil, err
+	}
+	view.TimeRequestsLeft = max(0, store.MaxTimeRequestsPerDay-len(view.TimeRequests))
 	return view, nil
 }
 
@@ -372,6 +381,23 @@ func (s *Server) deviceReportTask(c *gin.Context) {
 	if err != nil {
 		s.fail(c, err)
 		return
+	}
+	// FR-28.4: a parent whose console is closed learns there is something to confirm.
+	if state == store.TaskReported {
+		title := ""
+		for _, g := range view.Groups {
+			for _, t := range g.Tasks {
+				if t.ID == taskID {
+					title = t.Title
+				}
+			}
+		}
+		s.tellParents(dev.ChildID, func(name string) webpush.Message {
+			return webpush.Message{
+				Title: name + ": «" + title + "» erledigt",
+				Body:  "Tippe, um es zu bestätigen.", Tag: "task-" + dev.ChildID.String(), URL: "#/",
+			}
+		})
 	}
 	c.JSON(http.StatusOK, view)
 }

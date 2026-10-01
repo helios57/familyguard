@@ -42,6 +42,9 @@ var consoleRoutes = map[string]string{
 	"/family.js":            "family.js",
 	"/manifest.webmanifest": "manifest.webmanifest",
 	"/icon.svg":             "icon.svg",
+	// The service worker that shows a parent's notifications (FR-28.4). At the root, because a
+	// worker controls only the paths under its own.
+	"/sw.js": "sw.js",
 }
 
 // contentTypes is explicit rather than derived from mime.TypeByExtension, which consults

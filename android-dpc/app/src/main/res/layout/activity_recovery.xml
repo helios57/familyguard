@@ -13,6 +13,7 @@
   text. Both are exactly the person this screen exists for.
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true"
@@ -64,44 +65,107 @@
                 android:textAppearance="?attr/textAppearanceBodyLarge"
                 android:visibility="gone" />
 
-            <TextView
-                android:id="@+id/today_summary"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:textAppearance="?attr/textAppearanceBodyLarge" />
             <!--
-              The day as one bar, as the console draws it: used against the limit, and the bonus on
-              top of the limit as the secondary track. Gone when there is no limit, because a bar
-              with no end says nothing.
+              FR-28.3: the child's time as one card — how much is left, then the three kinds it is
+              made of, each saying when it ends (owner, 2026-10-01: "bonus time stays a week,
+              additional time stays till midnight, daily time is reset at midnight"), and
+              "Mehr Zeit erbitten". Before, two sentences said three kinds of time:
+              "Bildschirmzeit: 0 von 105 Min. (inkl. 15 Min. extra)" and a gold "Bonuszeit" line.
             -->
-            <ProgressBar
-                android:id="@+id/today_meter"
-                style="?android:attr/progressBarStyleHorizontal"
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/time_card"
+                style="@style/Widget.Material3.CardView.Filled"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:importantForAccessibility="no"
-                android:visibility="gone" />
+                android:layout_marginTop="16dp">
 
-            <TextView
-                android:id="@+id/today_why"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:textAppearance="?attr/textAppearanceBodyMedium"
-                android:textColor="?attr/colorError"
-                android:visibility="gone" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
 
-            <!-- FR-22: earned time in gold, then the day's tasks with their "Fertig". -->
-            <TextView
-                android:id="@+id/today_earned"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:textAppearance="?attr/textAppearanceTitleMedium"
-                android:textColor="@color/earned_gold"
-                android:visibility="gone" />
+                    <TextView
+                        android:id="@+id/today_left"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:accessibilityHeading="true"
+                        android:textAppearance="?attr/textAppearanceHeadlineMedium" />
+
+                    <!-- Used against the day's time plus today's Extrazeit. Gone with no limit. -->
+                    <ProgressBar
+                        android:id="@+id/today_meter"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:importantForAccessibility="no"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/today_summary"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:textAppearance="?attr/textAppearanceBodyMedium"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+
+                    <TextView
+                        android:id="@+id/today_why"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:textAppearance="?attr/textAppearanceBodyLarge"
+                        android:textColor="?attr/colorError"
+                        android:visibility="gone" />
+
+                    <!-- Tageszeit, Extrazeit, Bonuszeit: one time_kind_row each. -->
+                    <LinearLayout
+                        android:id="@+id/time_kinds"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:orientation="vertical" />
+
+                    <Button
+                        android:id="@+id/ask_time"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:minHeight="56dp"
+                        android:text="@string/ask_time"
+                        android:visibility="gone"
+                        app:icon="@android:drawable/ic_menu_recent_history" />
+
+                    <TextView
+                        android:id="@+id/ask_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:textAppearance="?attr/textAppearanceBodyMedium"
+                        android:visibility="gone" />
+
+                    <Button
+                        android:id="@+id/time_help_toggle"
+                        style="@style/Widget.Material3.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:minHeight="48dp"
+                        android:paddingStart="0dp"
+                        android:text="@string/time_help_toggle" />
+
+                    <TextView
+                        android:id="@+id/time_help"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:lineSpacingExtra="4dp"
+                        android:text="@string/time_help"
+                        android:textAppearance="?attr/textAppearanceBodyMedium"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
 
             <LinearLayout
                 android:id="@+id/today_plan"

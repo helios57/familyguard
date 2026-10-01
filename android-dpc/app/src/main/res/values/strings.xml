@@ -170,10 +170,6 @@
     <string name="limits_title_quota">Daily limit reached</string>
     <string name="limits_title_bedtime">Bedtime</string>
     <string name="today_heading">Today</string>
-    <string name="today_used">Screen time: %1$d of %2$d min</string>
-    <string name="today_used_bonus">Screen time: %1$d of %2$d min (incl. %3$d min extra)</string>
-    <string name="today_used_reduced">Screen time: %1$d of %2$d min (%3$d min less today)</string>
-    <string name="today_used_nolimit">Screen time: %1$d min (no daily limit)</string>
     <string name="today_no_apps">No app used today yet.</string>
     <string name="app_minutes">%1$d min</string>
     <string name="app_minutes_of">%1$d of %2$d min</string>
@@ -184,7 +180,7 @@
     <string name="rule_not_counted">Not counted</string>
     <string name="rule_blocked">Blocked by your parents</string>
     <string name="block_paused">Paused by your parents</string>
-    <string name="block_quota">Paused: daily limit reached</string>
+    <string name="block_quota">Paused: today\'s time is used up</string>
     <string name="block_bedtime">Paused: bedtime</string>
     <string name="block_app_limit">Paused: its own limit is used up</string>
     <string name="block_blocked">Blocked by your parents</string>
@@ -204,11 +200,8 @@
     <string name="task_state_closed">only %1$s–%2$s</string>
     <string name="report_failed">No connection — try again later.</string>
     <string name="report_refused">Not possible right now: %1$s</string>
-    <string name="earned_line">Earned time: %1$d min</string>
     <string name="earned_running">Earned time running — %1$d min left</string>
     <string name="earned_running_title">Earned time running</string>
-    <string name="earned_expiring">%1$d min of it valid until %2$s</string>
-    <string name="earned_debt">Earned time: %1$d min overdrawn</string>
     <string name="block_earned">Only with earned time</string>
     <string name="rule_bonus">Bonus app — runs only on earned time</string>
     <!-- FR-23: the alarm clock. -->
@@ -268,4 +261,47 @@
     <string name="status_w_ago_hour_other">%1$d hours ago</string>
     <string name="status_w_ago_day_one">%1$d day ago</string>
     <string name="status_w_ago_day_other">%1$d days ago</string>
+
+    <!-- FR-28: the three kinds of time, and "Mehr Zeit erbitten". -->
+    <string name="time_left">%1$s left today</string>
+    <string name="time_none_left">No time left today</string>
+    <string name="time_no_limit">No daily limit</string>
+    <string name="time_used">Used today: %1$s</string>
+    <string name="duration_minutes">%1$d min</string>
+    <string name="duration_hours">%1$d h</string>
+    <string name="duration_hours_minutes">%1$d h %2$d min</string>
+    <string name="kind_daily">Daily time</string>
+    <string name="kind_daily_hint">every day, starts over at midnight</string>
+    <string name="kind_extra">Extra time</string>
+    <string name="kind_extra_hint">today only, until midnight</string>
+    <string name="kind_extra_less_hint">less today, until midnight</string>
+    <string name="kind_extra_none">none</string>
+    <string name="kind_bonus">Bonus time</string>
+    <string name="kind_bonus_hint">earned with tasks, stays 7 days</string>
+    <string name="kind_bonus_until">stays until %1$s</string>
+    <string name="kind_bonus_part_until">%1$s of it only until %2$s</string>
+    <string name="kind_bonus_debt_hint">used too much, the next bonus time settles it</string>
+    <string name="kind_bonus_running">running now</string>
+    <string name="ask_time">Ask for more time</string>
+    <string name="ask_message">Your parents get a message. If they say yes, you get extra time for today.</string>
+    <string name="ask_15">15 min</string>
+    <string name="ask_30">30 min</string>
+    <string name="ask_60">1 h</string>
+    <string name="ask_note_hint">What for? (optional)</string>
+    <string name="ask_send">Send</string>
+    <string name="ask_cancel">Cancel</string>
+    <string name="ask_waiting">You asked for %1$s — waiting for an answer.</string>
+    <string name="ask_granted">You got %1$s extra time — until midnight.</string>
+    <string name="ask_declined">Your parents said no this time.</string>
+    <string name="ask_none_left">No more requests today.</string>
+    <string name="ask_already">You already asked — wait for the answer.</string>
+    <string name="ask_failed">Not sent — is the phone online?</string>
+    <string name="ask_refused">Not sent: %1$s</string>
+    <string name="time_help_toggle">How your time works</string>
+    <string name="time_help">Daily time: your screen time for each day. It starts over at midnight; what you do not use is gone.\nExtra time: minutes your parents give you for today — also when you ask for more time. It ends at midnight.\nBonus time: earned with your tasks. It stays 7 days and is used once the daily and extra time are used up, at bedtime and for bonus apps.</string>
+    <string name="answer_channel">Answers from your parents</string>
+    <string name="answer_granted_title">+%1$s extra time</string>
+    <string name="answer_granted_text">Your parents said yes. It counts until midnight.</string>
+    <string name="answer_declined_title">No extra time</string>
+    <string name="answer_declined_text">Your parents said no this time.</string>
 </resources>

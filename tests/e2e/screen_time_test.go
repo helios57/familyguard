@@ -315,6 +315,6 @@ func TestTheConsoleDrawsEachAppAgainstItsLimit(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	b.switchTab(t, "activity", "#view .st-summary")
-	b.waitFor("(document.querySelector('#view .st-summary') || {}).textContent.includes('15 min extra')",
+	b.waitFor("(document.querySelector('#view .st-summary') || {}).textContent.includes('1 h Tageszeit + 15 min Extrazeit')",
 		10*time.Second, "the summary to show the extra time")
 }

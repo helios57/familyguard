@@ -129,6 +129,8 @@ class Synchronizer(
 
     /** Where the day's plan the server sent is kept for the Heute screen (FR-22). */
     private val dayPlans: io.github.helios57.familyguard.plan.DayPlanStore? = null,
+    /** FR-28: the day as it was and as it now is, so an answer to "Mehr Zeit erbitten" is told once. */
+    private val onDayPlan: (io.github.helios57.familyguard.plan.DayPlan?, io.github.helios57.familyguard.plan.DayPlan) -> Unit = { _, _ -> },
 
     /** Given the alarm rule the server sent, to keep and to book the next ring from (FR-23.3). */
     private val onAlarm: (io.github.helios57.familyguard.alarm.AlarmSchedule) -> Unit = {},
@@ -165,7 +167,11 @@ class Synchronizer(
             // to the new policy rather than to the one before it, and the applier is idempotent, so
             // re-applying costs a few platform calls and never a wrong state.
             cache.save(response.input)
-            response.today?.let { dayPlans?.save(it) }
+            response.today?.let { today ->
+                val before = runCatching { dayPlans?.load() }.getOrNull()
+                dayPlans?.save(today)
+                onDayPlan(before, today)
+            }
             response.alarm?.let(onAlarm)
             response.agenda?.let(onAgenda)
             // Unparseable is not live: a phone that cannot read the end must not stay awake forever.

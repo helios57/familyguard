@@ -67,7 +67,7 @@ func (s *Store) UsageForDay(ctx context.Context, deviceID uuid.UUID, day string)
 	// minutes it burned today, and dropping those rows would quietly shrink the day's total below
 	// the number the same table reports as screen time.
 	rows, err := s.pool.Query(ctx,
-		`SELECT u.device_id, u.day::text, u.package_name, u.foreground_ms,
+		`SELECT u.device_id, u.day::text, u.package_name, u.foreground_ms, u.earned_ms,
 		        COALESCE(i.label, ''), COALESCE(i.system_app, false)
 		   FROM usage_samples u
 		   LEFT JOIN installed_apps i
@@ -81,7 +81,7 @@ func (s *Store) UsageForDay(ctx context.Context, deviceID uuid.UUID, day string)
 	out := []UsageSample{}
 	for rows.Next() {
 		var u UsageSample
-		if err := rows.Scan(&u.DeviceID, &u.Day, &u.PackageName, &u.ForegroundMs, &u.Label, &u.SystemApp); err != nil {
+		if err := rows.Scan(&u.DeviceID, &u.Day, &u.PackageName, &u.ForegroundMs, &u.EarnedMs, &u.Label, &u.SystemApp); err != nil {
 			return nil, err
 		}
 		out = append(out, u)

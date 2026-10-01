@@ -140,9 +140,9 @@ func TestAGuardianSeesTheGuardianViewAndCanGiveTime(t *testing.T) {
 	// The status line itself, not the card: the card also holds a "+60 min" button, and a check on
 	// the card's text passed on that button alone while the status read something else.
 	var status string
-	b.eval(`Array.from(document.querySelectorAll('#view .child-card')).find((c) => c.textContent.includes('Mira'))
-	  .querySelector('.today').textContent`, &status)
-	if !strings.HasSuffix(status, "Heute 0 min von 1 h") {
+	b.eval(`Array.from(Array.from(document.querySelectorAll('#view .child-card')).find((c) => c.textContent.includes('Mira'))
+	  .querySelectorAll('.time-left b, .time-left small, [data-kind="daily"]')).map((x) => x.textContent).join(' | ')`, &status)
+	if status != "Noch 1 h | 0 min benutzt | 1 h" {
 		t.Errorf("Mira's status line does not show today's time against her 60-minute limit: %q (card %q)", status, mira)
 	}
 	// Review focus 4.
@@ -153,7 +153,7 @@ func TestAGuardianSeesTheGuardianViewAndCanGiveTime(t *testing.T) {
 		t.Errorf("a phone with no daily limit does not say so: %q", lea)
 	}
 	// Review focus 5: time only for the profile that has a limit — +15 on its card, and the rest
-	// (FR-21: −15 · +15 · +30, and +60) in the sheet behind "Zeit für heute anpassen".
+	// (FR-21: −15 · +15 · +30, and +60) in the sheet behind "Extrazeit anpassen".
 	if fmt.Sprint(page.Buttons) != "[15]" {
 		t.Errorf("time buttons on the cards %v, want exactly [15] (Mira only)", page.Buttons)
 	}
@@ -273,8 +273,9 @@ func TestAGuardianPausesAndTakesTimeAway(t *testing.T) {
 			expect(http.StatusOK).decode(&ds)
 		return ds.Desired.BonusMinutes == -15
 	})
-	b.waitFor(`document.querySelector('#view .child-card .today').textContent.includes('15 min weniger')`,
-		10*time.Second, "the status line to say 15 minutes less")
+	b.waitFor(`document.querySelector('#view .child-card [data-kind="extra"]').textContent === '−15 min' &&
+	  document.querySelector('#view .child-card [data-hint="extra"]').textContent.startsWith('heute weniger')`,
+		10*time.Second, "the Extrazeit row to say 15 minutes less")
 	if len(b.pageErrors) != 0 {
 		t.Errorf("the guardian window made the page complain: %s", b.pageErrorReport())
 	}

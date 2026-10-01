@@ -137,11 +137,13 @@ func TestTheConsoleShowsTheApprovalQueueAndCategorisesFromIt(t *testing.T) {
 		Pending string `json:"pending"`
 	}
 	b.eval(`({
-	  today: (document.querySelector('#view .child-card .today') || {}).textContent || '',
+	  today: (document.querySelector('#view .child-card .time-left') || {}).textContent + ' / ' +
+	    ((document.querySelector('#view .child-card [data-kind="daily"]') || {}).textContent || ''),
 	  pending: (document.querySelector('#view .child-card [data-pending]') || {}).textContent || '',
 	})`, &home)
 	// "1 h", not "1 h 0 min": a round hour says no minutes.
-	if !strings.Contains(home.Today, "42 min von 1 h") || strings.Contains(home.Today, "1 h 0 min") {
+	if !strings.Contains(home.Today, "Noch 18 min") || !strings.Contains(home.Today, "42 min benutzt") ||
+		!strings.HasSuffix(home.Today, " / 1 h") || strings.Contains(home.Today, "1 h 0 min") {
 		t.Errorf("the child's card does not report the screen time the phone filed: %q", home.Today)
 	}
 	if !strings.Contains(home.Pending, "1 App wartet auf deine Entscheidung") {

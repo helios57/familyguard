@@ -385,6 +385,13 @@ class ApiClient(
         post("/api/v1/device/tasks/$taskId/report", "{}")
             .let { json.decodeFromString(io.github.helios57.familyguard.plan.DayPlan.serializer(), it) }
 
+    /** "Mehr Zeit erbitten" (FR-28). Answers the day as it now stands, the request in it. */
+    fun requestTime(minutes: Int, note: String): io.github.helios57.familyguard.plan.DayPlan =
+        post(
+            "/api/v1/device/time-requests",
+            json.encodeToString(TimeRequestBody.serializer(), TimeRequestBody(minutes, note)),
+        ).let { json.decodeFromString(io.github.helios57.familyguard.plan.DayPlan.serializer(), it) }
+
     fun heartbeat(request: HeartbeatRequest): HeartbeatResponse =
         post("/api/v1/device/heartbeat", json.encodeToString(HeartbeatRequest.serializer(), request))
             .let { json.decodeFromString(HeartbeatResponse.serializer(), it) }
@@ -620,3 +627,9 @@ class ApiClient(
         const val STREAM_READ_TIMEOUT_MILLIS = 45_000
     }
 }
+
+@Serializable
+data class TimeRequestBody(
+    @SerialName("minutes") val minutes: Int,
+    @SerialName("note") val note: String,
+)

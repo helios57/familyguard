@@ -175,12 +175,12 @@ func TestAGuardianConfirmsTasksAndSeesBonuszeit(t *testing.T) {
 	b.eval(`document.querySelector('`+card(piano)+`').click()`, nil)
 	waitState(piano, "CONFIRMED")
 
-	b.waitFor(`(document.querySelector('#view .child-card .earned') || {}).textContent?.includes('Bonuszeit: 30 min')`,
+	b.waitFor(`(document.querySelector('#view .child-card [data-kind="bonus"]') || {}).textContent === '30 min'`,
 		10*time.Second, "the card to show 30 minutes of Bonuszeit")
 	// When it runs out, as a German reader says a day — never the ISO date the API carries.
 	var earnedText string
-	b.eval(`document.querySelector('#view .child-card .earned').textContent`, &earnedText)
-	if !regexp.MustCompile(`(gültig|davon) bis (Mo|Di|Mi|Do|Fr|Sa|So) \d{1,2}\.\d{1,2}\.$`).MatchString(earnedText) {
+	b.eval(`document.querySelector('#view .child-card [data-hint="bonus"]').textContent`, &earnedText)
+	if !regexp.MustCompile(`^(bleibt|30 min davon nur) bis (Mo|Di|Mi|Do|Fr|Sa|So) \d{1,2}\.\d{1,2}\.$`).MatchString(earnedText) {
 		t.Errorf("the Bonuszeit line does not say when it expires as a day: %q", earnedText)
 	}
 	// Each task over its state, not run into it ("Katze füttern" / "bestätigt").

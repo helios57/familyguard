@@ -381,6 +381,9 @@ type UsageSample struct {
 	Day          string    `json:"day"`
 	PackageName  string    `json:"package_name"`
 	ForegroundMs int64     `json:"foreground_ms"`
+	// EarnedMs is the part of ForegroundMs the phone paid from Bonuszeit (FR-22.5): it does not
+	// count against the daily time.
+	EarnedMs int64 `json:"earned_ms"`
 	// Label and SystemApp come from the device's inventory, not from the usage row itself, and are
 	// empty/false for a package that has since been uninstalled. They are joined on rather than
 	// stored per sample because the label is a property of the install, not of a day's usage — and

@@ -4035,6 +4035,7 @@ proven.
 | FR-25 calendar import | 39 | e2e `TestACalendarIsReadIntoTheWeek`, `TestTheCalendarFenceRefusesLocalAddresses`, `TestTheAdminAddsACalendarInTheConsole`, `TestFgctlSetsTheCalendar`. **Not proven:** a real calendar read in production |
 | FR-26 energy: modes, push, route, self-report | 41, 42, 44, 45 | e2e `TestAPhoneReportsWhatFamilyGuardSpendsAndTheServerAnswersPerHour`, `TestFgctlAndMCPShowTheEnergyReport`, `TestTheConsoleShowsWhatFamilyGuardSpends`, `TestTheDeviceViewSaysWhetherThePhoneHoldsItsStream`, `TestTheConsoleSaysWhenAPhoneIsResting`, `TestARestingPhoneIsWokenByAPushAndOnlyThen`, `TestAServerWithoutPushSaysSoToThePhone`; JVM `PowerModeTest`, `EventStreamTest`, `UpdateScheduleTest`, `PushPolicyTest`, `ScreenRouteTest`, `FilterBypassTest`, `EnergyMeterTest`, `SynchronizerTest`. **Device:** `TestAdFreeAppsBypassTheFilterAndThePhoneReportsItsEnergy` (`energy.sh`), `TestAPhoneWithItsScreenOffLetsGoOfTheServerAndStillHearsOfChanges` (`modes.sh`), `TestARestingPhoneIsWokenByARealPush` (`push.sh`, the real FCM), `TestTheFilterCarriesOnlyDNSFiveMinutesAfterTheScreenGoesOff` (`route.sh`). **Not proven:** the battery saved on the family phones |
 | FR-27 Live | 42 | e2e `TestLiveKeepsAPhoneReportingForAWhileAndAGuardianSeesOnlyTheSession`, `TestAGuardianStartsLiveAndSeesThePosition`, `TestFgctlAndMCPStartAndStopLive`; JVM `LiveThrottleTest`. **Device:** `TestAPhoneWithItsScreenOffLetsGoOfTheServerAndStillHearsOfChanges` (`modes.sh`) — Live reached a dozing phone by its poll and streamed positions about every 10 s |
+| FR-28 Three kinds of time; asking for more | 51 | e2e `TestAChildAsksForMoreTimeAndAParentAnswersInTheConsole` (the push received and decrypted as the browser would), `TestATimeRequestIsRefusedWhereItCannotMeanAnything`, `TestAGoneBrowserIsDroppedFromWebPush`, `TestTheConsoleServiceWorkerShowsAPush`, `TestAktivitätSaysBonuszeitApartFromTheLimit`, `TestEveryAuditedActionIsWritten`; Go `TestOnlyPushServicesAreAddressed`; JVM `TimeViewTest`. **Device:** the phone tour (`tour.sh`) asks from the button, and the answer arrives as a notification |
 | NFR-1/2 auth | 2.4, 3.x | e2e `TestBrowserSignInJourney`, `TestBrowserSignInFailureModes`, `TestIDTokenIsVerifiedNotTrusted`, `TestSessionTokensAreForgeryResistant`, `TestOneDeviceCannotActOnAnother`; `TestVerifyRejects`, `TestVerifyAcceptsGenuineToken`, `TestVerifyDoesNotFetchJWKSPerToken`, `TestUnknownKidRefreshIsRateLimited`, `TestRefreshKeepsCacheOnBadDocument`, `TestSessionRejects`, `TestSessionRoundTrip`, `TestSessionIssuerRefusesWeakKey`, `TestBearerToken` |
 | NFR-3 no fabricated success | 3.6, 5.3, 5.5 | `TestEveryReadFailureIsReported`; and the mutation sweeps — 5.3's 39 breaks and 5.5's 39, each one a place the code could have believed a return code instead of reading state back |
 | NFR-4 persistence | 2.2 | e2e `TestStateSurvivesRestart` |
@@ -8753,3 +8754,100 @@ server first; one ready pod on that digest, `/readyz` 200, the new console code 
 read back byte-identical. Both phones took the update by push — the Android 16 phone in 15 s, the
 Android 13 phone in 51 s — and report 0.6.34 (43) with no update error. Not measured: the family's
 read of the new screens.
+
+## Phase 51 — three kinds of time, said so, and "Mehr Zeit erbitten" (0.6.35, FR-28)
+
+The owner, 2026-10-01: *"check again, also the concept with bonus time and additive time per day is
+not totally clear, it should be intuitive (bonus-time stays a week, additional time stays till
+midnight, daily time is reset at midnight) make the app on the phone intuitive and easy to
+understand, add a button -> ask for more time"*.
+
+**The model was already the owner's.** The engine had exactly these three: the daily limit, counted
+per local day; `bonus_minutes`, a parent's adjustment FOR one day that the phone's engine drops at
+midnight even offline (FR-21.2); and earned credits valid seven days, spent oldest first (FR-22.4).
+What was not clear was the saying of it. The phone read *"Bildschirmzeit: 0 von 105 Min. (inkl.
+15 Min. extra)"* and, below, *"Bonuszeit: 15 Min. / 15 Min. davon gültig bis Mittwoch"* — three kinds
+of time in two sentences, one of them folded into a total. The console said the same in its own
+words and drew the **+15 button gold, Bonuszeit's colour**, so a parent could not tell which kind
++15 gave. So this phase changes words, colours and one number, not the model:
+
+- **One vocabulary on both sides**, each kind saying when it ends: *Tageszeit* — "jeden Tag, ab
+  Mitternacht neu"; *Extrazeit* — "nur heute, bis Mitternacht"; *Bonuszeit* — "bleibt bis Mittwoch"
+  (or "verdient mit Aufgaben, bleibt 7 Tage"). Each its own colour: green, teal, gold. Extrazeit is
+  never gold again — the +15 button, the time sheet and the answers to a request are teal.
+- **The one number a child asks for comes first**: *Noch 2 Std.* — what is left now, all three kinds
+  together — then "Heute benutzt", then the three rows. On the phone it is a card at the top of the
+  Heute screen with *So funktioniert deine Zeit* under it; on a child's card in Übersicht the same
+  three rows. Regeln explains them once where the limit is set ("Tageszeit"), and the time sheet is
+  *Extrazeit für …* and says the other two stay as they are.
+- **Aktivität no longer draws a child spending Bonuszeit as over the limit** — the deferred finding of
+  Phase 50. It counted every foreground minute against the limit; the server now separates the
+  minutes the phone paid from Bonuszeit (`usage_samples.earned_ms`, which the phone has reported since
+  FR-22) and says them in gold beside a gold bar: *"1 h von 1 h · + 10 min mit Bonuszeit"*.
+
+**"Mehr Zeit erbitten"** (FR-28.1, 28.2). A button on the time card while there is a limit and the
+phone is neither paused nor in bedtime (Extrazeit would open nothing then); 15/30/60 minutes and an
+optional "Wofür?". One request waits at a time, three a day. A parent answers under *Wartet auf
+dich* — the asked minutes, 15, or *Nein* — and a grant is that day's Extrazeit, written in the same
+transaction as the answer, so it ends at midnight like any other. The phone is woken by the policy
+event, shows *"Du hast 15 Min. Extrazeit bekommen — bis Mitternacht"*, and posts a notification on
+its own high-importance channel; a child who asked is looking at a paused app, not at FamilyGuard.
+
+**Parents are told** (FR-28.4). A request in a console nobody has open is a request nobody answers, so
+the console offers Web Push once at the top of Übersicht (*Benachrichtigungen — Einschalten /
+Später*), then as one line at the bottom. A new service worker, `sw.js`, shows what arrives and opens
+Übersicht on a tap. The server signs with a VAPID key pair it makes once and keeps in the database
+(`server_keys`) — not a deployment secret, because a key that changes silently invalidates every
+browser's subscription, and the database is what outlives deployments. A subscription is a parent's
+input and the server sends to it from inside the cluster, so only the browsers' own push services
+are addressed (FCM, Mozilla, Apple, Windows; https, default port); a bench names its receiver with
+`WEB_PUSH_EXTRA_HOSTS`. A task reported done is pushed too. `github.com/SherClockHolmes/webpush-go`
+v1.4.0, the latest, for RFC 8291 — not a hand-written cipher.
+
+**Checked again, as asked.** The console's card status still said *Limit erreicht* / *Das Tageslimit
+ist aufgebraucht* — now *Zeit aufgebraucht* / *Tages- und Extrazeit sind für heute aufgebraucht*, and
+the Bonuszeit state *Tages- und Extrazeit aufgebraucht — läuft mit Bonuszeit*; the phone's paused line
+*Pausiert: deine Zeit für heute ist aufgebraucht*. The shade's *"Connected to the family settings"*
+in English, seen on the emulator tour, is not a defect on the family's phones: the tour switches the
+app's locale after the service has started, and the service's notification was built before;
+`values-de` carries *Mit den Familien-Einstellungen verbunden*.
+
+### 51.1 — tests and calibration
+
+New: e2e `TestAChildAsksForMoreTimeAndAParentAnswersInTheConsole` (the phone asks; the guardian's
+browser subscription receives the push, **decrypted in the test with the browser's own key, RFC 8291**,
+and checked for its VAPID signature; the guardian answers in Übersicht with less than was asked; the
+grant is read back as the phone's quota and in `/device/policy`; asked again and declined; three a
+day), `TestATimeRequestIsRefusedWhereItCannotMeanAnything`, `TestAGoneBrowserIsDroppedFromWebPush`,
+`TestAPushIsNeverRedirected`, `TestTheConsoleServiceWorkerShowsAPush` (Chrome's own push event,
+through `ServiceWorker.deliverPushMessage`, becomes a notification with the page a tap opens),
+`TestAktivitätSaysBonuszeitApartFromTheLimit`; the audit ratchet covers `TIME_REQUESTED`,
+`TIME_REQUEST_GRANTED`, `TIME_REQUEST_DECLINED`, and the emptiness ratchet `time_requests` (it went
+red on its own when the store grew the two new lists — the ratchet working). Go
+`TestOnlyPushServicesAreAddressed` (27 addresses). JVM `TimeViewTest` (9). The phone tour asks from
+the button, and photographs the dialog, the waiting card, the answer's notification and the card
+after it.
+
+| # | the one value | measured |
+|---|---|---|
+| T1 | the push fence matches a host that merely *contains* a push service's name | **RED** 4 addresses wrongly allowed |
+| T2 | the service worker shows an empty body | **RED** *the notification shown is [Mira bittet um 30 Min. mehr\|\|time-x\|#/]* |
+| T3 | the request push says "min" for "Min." | **RED** *the notification reads {Title:Mira bittet um 30 min mehr …}* |
+| T4 | the store grants the asked minutes whatever the parent chose | **RED** *the grant to reach the server never happened* (15 asked, 30 given) |
+| T5 | Aktivität counts Bonuszeit minutes against the limit | **RED** *the day reads 70 counted and 10 Bonuszeit* |
+| T6 | Aktivität's bar red over the limit with Bonuszeit spent | **RED** *Aktivität draws {Bar:over …}* |
+| T7 | Wartet auf dich lists answered requests too | **RED** *the request gone … never happened* |
+| T8 | the console sends the asked minutes instead of the button's | **RED** *the grant … never happened* |
+| T9 | a debt counted as time left on the phone | **RED** 1 of 9 `TimeViewTest` |
+| T10 | `time_requests` nil on a fresh profile | **RED** *"time_requests" came back as null, want the literal []* |
+| T11 | the push client follows redirects | **RED** *the server followed a push service's redirect 1 time(s)* |
+| M1–M15 | `calibrate-mobile.sh` after this round's CSS | **15/15 RED**, each naming its own rule; green on restore |
+
+Suites: full e2e **PASS** (twice: once before and once after the last wording change); Kotlin unit
+**981/981**; Android lint clean; backend `tests/run_all.sh backend` **PASS**; on a wiped Android 16
+emulator `tests/android/instrumented.sh` **PASS** (provisioned and after a real reboot) and
+`StatusScreenTest` **4/4**; the phone tour on Android 13 asked, waited, was answered by push and
+notified. **26 probes counted (T1–T11, M1–M15), 26 red. Cumulative: 415 probes.** Not measured: Web
+Push from a real push service to a real parent's phone (the bench is its own push service; the
+encryption and the signature are checked, the delivery through Google or Apple is not), Safari on an
+iPhone at all, and the family's read of the new words.

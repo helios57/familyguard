@@ -28,6 +28,7 @@ import io.github.helios57.familyguard.plan.DayTask
 import io.github.helios57.familyguard.plan.DayPlanView
 import io.github.helios57.familyguard.plan.DayPlan
 import io.github.helios57.familyguard.plan.DayGroup
+import io.github.helios57.familyguard.plan.TimeView
 import io.github.helios57.familyguard.enroll.EnrollResult
 import io.github.helios57.familyguard.enroll.Enroller
 import io.github.helios57.familyguard.enroll.androidDeviceFacts
@@ -97,8 +98,13 @@ class RecoveryActivity : AppCompatActivity() {
     private lateinit var todaySummary: TextView
     private lateinit var todayWhy: TextView
     private lateinit var todayApps: LinearLayout
-    // FR-22: earned time, the day's tasks, and what happened to the last "Fertig".
-    private lateinit var todayEarned: TextView
+    // FR-28: the time card — what is left, the three kinds of time, and "Mehr Zeit erbitten".
+    private lateinit var todayLeft: TextView
+    private lateinit var timeKinds: LinearLayout
+    private lateinit var askTime: Button
+    private lateinit var askStatus: TextView
+    private lateinit var timeHelp: TextView
+    // FR-22: the day's tasks, and what happened to the last "Fertig".
     private lateinit var todayAlarm: TextView
     private lateinit var todayAgenda: TextView
     private lateinit var todayPlan: LinearLayout
@@ -134,7 +140,15 @@ class RecoveryActivity : AppCompatActivity() {
         todaySummary = findViewById(R.id.today_summary)
         todayWhy = findViewById(R.id.today_why)
         todayApps = findViewById(R.id.today_apps)
-        todayEarned = findViewById(R.id.today_earned)
+        todayLeft = findViewById(R.id.today_left)
+        timeKinds = findViewById(R.id.time_kinds)
+        askTime = findViewById(R.id.ask_time)
+        askStatus = findViewById(R.id.ask_status)
+        timeHelp = findViewById(R.id.time_help)
+        askTime.setOnClickListener { openAskDialog() }
+        findViewById<Button>(R.id.time_help_toggle).setOnClickListener {
+            timeHelp.visibility = if (timeHelp.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
         todayAlarm = findViewById(R.id.today_alarm)
         todayAgenda = findViewById(R.id.today_agenda)
         todayPlan = findViewById(R.id.today_plan)
@@ -459,10 +473,10 @@ class RecoveryActivity : AppCompatActivity() {
                         ?.let { io.github.helios57.familyguard.alarm.AlarmLine.of(schedule, it, now) }
                 }.getOrNull()
             }
-            renderToday(report)
+            renderToday(report, plan)
             renderAlarm(alarm)
             renderAgenda(agenda)
-            renderPlan(plan, report)
+            renderPlan(plan)
         }
     }
 
@@ -511,30 +525,9 @@ class RecoveryActivity : AppCompatActivity() {
         todayAlarm.visibility = View.VISIBLE
     }
 
-    /**
-     * FR-22: the day's tasks with "Fertig", and the earned time in gold. The balance comes from the
-     * engine's own state, so it falls as this phone spends it; the credits and their expiry from the
-     * last day plan the server sent.
-     */
-    private fun renderPlan(plan: DayPlan?, report: TodayReport?) {
-        val left = report?.earnedMinutesLeft ?: plan?.earned?.leftMinutes ?: 0
-        val running = report?.earnedActive.orEmpty().isNotEmpty()
+    /** FR-22: the day's tasks with "Fertig". Their Bonuszeit is on the time card above. */
+    private fun renderPlan(plan: DayPlan?) {
         val hasPlan = plan != null && plan.groups.isNotEmpty()
-        if (left != 0 || running || hasPlan) {
-            val line = when {
-                running -> getString(R.string.earned_running, maxOf(0, left))
-                left < 0 -> getString(R.string.earned_debt, -left)
-                else -> getString(R.string.earned_line, left)
-            }
-            val expiring = plan?.let { DayPlanView.soonestExpiry(it.earned.credits) }
-                ?.takeIf { left > 0 }
-                ?.let { getString(R.string.earned_expiring, minOf(it.minutes, left), weekdayOf(it.expiresOn)) }
-            todayEarned.text = listOfNotNull(line, expiring).joinToString("\n")
-            todayEarned.visibility = View.VISIBLE
-        } else {
-            todayEarned.visibility = View.GONE
-        }
-
         todayPlan.removeAllViews()
         if (!hasPlan) {
             todayPlan.visibility = View.GONE
@@ -619,6 +612,99 @@ class RecoveryActivity : AppCompatActivity() {
         }
     }
 
+    /** One kind of time on the card: its colour, name, amount, and when it ends. */
+    private fun kindRow(color: Int, name: Int, value: String, hint: String, debt: Boolean = false): View {
+        val row = LayoutInflater.from(this).inflate(R.layout.time_kind_row, timeKinds, false)
+        row.findViewById<View>(R.id.kind_mark).background =
+            android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(3).toFloat()
+                setColor(getColor(color))
+            }
+        row.findViewById<TextView>(R.id.kind_name).text = getString(name)
+        row.findViewById<TextView>(R.id.kind_value).apply {
+            text = value
+            setTextColor(if (debt) colorFor(androidx.appcompat.R.attr.colorError) else getColor(color))
+        }
+        row.findViewById<TextView>(R.id.kind_hint).text = hint
+        row.contentDescription = "${getString(name)}: $value, $hint"
+        return row
+    }
+
+    /** FR-28: "Mehr Zeit erbitten" and where the last request stands. */
+    private fun renderAsk(report: TodayReport, plan: DayPlan?) {
+        val ask = TimeView.ask(report, plan)
+        val latest = TimeView.latest(plan)
+        askTime.visibility = if (ask == TimeView.Ask.OFFER) View.VISIBLE else View.GONE
+        askTime.isEnabled = true
+        val line = when {
+            ask == TimeView.Ask.WAITING && latest != null -> getString(R.string.ask_waiting, duration(latest.minutes))
+            latest?.state == io.github.helios57.familyguard.plan.DayTimeRequest.GRANTED ->
+                getString(R.string.ask_granted, duration(latest.grantedMinutes))
+            latest?.state == io.github.helios57.familyguard.plan.DayTimeRequest.DECLINED -> getString(R.string.ask_declined)
+            else -> null
+        }
+        val full = listOfNotNull(line, if (ask == TimeView.Ask.NONE_LEFT) getString(R.string.ask_none_left) else null)
+        askStatus.text = full.joinToString("\n")
+        askStatus.visibility = if (full.isEmpty()) View.GONE else View.VISIBLE
+        askStatus.setTextColor(
+            if (latest?.state == io.github.helios57.familyguard.plan.DayTimeRequest.GRANTED) getColor(R.color.extra_teal)
+            else colorFor(com.google.android.material.R.attr.colorOnSurfaceVariant),
+        )
+    }
+
+    private fun openAskDialog() {
+        val view = LayoutInflater.from(this).inflate(R.layout.dialog_ask_time, null)
+        val group = view.findViewById<com.google.android.material.button.MaterialButtonToggleGroup>(R.id.ask_minutes)
+        val note = view.findViewById<EditText>(R.id.ask_note)
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.ask_time)
+            .setMessage(R.string.ask_message)
+            .setView(view)
+            .setNegativeButton(R.string.ask_cancel, null)
+            .setPositiveButton(R.string.ask_send) { _, _ ->
+                val minutes = when (group.checkedButtonId) {
+                    R.id.ask_15 -> 15
+                    R.id.ask_60 -> 60
+                    else -> 30
+                }
+                sendAsk(minutes, note.text?.toString().orEmpty().trim())
+            }
+            .show()
+    }
+
+    /** Needs the server, and says so rather than pretending when it cannot reach it. */
+    private fun sendAsk(minutes: Int, note: String) {
+        askTime.isEnabled = false
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { io.github.helios57.familyguard.plan.TimeRequester.request(this@RecoveryActivity, minutes, note) }
+            }
+            result.onSuccess { refreshToday() }.onFailure { e ->
+                askTime.isEnabled = true
+                askStatus.text = when {
+                    e is ApiException && e.code == "already_asked" -> getString(R.string.ask_already)
+                    e is ApiException && e.code == "no_requests_left" -> getString(R.string.ask_none_left)
+                    e is ApiException && e.code == "no_daily_limit" -> getString(R.string.time_no_limit)
+                    e is ApiException -> getString(R.string.ask_refused, e.detail)
+                    else -> getString(R.string.ask_failed)
+                }
+                askStatus.setTextColor(colorFor(androidx.appcompat.R.attr.colorError))
+                askStatus.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    /** "1 Std. 30 Min." — minutes as the child reads them, in the phone's language. */
+    private fun duration(minutes: Int): String {
+        val h = minutes / 60
+        val m = minutes % 60
+        return when {
+            h == 0 -> getString(R.string.duration_minutes, m)
+            m == 0 -> getString(R.string.duration_hours, h)
+            else -> getString(R.string.duration_hours_minutes, h, m)
+        }
+    }
+
     /** "Sonntag" for an ISO day, in the phone's language. */
     private fun weekdayOf(iso: String): String = runCatching {
         java.time.LocalDate.parse(iso).dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.getDefault())
@@ -626,13 +712,20 @@ class RecoveryActivity : AppCompatActivity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    private fun renderToday(report: TodayReport?) {
+    private fun renderToday(report: TodayReport?, plan: DayPlan?) {
         if (report == null) {
             todayGroup.visibility = View.GONE
             return
         }
         todayGroup.visibility = View.VISIBLE
-        // One scale: the limit plus any bonus, so a bar at its end is a day at its end.
+        val card = TimeView.card(report, plan)
+        todayLeft.text = when {
+            card.leftMinutes == null -> getString(R.string.time_no_limit)
+            card.leftMinutes > 0 -> getString(R.string.time_left, duration(card.leftMinutes))
+            else -> getString(R.string.time_none_left)
+        }
+        todaySummary.text = getString(R.string.time_used, duration(card.usedMinutes))
+        // One scale: the day's time plus today's Extrazeit, so a bar at its end is a day at its end.
         // A limit of 0 with a daily limit set is no time left, which draws as a full bar.
         if (report.dailyLimitMinutes > 0) {
             todayMeter.max = maxOf(1, report.limitMinutes)
@@ -640,16 +733,6 @@ class RecoveryActivity : AppCompatActivity() {
             todayMeter.visibility = View.VISIBLE
         } else {
             todayMeter.visibility = View.GONE
-        }
-        todaySummary.text = when {
-            report.dailyLimitMinutes <= 0 -> getString(R.string.today_used_nolimit, report.usedMinutes)
-            report.bonusMinutes < 0 -> getString(
-                R.string.today_used_reduced, report.usedMinutes, report.limitMinutes, -report.bonusMinutes,
-            )
-            report.bonusMinutes > 0 -> getString(
-                R.string.today_used_bonus, report.usedMinutes, report.limitMinutes, report.bonusMinutes,
-            )
-            else -> getString(R.string.today_used, report.usedMinutes, report.limitMinutes)
         }
         val why = when (report.suspendReason) {
             EnforcementEngine.REASON_PAUSED -> getString(R.string.block_paused)
@@ -659,6 +742,35 @@ class RecoveryActivity : AppCompatActivity() {
         }
         todayWhy.text = why.orEmpty()
         todayWhy.visibility = if (why == null) View.GONE else View.VISIBLE
+
+        timeKinds.removeAllViews()
+        if (card.dailyMinutes > 0) {
+            timeKinds.addView(kindRow(R.color.daily_green, R.string.kind_daily, duration(card.dailyMinutes),
+                getString(R.string.kind_daily_hint)))
+            val extra = card.extraMinutes
+            timeKinds.addView(kindRow(R.color.extra_teal, R.string.kind_extra,
+                when {
+                    extra > 0 -> "+" + duration(extra)
+                    extra < 0 -> "−" + duration(-extra)
+                    else -> getString(R.string.kind_extra_none)
+                },
+                getString(if (extra < 0) R.string.kind_extra_less_hint else R.string.kind_extra_hint)))
+        }
+        val hasPlan = plan != null && plan.groups.isNotEmpty()
+        if (card.dailyMinutes > 0 || hasPlan || card.bonusMinutes != 0) {
+            val bonus = card.bonusMinutes
+            val expiry = card.bonusExpiry
+            var hint = when {
+                bonus < 0 -> getString(R.string.kind_bonus_debt_hint)
+                expiry != null && expiry.minutes >= bonus -> getString(R.string.kind_bonus_until, weekdayOf(expiry.expiresOn))
+                expiry != null -> getString(R.string.kind_bonus_part_until, duration(expiry.minutes), weekdayOf(expiry.expiresOn))
+                else -> getString(R.string.kind_bonus_hint)
+            }
+            if (report.earnedActive.isNotEmpty() && bonus > 0) hint = getString(R.string.kind_bonus_running) + " · " + hint
+            timeKinds.addView(kindRow(R.color.earned_gold, R.string.kind_bonus,
+                if (bonus < 0) "−" + duration(-bonus) else duration(bonus), hint, debt = bonus < 0))
+        }
+        renderAsk(report, plan)
 
         todayApps.removeAllViews()
         val inflater = LayoutInflater.from(this)

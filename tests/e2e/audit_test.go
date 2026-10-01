@@ -226,6 +226,27 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 	byParent("TASK_UNDONE", "child", child.ID)
 	byParent("EARNED_TIME_WITHDRAWN", "child", child.ID)
 
+	// ---- "Mehr Zeit erbitten" (FR-28): asked by the PHONE, answered by a parent ----
+	askTime := func() string {
+		var asked struct {
+			TimeRequests []struct {
+				ID string `json:"id"`
+			} `json:"time_requests"`
+		}
+		h.call(http.MethodPost, "/device/time-requests", enrolled.DeviceToken, map[string]any{"minutes": 15}).
+			expect(http.StatusOK).decode(&asked)
+		expected = append(expected, want{
+			Action: "TIME_REQUESTED", ActorType: "DEVICE", ActorID: device.ID, TargetType: "child", TargetID: child.ID,
+		})
+		return asked.TimeRequests[0].ID
+	}
+	h.call(http.MethodPost, "/children/"+child.ID+"/time-requests/"+askTime()+"/decision", parent.Token,
+		map[string]any{"decision": "grant"}).expect(http.StatusOK)
+	byParent("TIME_REQUEST_GRANTED", "child", child.ID)
+	h.call(http.MethodPost, "/children/"+child.ID+"/time-requests/"+askTime()+"/decision", parent.Token,
+		map[string]any{"decision": "decline"}).expect(http.StatusOK)
+	byParent("TIME_REQUEST_DECLINED", "child", child.ID)
+
 	// ---- the alarm clock (FR-23) ----
 	h.call(http.MethodPut, "/children/"+child.ID+"/alarm", parent.Token,
 		map[string]any{"weekdays": []string{"06:30", "06:30", "06:30", "06:30", "06:30", "", ""}}).expect(http.StatusOK)

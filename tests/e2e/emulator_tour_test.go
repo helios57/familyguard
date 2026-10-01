@@ -122,6 +122,42 @@ func TestPhoneTour(t *testing.T) {
 	d.shot(t, dir, "shade")
 	d.run(30*time.Second, "shell", "cmd", "statusbar", "collapse")
 
+	// FR-28: "Mehr Zeit erbitten", from the button, as a child taps it.
+	// Reopened, the screen keeps where it was scrolled to — the bottom, after the pictures above —
+	// so it is scrolled back up until the button is on screen.
+	open()
+	for i := 0; i < 6 && !d.tapText(t, "Mehr Zeit erbitten"); i++ {
+		d.run(30*time.Second, "shell", "input", "swipe", "540", "700", "540", "1900", "300")
+		time.Sleep(time.Second)
+	}
+	time.Sleep(2 * time.Second)
+	d.shot(t, dir, "ask-dialog")
+	if d.tapText(t, "Senden") {
+		time.Sleep(3 * time.Second)
+		d.shot(t, dir, "ask-waiting")
+		var today struct {
+			TimeRequests []struct {
+				ID string `json:"id"`
+			} `json:"time_requests"`
+		}
+		h.call(http.MethodGet, "/children/"+child.ID+"/today", parent.Token, nil).expect(http.StatusOK).decode(&today)
+		if len(today.TimeRequests) == 1 {
+			h.call(http.MethodPost, "/children/"+child.ID+"/time-requests/"+today.TimeRequests[0].ID+"/decision",
+				parent.Token, map[string]any{"decision": "grant"}).expect(http.StatusOK)
+			time.Sleep(8 * time.Second)
+			d.run(30*time.Second, "shell", "cmd", "statusbar", "expand-notifications")
+			time.Sleep(2 * time.Second)
+			d.shot(t, dir, "ask-answer-shade")
+			d.run(30*time.Second, "shell", "cmd", "statusbar", "collapse")
+			open()
+			d.shot(t, dir, "ask-granted")
+		} else {
+			t.Logf("the request did not reach the server: %+v", today)
+		}
+	} else {
+		t.Log("no Senden button: the ask dialog did not open")
+	}
+
 	// What a child meets opening an app while paused.
 	h.call(http.MethodPost, "/children/"+child.ID+"/pause", parent.Token, map[string]any{"paused": true}).expect(http.StatusOK)
 	h.issueCommand(parent.Token, device.ID, "SYNC_POLICY", nil)

@@ -68,12 +68,18 @@ var guardianAllowlist = map[routeKey]bool{
 	{http.MethodPost, "/api/v1/children/:id/pause"}:                true,
 	{http.MethodGet, "/api/v1/children/:id/today"}:                 true,
 	{http.MethodPost, "/api/v1/children/:id/tasks/:task/decision"}: true,
-	{http.MethodGet, "/api/v1/devices"}:                            true,
-	{http.MethodGet, "/api/v1/devices/:id/desired-state"}:          true,
-	{http.MethodGet, "/api/v1/devices/:id/live"}:                   true,
-	{http.MethodPost, "/api/v1/devices/:id/live"}:                  true,
-	{http.MethodDelete, "/api/v1/devices/:id/live"}:                true,
-	{http.MethodGet, "/api/v1/events"}:                             true,
+	// FR-28: answering "Mehr Zeit erbitten", and the guardian's own browser hearing of it.
+	{http.MethodPost, "/api/v1/children/:id/time-requests/:request/decision"}: true,
+	{http.MethodGet, "/api/v1/push/key"}:                                      true,
+	{http.MethodPut, "/api/v1/push/subscription"}:                             true,
+	{http.MethodPost, "/api/v1/push/subscription/status"}:                     true,
+	{http.MethodDelete, "/api/v1/push/subscription"}:                          true,
+	{http.MethodGet, "/api/v1/devices"}:                                       true,
+	{http.MethodGet, "/api/v1/devices/:id/desired-state"}:                     true,
+	{http.MethodGet, "/api/v1/devices/:id/live"}:                              true,
+	{http.MethodPost, "/api/v1/devices/:id/live"}:                             true,
+	{http.MethodDelete, "/api/v1/devices/:id/live"}:                           true,
+	{http.MethodGet, "/api/v1/events"}:                                        true,
 }
 
 func TestAGuardianMayCallExactlyTheGuardianAllowlist(t *testing.T) {

@@ -49,7 +49,7 @@ VIEWS.activity = { load: loadActivity, render: renderActivity, perChild: true };
 /* The words for why an app cannot be used right now (FR-3.10). One table, used everywhere. */
 const BLOCKED_TEXT = {
   PAUSED: 'Von einem Elternteil pausiert',
-  QUOTA: 'Pausiert — Tageslimit erreicht',
+  QUOTA: 'Pausiert — Zeit für heute aufgebraucht',
   BEDTIME: 'Pausiert — Schlafenszeit',
   APP_LIMIT: 'Pausiert — eigenes Limit aufgebraucht',
   BLOCKED: 'Gesperrt',
@@ -179,15 +179,19 @@ function screenTimeSummary(dev, screen) {
     parts.push(el('p', { class: 'muted', text: 'Gezählte Bildschirmzeit: ' + fmtMinutes(used)
       + '. Das Limit an diesem Tag wurde nicht aufgezeichnet — Tage vor dieser Funktion haben keins.' }));
   } else if ((screen.daily_limit_minutes || 0) > 0) {
+    // Tageszeit and Extrazeit fill the bar; Bonuszeit is said beside it in gold and never makes the
+    // bar red — a child spending what they earned is not over anything.
+    const earned = screen.earned_minutes || 0;
     const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 100;
     parts.push(el('div', { class: 'stack' },
       el('div', { class: 'row' },
         el('span', { class: 'muted', text: screen.is_today ? 'Bildschirmzeit heute' : 'Bildschirmzeit' }),
-        el('span', { text: fmtMinutes(used) + ' von ' + fmtMinutes(limit)
-          + (bonus > 0 ? ' (' + fmtMinutes(screen.daily_limit_minutes) + ' + ' + fmtMinutes(bonus) + ' extra)' : '')
-          + (bonus < 0 ? ' (' + fmtMinutes(screen.daily_limit_minutes) + ' − ' + fmtMinutes(-bonus) + ' heute)' : '') })),
+        el('span', { 'data-screen': 'used', text: fmtMinutes(used) + ' von ' + fmtMinutes(limit)
+          + (bonus > 0 ? ' (' + fmtMinutes(screen.daily_limit_minutes) + ' Tageszeit + ' + fmtMinutes(bonus) + ' Extrazeit)' : '')
+          + (bonus < 0 ? ' (' + fmtMinutes(screen.daily_limit_minutes) + ' Tageszeit − ' + fmtMinutes(-bonus) + ')' : '') })),
       el('div', { class: 'meter', role: 'img', 'aria-label': fmtMinutes(used) + ' von ' + fmtMinutes(limit) },
-        el('span', { class: used >= limit ? 'over' : '', style: { width: pct + '%' } }))));
+        el('span', { class: used >= limit ? (earned > 0 ? 'bonus' : 'over') : '', style: { width: pct + '%' } })),
+      earned > 0 ? el('p', { class: 'earned', 'data-screen': 'earned', text: '+ ' + fmtMinutes(earned) + ' mit Bonuszeit' }) : null));
   } else {
     parts.push(el('p', { class: 'muted', text: 'Gezählte Bildschirmzeit: ' + fmtMinutes(used) + ' (kein Tageslimit).' }));
   }

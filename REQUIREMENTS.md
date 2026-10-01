@@ -857,6 +857,38 @@ The phone spends energy on its connection only while someone can benefit from it
   `LIVE_STARTED` / `LIVE_STOPPED`. `fgctl live <device> [--start [--minutes N] | --stop]`, MCP
   `get_live`, `start_live`, `stop_live`. Built in 0.6.27; the phone's service takes the `location`
   type only for the session.
+
+### FR-28 Three kinds of time, and asking for more (2026-10-01)
+The owner, 2026-10-01: *"the concept with bonus time and additive time per day is not totally clear,
+it should be intuitive (bonus-time stays a week, additional time stays till midnight, daily time is
+reset at midnight) make the app on the phone intuitive and easy to understand, add a button -> ask
+for more time"*.
+
+- FR-28.1 **Asking.** The phone's Heute screen offers *Mehr Zeit erbitten* while the profile has a
+  daily limit and is neither paused nor in bedtime: 15, 30 or 60 minutes and an optional note
+  (≤ 140 characters), `POST /device/time-requests`. One request waits at a time; three a day; the
+  server must be reachable, and the phone says so when it is not. A request gives nothing by itself.
+  Audited as `TIME_REQUESTED` (the phone's act).
+- FR-28.2 **Answering.** Every parent role answers in Übersicht under *Wartet auf dich* — the asked
+  minutes, 15, or *Nein* (`POST /children/:id/time-requests/:id/decision`, `grant` with optional
+  minutes ≤ 240, or `decline`). A grant is today's Extrazeit (FR-21.2), written in the same
+  transaction as the answer, so it ends at midnight. Answered once; a request of a day that is over is
+  never answered. Audited as `TIME_REQUEST_GRANTED` / `TIME_REQUEST_DECLINED`. The phone hears of the
+  answer at once (a push wake) and tells the child with a notification.
+- FR-28.3 **One vocabulary, on the phone and in the console**, each kind saying when it ends:
+  *Tageszeit* (the daily limit; it starts over at midnight), *Extrazeit* (a parent's minutes for
+  today, by hand or as an answer; until midnight), *Bonuszeit* (earned with tasks; it stays seven days
+  and is spent after the other two). Each has its own colour — green, teal, gold — so Extrazeit is
+  never gold. Above them, the one number a child asks for: what is left now, all kinds together. The
+  console's Aktivität counts Bonuszeit apart from the limit, and never draws a child spending earned
+  time as over it.
+- FR-28.4 **Parents are told** by Web Push when a child asks or reports a task done, in every browser
+  a parent switched it on in (Übersicht, *Benachrichtigungen*). End-to-end encrypted (RFC 8291), signed
+  with the server's own VAPID key, which it makes once and keeps in the database; sent only to the
+  browsers' push services (FCM, Mozilla, Apple, Windows) over https — a parent's address anywhere
+  else is refused, because the server would send to it from inside the cluster. A subscription its
+  push service calls gone is dropped. On an iPhone, Web Push needs the console added to the home
+  screen first, and the console says so.
 ---
 
 ## 4. Non-functional requirements

@@ -143,6 +143,9 @@ func enrichTheTourFamily(t *testing.T, h *harness, fam seededFamily) {
 			map[string]any{"decision": "confirm"}).expect(http.StatusOK)
 	}
 	h.call(http.MethodPost, "/device/tasks/"+plan[1].Tasks[0].ID+"/report", fam.deviceToken, nil).expect(http.StatusOK)
+	// FR-28: a request waiting for an answer.
+	h.call(http.MethodPost, "/device/time-requests", fam.deviceToken,
+		map[string]any{"minutes": 30, "note": "Film fertig schauen"}).expect(http.StatusOK)
 	h.putAgenda(fam.parentToken, fam.childID, []agendaEntryDTO{
 		{Kind: "RECURRING", Title: "Schule", Place: "Schulhaus", Weekdays: 31, StartsAt: "08:00", EndsAt: "12:00"},
 		{Kind: "SINGLE", Title: "Fussball", Place: "Sportplatz", Day: now.AddDate(0, 0, 1).Format("2006-01-02"), StartsAt: "17:00", EndsAt: "18:30"},

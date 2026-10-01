@@ -16,7 +16,27 @@ data class DayPlan(
     @SerialName("day") val day: String = "",
     @SerialName("groups") val groups: List<DayGroup> = emptyList(),
     @SerialName("earned") val earned: DayEarned = DayEarned(),
+    /** Today's "Mehr Zeit erbitten", newest first (FR-28). */
+    @SerialName("time_requests") val timeRequests: List<DayTimeRequest> = emptyList(),
+    /** How many more the child may send today; null from a server before FR-28. */
+    @SerialName("time_requests_left") val timeRequestsLeft: Int? = null,
 )
+
+/** One request for more time and its answer (FR-28). */
+@Serializable
+data class DayTimeRequest(
+    @SerialName("id") val id: String = "",
+    @SerialName("minutes") val minutes: Int = 0,
+    @SerialName("note") val note: String = "",
+    @SerialName("state") val state: String = OPEN,
+    @SerialName("granted_minutes") val grantedMinutes: Int = 0,
+) {
+    companion object {
+        const val OPEN = "OPEN"
+        const val GRANTED = "GRANTED"
+        const val DECLINED = "DECLINED"
+    }
+}
 
 @Serializable
 data class DayGroup(

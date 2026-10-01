@@ -24,6 +24,7 @@ import (
 	"github.com/helios57/familyguard/backend/internal/provisioning"
 	"github.com/helios57/familyguard/backend/internal/push"
 	"github.com/helios57/familyguard/backend/internal/store"
+	"github.com/helios57/familyguard/backend/internal/webpush"
 )
 
 // Deps is everything the server needs from outside. Constructing it explicitly, rather than having
@@ -104,6 +105,9 @@ type Server struct {
 	packageChecksum   string
 	hostedAPK         *apk.Info
 	fgctl             *fgctldist.Catalog
+
+	// webPush tells parents' browsers about a request or a reported task (FR-28.4).
+	webPush *webpush.Sender
 }
 
 // New wires a server. It does not listen; the caller owns the lifecycle.
@@ -146,6 +150,9 @@ func New(d Deps) (*Server, error) {
 		fgctl:             d.FgctlCatalog,
 		hostedAPK:         d.HostedAPK,
 	}
+	srv.webPush = webpush.New(d.Store, webpush.Options{
+		Subscriber: d.Config.PublicURL.String(), ExtraHosts: d.Config.WebPushExtraHosts, Logger: d.Logger,
+	})
 	srv.hub.onUnheard = srv.pushWake
 	return srv, nil
 }
@@ -276,6 +283,11 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.PUT("/children/:id/plan", admins, s.putPlan)
 	p.GET("/children/:id/today", everyone, s.getToday)
 	p.POST("/children/:id/tasks/:task/decision", everyone, s.decideTask)
+	p.POST("/children/:id/time-requests/:request/decision", everyone, s.decideTimeRequest)
+	p.GET("/push/key", everyone, s.webPushKey)
+	p.PUT("/push/subscription", everyone, s.putWebPushSubscription)
+	p.POST("/push/subscription/status", everyone, s.webPushSubscriptionStatus)
+	p.DELETE("/push/subscription", everyone, s.deleteWebPushSubscription)
 	// FR-23: the alarm clock. Admins only — the guardian window does not show it.
 	p.GET("/children/:id/alarm", admins, s.getAlarm)
 	p.PUT("/children/:id/alarm", admins, s.putAlarm)
@@ -359,6 +371,7 @@ func (s *Server) Router() (*gin.Engine, error) {
 	d.GET("/policy", s.devicePolicy)
 	// FR-22: the child's "Fertig".
 	d.POST("/tasks/:task/report", s.deviceReportTask)
+	d.POST("/time-requests", s.deviceRequestTime)
 	// Fetching commands is what records their delivery. The stream only says "there is something to
 	// fetch", so a wake-up that never arrives costs latency and never a fabricated delivery (NFR-3).
 	d.GET("/commands", s.deviceCommands)

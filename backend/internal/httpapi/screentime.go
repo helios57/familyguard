@@ -140,7 +140,11 @@ type appRow struct {
 
 // screenTime is the day's counted use against the limit that applied (FR-3.9).
 type screenTime struct {
+	// CountedMinutes is the time that counts against the day's limit; EarnedMinutes is the time paid
+	// from Bonuszeit on top of it, which does not (FR-22.5). Before 0.6.35 a minute of Bonuszeit was
+	// counted here too, and a child spending earned time drew a red "over the limit" bar.
 	CountedMinutes   int `json:"counted_minutes"`
+	EarnedMinutes    int `json:"earned_minutes"`
 	UncountedMinutes int `json:"uncounted_minutes"`
 	// DailyLimitMinutes and BonusMinutes are what applied on the day; LimitRecorded is false for a
 	// day before anything recorded them, which the console says rather than guessing.
@@ -208,7 +212,7 @@ func (s *Server) describeDay(ctx context.Context, dev *store.Device, pol *store.
 	}
 
 	rows := make([]appRow, 0, len(samples))
-	var countedMs, uncountedMs int64
+	var countedMs, uncountedMs, earnedMs int64
 	for _, sample := range samples {
 		row := appRow{
 			UsageSample:  sample,
@@ -217,7 +221,8 @@ func (s *Server) describeDay(ctx context.Context, dev *store.Device, pol *store.
 			Rule:         ruleOf[sample.PackageName],
 		}
 		if row.Counted {
-			countedMs += sample.ForegroundMs
+			countedMs += sample.ForegroundMs - min(sample.EarnedMs, sample.ForegroundMs)
+			earnedMs += min(sample.EarnedMs, sample.ForegroundMs)
 		} else {
 			uncountedMs += sample.ForegroundMs
 		}
@@ -228,6 +233,7 @@ func (s *Server) describeDay(ctx context.Context, dev *store.Device, pol *store.
 		rows = append(rows, row)
 	}
 	st.CountedMinutes = int(countedMs / 60000)
+	st.EarnedMinutes = int(earnedMs / 60000)
 	st.UncountedMinutes = int(uncountedMs / 60000)
 	return rows, st, nil
 }

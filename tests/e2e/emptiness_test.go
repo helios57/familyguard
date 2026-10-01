@@ -320,6 +320,9 @@ func allCollections(childID, deviceID string) []collection {
 		{"/children/" + childID + "/managed-apps", "managed_apps", "ManagedPackages", stageCreated},
 		// The daily plan (FR-22): a new profile has none, and the console's editor iterates it.
 		{"/children/" + childID + "/plan", "groups", "GetPlan", stageCreated},
+		// "Mehr Zeit erbitten" (FR-28): a new profile has asked for nothing today, and the console's
+		// Wartet auf dich and the phone's time card both iterate the list.
+		{"/children/" + childID + "/today", "time_requests", "TimeRequestsForDay", stageCreated},
 		// The agenda and the holidays (FR-24): a new profile has no entries and a new family no
 		// holidays, and the console's editors iterate both.
 		{"/children/" + childID + "/agenda", "entries", "GetAgenda", stageCreated},
@@ -364,6 +367,8 @@ var collectionsCoveredElsewhere = map[string]string{
 	"BlockedPackages": "not its own endpoint; it arrives inside the policy response as " +
 		"input.settings.blocked_packages, which section 7 checks for nulls along with every " +
 		"other array in that tree",
+	"WebPushSubscriptions": "never serialised: the Web Push sender reads it and sends to each row " +
+		"inside the server (FR-28.4); time_request_test drives it end to end, and a nil result sends nothing",
 	"DeviceIDsForChild": "never serialised. It fans a policy change out to a child's devices " +
 		"inside the server and its result is a list of ids, not a response body",
 	"ListFamilyBlockedPackages": "legitimately non-empty on a fresh system, and driven by " +

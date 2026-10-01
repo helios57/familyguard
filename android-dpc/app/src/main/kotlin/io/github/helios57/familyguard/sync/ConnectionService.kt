@@ -709,6 +709,11 @@ class ConnectionService : Service() {
             localEarnedMinutes = { input -> reports.earnedMinutesToday(input) },
             onEnforced = { input, state -> reports.enforced(input, state) },
             dayPlans = io.github.helios57.familyguard.plan.EncryptedDayPlanStore(this),
+            // FR-28: a parent's answer to "Mehr Zeit erbitten" reaches the child as a notification.
+            onDayPlan = { before, after ->
+                io.github.helios57.familyguard.plan.TimeView.newlyAnswered(before, after)
+                    ?.let { io.github.helios57.familyguard.plan.AnswerNotifier.show(this, it) }
+            },
             onAlarm = { io.github.helios57.familyguard.alarm.AlarmClock.update(this, it) },
             onAgenda = { io.github.helios57.familyguard.agenda.EncryptedAgendaStore(this).save(it) },
             // FR-27: every sync carries Live's end; a change is a mode change.
