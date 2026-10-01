@@ -18,13 +18,14 @@ import (
 // cmdMCP serves the same operations as the CLI over MCP on stdio.
 //
 // It shares the client and the response types with the CLI rather than re-implementing them, so
-// there is exactly one place where a field name can be wrong. The tools are task-shaped rather than
-// one-per-route: the API has around forty-five parent endpoints and a forty-five-tool server is one
-// a model cannot choose within.
+// there is exactly one place where a field name can be wrong. The tools are task-shaped where a pair
+// of routes is one decision (set_app_rule with NONE removes the rule, set_blocked_domain lifts a
+// block), so the list a model chooses from stays one tool per thing a parent does.
 //
-// Deliberately absent: the four deletes. An API key is the parent that created it, so the
-// capability exists regardless -- withholding the tool only means a model must go through the CLI,
-// where a human types --yes.
+// It covers everything the console can (owner, 2026-10-01), and mcp_coverage_test.go holds every
+// parent route of the server to a tool or to a written reason. Still absent, with theirs: people and
+// credentials (the server refuses an API key there, on purpose), deleting a phone or a child (not in
+// the console either; the CLI asks for --yes), and the streams.
 func cmdMCP(ctx context.Context, env *environment, _ []string) error {
 	// Stdout is the transport. Anything written there that is not JSON-RPC corrupts the session, so
 	// nothing in this path may print -- which is why errors travel back as tool results.
@@ -629,6 +630,8 @@ func registerTools(server *mcp.Server, client *fgclient.Client) {
 			}
 			return body.Entries, nil
 		})
+
+	registerConsoleTools(server, client)
 
 	add(server, client, "whoami",
 		"Which parent this credential acts as, and with what role.",

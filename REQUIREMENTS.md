@@ -559,6 +559,12 @@ checks, reading and writing the same records, and appearing in the audit trail a
   records when it was last used, because that is what tells a parent which key to revoke.
 - FR-17.4 The audit trail distinguishes a key from a person: every entry names the actor type, so
   "who changed this" is answerable without inferring it from the hour of the day.
+- FR-17.5 **MCP covers everything the console can** (owner, 2026-10-01): every parent route has a
+  tool in `fgctl mcp`, or a written reason why not, and a test holds the server's route table to that
+  (`TestMCPCoversEveryParentRoute`). Without a tool, by design: what FR-17.2 refuses to a key (people
+  and credentials), a browser's own Web Push subscription, the event stream and the adb byte stream,
+  and deleting a phone or a child — which the console does not offer either, and `fgctl rm-device` /
+  `rm-child` do behind `--yes`.
 
 ### FR-18 Applications nobody in the family should have (the blocklist)
 A phone arrives with software on it that the family did not choose — a social network, a vendor's
@@ -889,6 +895,8 @@ for more time"*.
   else is refused, because the server would send to it from inside the cluster. A subscription its
   push service calls gone is dropped. On an iPhone, Web Push needs the console added to the home
   screen first, and the console says so.
+- FR-28.5 `fgctl today <child>` lists the day's requests, and the MCP tool `answer_time_request`
+  answers one (FR-17.5).
 ---
 
 ## 4. Non-functional requirements

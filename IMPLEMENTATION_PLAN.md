@@ -4024,7 +4024,7 @@ proven.
 | FR-15 keeping the DPC current | 9 | three layers, and only the third can see it. JVM: `AppUpdaterTest` drives the five checks with every dependency a function, so the whole decision runs off a device. Server + e2e: `TestAPKInfoDescribesTheFileThisServerWillHandOver`, `TestAPKInfoIsNotFoundWhenTheServerHostsNoDPC`, `TestAParentCanTellThePhoneToUpdateItself`, `TestTheHeartbeatReportsWhichDPCThePhoneIsRunning`, `TestAnAPKReplacedUnderTheRunningServerIsRefused`, and `apk_test.go`'s seven over the bytes themselves. Device: **`tests/android/self-update.sh` + `TestTheServerReplacesTheDPCOnARealDevice`**, which builds the DPC twice from one tree, enrols the lower build against a real server and watches the higher one arrive — passed 2026-09-05 in 176 s, with the phone's own log as the second witness (`wake:connected: commands done=1` → `PackageManager: installation completed` → `FamilyGuardUpdate: self-update installed`) on a device whose adb had been off since the first policy applied. Its negative control is the same command again, declined as "already running". `tests/android/calibrate-update.sh` breaks each of the five checks in turn and records the refusal. **Not proven anywhere:** the update path on a phone that is not an emulator, and the `MY_PACKAGE_REPLACED` restart on an OEM build that kills background starts more aggressively than AOSP |
 | FR-15.7 reporting an update that did not take | 17, **26** | Device: `UpdateReportTest` (8) — the record is kept until a build **above** the one it names runs, the latest attempt wins, and `a failure recorded against the newest build never clears itself, and only clear() ends it` pins the hole that `AlreadyCurrent` now closes. `AppUpdaterTest` splits the two shapes a failed `apk-info` can have: a server that ANSWERED stays a refusal in the server's own words, a server that was never reached propagates so the caller's "nothing was attempted" branch — which had been unreachable since it was written — finally runs. Console: e2e `TestTheConsoleShowsAPhoneThatIsBehindAndWhyItsUpdateFailed` drives a real browser and now holds the build fixed while the error stays set, which is the state a real family reached and the one combination its old two-variable control could not distinguish ([26.4](#264--why-the-e2e-suite-had-this-state-and-still-missed-it)). **Calibrated 3/3** ([26.5](#265--calibration-3-probes-3-red)). **Not proven:** the `AlreadyCurrent` call site has no JVM test — `updateCheck` is inside an Android `Service` — and neither device-side fix has run on a handset |
 | FR-16 managed applications | 12 | four layers, and the one that decided the design is the device. Server: `TestAnUploadedAPKIsReadRatherThanDescribed`, `TestMultipartAndRawBodyAgree`, `TestTwoVersionsOfOneAppBothLive`, `TestTheSameFileTwiceIsNotAConflict`, `TestAPackageSignedByAnotherKeyIsRefused`, `TestWhatIsNotAnAPKIsRefusedAsSuch`, `TestTheDirectoryOnTheNodeIsAlsoASource`, `TestADeploymentWithoutAnAPKDirSaysSo`, `TestDeletingAnAppRemovesItsFileToo`, `TestAManagedAppDownloadNeedsADeviceCredential`, plus `internal/apk`'s parser tests. Policy: `TestDeclaringAnAppReachesThePhoneAsSomethingItCanFetch`, `TestAnUpgradeIsANewVersionInTheSamePolicy`, `TestWithdrawingAnAppRemovesItFromThePolicy`, `TestDeclaringSomethingTheCatalogDoesNotHaveIsRefused`, `TestTheConsoleSeesADeclarationWithNothingBehindIt`; the shared vectors carry three new cases so both engines normalise a declared set identically. JVM: `ManagedAppApplierTest` (12) and `AppUpdaterTest`'s four new cases. **Device: `ManagedInstallTest`** — the restriction matrix in [12.1](#121--which-restrictions-bind-the-device-owner-measured-on-a-phone-rather-than-argued-from-the-source), the install→upgrade→withdraw lifecycle against a real second application, and `getInstallSourceInfo` as a real filter. **Calibrated 11/11** ([12.2](#122--the-jvm-calibration-including-one-break-that-proved-a-test-binds-to-nothing)), and the record includes one assertion that binds to nothing at the JVM layer and says so. **Not proven:** any of it on hardware rather than an emulator, and the API 29 floor |
-| FR-17 API keys | 12 | e2e `TestAnAPIKeyIsTheSameParent`, `TestTheTokenIsShownOnceAndNeverAgain`, `TestRevokingAKeyEndsItImmediately`, `TestAKeyCannotMintACredential`, `TestAKeyThatWasNeverIssuedIsNotDistinguishable`, `TestOnlyThePrimaryAdminMintsKeys`, `TestAKeyNeedsAName`, `TestTheAuditTrailTellsAScriptFromAPerson` — the last two of those are the ones that matter most: a key must not be able to mint a credential that outlives its own revocation, and an audit row must say a script acted rather than a person |
+| FR-17 API keys | 12 | e2e `TestAnAPIKeyIsTheSameParent`, `TestTheTokenIsShownOnceAndNeverAgain`, `TestRevokingAKeyEndsItImmediately`, `TestAKeyCannotMintACredential`, `TestAKeyThatWasNeverIssuedIsNotDistinguishable`, `TestOnlyThePrimaryAdminMintsKeys`, `TestAKeyNeedsAName`, `TestTheAuditTrailTellsAScriptFromAPerson` — the last two of those are the ones that matter most: a key must not be able to mint a credential that outlives its own revocation, and an audit row must say a script acted rather than a person · **FR-17.5 (Phase 52):** Go `TestMCPCoversEveryParentRoute` (every parent route to a tool or a reason), e2e `TestMCPDoesWhatTheConsoleDoes` |
 | FR-18 family blocklist | 14 | e2e `TestTheCuratedBlocklistIsSeededAndReachesAPhone`, `TestTheBlocklistCoversAChildAddedAfterIt`, `TestAChildAllowExemptsOnlyThatChild`, `TestTheCriticalWhitelistOutranksTheBlocklist`, `TestDeletingACuratedEntryIsPermanent`, `TestABlocklistChangeBumpsEveryChildsPolicyVersion`, `TestTheBlocklistIsReachableByAPIKeyAndGuardedByRole`, `TestTheBlocklistRefusesWhatCanNeverMatchAnApp`, `TestTheBlocklistIsAudited`; three shared vectors replayed by **both** engines. The four that carry the requirement rather than the plumbing: the phone is told to hide packages **no inventory reported** (an implementation that blocks only what it can see leaves the installer stub that puts Facebook back); a child created *after* the entry is covered by it; one child's ALLOW exempts that child and a **second child is the control** that the entry did not simply vanish; and the device's own dialer, put on the list deliberately, is neither hidden nor suspended — with a non-critical package blocked in the same call, so an implementation that ignored the list entirely could not pass by doing nothing. `TestDeletingACuratedEntryIsPermanent` restarts the server, which is the only thing that separates "seeded once" from "re-applied on boot". **Calibrated 3/3 on the engine** (drop the union / drop the ALLOW carve-out / apply the list after the critical whitelist), each break red in the vector that owns the property and green on restore. **Not proven:** any of it on hardware — no phone has yet reported one of these packages back as hidden. `com.spotify.music` was added as a parent row on the live database in 16.7 and is in the same position: the app is not installed on the only enrolled phone, so the entry is pre-emptive by design |
 | FR-19 remote debugging | 31, 48 | e2e `TestRemoteADBRelaysBytesBothWays`, `TestRemoteADBStreamBelongsToOnePhone`, `TestRemoteADBIsRefusedWhileDebuggingIsOff`, `TestRemoteADBCarriesThePhonesReason`, `TestRemoteADBOutlivesTheRequestTimeout`; JVM `CommandHandlersTest`, `LoopbackAdbProbeTest`. **Device:** `TestRemoteADBReachesARealPhonesAdbd` (`tests/android/remote-adb.sh`), `TestRemoteADBFindsWirelessDebuggingWithTheFilterOn` (`tests/android/remote-adb-wireless.sh`, API 33 and 37). Calibration in Phases 31 and 48 |
 | FR-20 roles and rights | 34 | e2e `TestEveryParentRouteDeclaresWhoMayCallIt`, `TestParentRoutesInstallTheRoleCheck`, `TestAGuardianMayCallExactlyTheGuardianAllowlist`, `TestAGuardianIsRefusedEverythingOutsideTheGuardianWindow`, `TestOnlyThePrimaryAdminChangesRolesAndNeverTheirOwn`, `TestARoleChangeTakesEffectOnTheNextRequest`, `TestADemotedParentsKeyIsDemotedWithThem`, `TestThePrimaryAdminPicksAndChangesRole`, `TestAnAdminHasTheGuardianWindowAsTheFirstTab`. Calibration in Phase 34 |
@@ -8862,3 +8862,58 @@ caller (401), and `/dpc.apk` read back byte-identical. Both phones took the upda
 Android 16 phone in 7 s, the Android 13 phone in 1 min 47 s — and report 0.6.35 (44) with no update
 error. Not measured: a request from a family phone, an answer from a parent's browser, and a push
 through Google's or Apple's push service — the first one a parent switches on is the first real one.
+
+## Phase 52 — MCP does everything the console can (0.6.36, FR-17.5)
+
+The owner, 2026-10-01, after 0.6.35: *"Well then, add the mcp, it has to cover everything the console
+can"*. Before this phase `fgctl mcp` had 35 tools and the console reached 30 parent routes no tool
+did: the policy itself (Tageszeit, bedtime, timezone, every switch), app rules, blocked domains, the
+family blocklist, children, adding and renaming a phone and its setup code, the recovery code, the
+phone's app list, what the phone does right now, the day's timeline, the catalog (upload, scan,
+delete), managed apps, and the answer to "Mehr Zeit erbitten". The original rule for MCP — task-shaped
+tools, no deletes — had kept the list short by leaving out what a parent does every week.
+
+**59 tools now** (`cmd/fgctl/mcp_console.go` holds the 24 new ones). Where a pair of routes is one
+decision it is one tool: `set_app_rule` with `NONE` removes the rule, `set_blocked_domain`,
+`set_family_blocked_package` and `set_managed_app` take a boolean. `upload_app` reads an absolute path
+on the parent's computer and sends it as the raw body (a new `fgclient.Upload`). `get_setup_code`
+returns the QR as SVG and the single-use token spelled out, and says a new code revokes the old one.
+`fgctl today` and `get_today` now carry the day's time requests.
+
+**The ratchet that keeps it so.** `TestMCPCoversEveryParentRoute` calls every tool — one call per
+route a tool can choose — against a recording server, and holds the server's whole parent surface,
+read from the real router (`httpapi.ParentRouteTable`, which needs no database), to what was asked:
+every route is reached by a tool, refused to API keys by the server, or listed in `mcpUncovered` with
+its reason; a tool with no sample call, a sample for a tool that is gone, an exemption that went
+stale and an exemption for a route the server no longer has are all red. Which routes refuse a key is
+no longer a middleware call nothing can read: they are registered with `parentRoutes.interactive`, so
+the table says so. Today: **79 parent routes — 65 reached by 59 tools, 6 refused to API keys (people
+and credentials, FR-17.2), 8 uncovered with a reason** (the event stream, the adb stream, a browser's
+four Web Push routes, and deleting a phone or a child, which the console does not offer either).
+
+Found writing it: `return out, c.Get(ctx, path, &out)` — the shape the first draft of every new tool
+had — leaves to the compiler whether `out` is read before or after the call fills it (the Go spec
+does not order a plain operand against a call in the same expression list). The tools decode first
+and return after (`getJSON`, `doJSON`).
+
+### 52.1 — tests and calibration
+
+e2e `TestMCPDoesWhatTheConsoleDoes` drives the new tools through the real `fgctl mcp` with an API key
+and reads every effect back from the API: a child created and renamed, its policy set, a phone added
+and **enrolled with the code `get_setup_code` handed out**, renamed, its apps listed and an app
+forgotten once the phone stopped reporting it (refused before, correctly), app rules set and removed,
+a domain blocked and freed, the family blocklist, an APK uploaded from a path, managed and unmanaged,
+scanned and deleted, the desired state and the timeline read, a time request granted with 20 of 30
+minutes and refused a second answer, and the family, its parents and its keys — the key's secret
+never in the answer.
+
+| # | the one value | measured |
+|---|---|---|
+| U1 | `set_managed_app` sends PUT for managed=false | **RED** *DELETE …/managed-apps/:x has no MCP tool and no reason* |
+| U2 | a covered route listed as uncovered | **RED** *covered by a tool and still listed as uncovered* |
+| U3 | the route table forgets which routes refuse a key | **RED** *POST /api/v1/api-keys has no MCP tool and no reason* (and the two others) |
+| M1 | `answer_time_request` sends minutes 0 | **RED** *after answer_time_request grant 20 the day's Extrazeit is 30* |
+| M2 | `set_app_rule NONE` names another package | **RED** *not_found* |
+| M3 | `set_managed_app false` installs instead | **RED** *list_managed_apps after managed=false* still lists it |
+
+**6 probes, 6 red. Cumulative: 421.**

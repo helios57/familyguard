@@ -252,9 +252,11 @@ func TestFgctlMCPServesTheTools(t *testing.T) {
 			t.Errorf("tools/list is missing %q; it has %v", want, sortedNames(names))
 		}
 	}
-	// The four deletes are deliberately absent. Asserted, because "we chose not to expose it" is
-	// worth exactly nothing if a later refactor quietly adds them back.
-	for _, forbidden := range []string{"delete_child", "delete_device", "delete_parent", "delete_app"} {
+	// Deleting a child, a phone or a person stays off MCP: the console does not offer the first two
+	// and the server refuses the third to a key. Asserted, because "we chose not to expose it" is
+	// worth exactly nothing if a later refactor quietly adds them back. delete_app is a tool since
+	// 0.6.36: the console removes a catalog version, and MCP does everything the console can (FR-17.5).
+	for _, forbidden := range []string{"delete_child", "delete_device", "delete_parent"} {
 		if names[forbidden] {
 			t.Errorf("%q is exposed over MCP; destructive deletes are CLI-only by design", forbidden)
 		}

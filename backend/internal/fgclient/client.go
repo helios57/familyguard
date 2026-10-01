@@ -101,13 +101,33 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, aut
 		return ErrNoServer
 	}
 	var reader io.Reader
+	contentType := ""
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("encoding the request: %w", err)
 		}
-		reader = bytes.NewReader(encoded)
+		reader, contentType = bytes.NewReader(encoded), "application/json"
 	}
+	return c.send(ctx, method, path, reader, contentType, out, authenticate)
+}
+
+// Upload sends a file as the raw request body — an APK to the catalog, whose label rides in the
+// query string — and decodes the answer like Do.
+func (c *Client) Upload(ctx context.Context, path string, file io.Reader, contentType string, out any) error {
+	if c.Token == "" {
+		if c.BaseURL == "" {
+			return ErrNoServer
+		}
+		return ErrNoCredential
+	}
+	if c.BaseURL == "" {
+		return ErrNoServer
+	}
+	return c.send(ctx, http.MethodPost, path, file, contentType, out, true)
+}
+
+func (c *Client) send(ctx context.Context, method, path string, reader io.Reader, contentType string, out any, authenticate bool) error {
 	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, reader)
 	if err != nil {
 		return fmt.Errorf("building the request: %w", err)
@@ -116,8 +136,8 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, aut
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
 	req.Header.Set("Accept", "application/json")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {

@@ -90,9 +90,11 @@ type Server struct {
 	// parentRouteRoles is who may call each parent route, recorded by parentRoutes as Router()
 	// registers them (FR-20.1). Read by the tests; the check itself is installed per route.
 	parentRouteRoles map[routeKey]roleSet
-	debug            *debugRelay
-	log              *slog.Logger
-	now              func() time.Time
+	// interactiveRoutes are the parent routes an API key may never call (FR-17).
+	interactiveRoutes map[routeKey]bool
+	debug             *debugRelay
+	log               *slog.Logger
+	now               func() time.Time
 
 	httpClient *http.Client
 
@@ -249,6 +251,7 @@ func (s *Server) Router() (*gin.Engine, error) {
 	// buckets by is the identity that middleware resolves — and RateLimitBy refuses outright rather
 	// than falling back to a shared bucket if the two are ever wired the other way round.
 	s.parentRouteRoles = map[routeKey]roleSet{}
+	s.interactiveRoutes = map[routeKey]bool{}
 	p := parentRoutes{s: s, group: v1.Group("", s.requireParent(), RateLimitBy(parents, parentKey))}
 	p.GET("/me", everyone, s.me)
 	p.GET("/family", everyone, s.getFamily)
@@ -264,9 +267,9 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.GET("/parents", admins, s.listParents)
 	// requireInteractiveParent, here and on /api-keys below: these are the routes that hand out or
 	// take away a credential, and an API key that can mint one outlives its own revocation.
-	p.POST("/parents", primaryOnly, s.requireInteractiveParent(), s.createParent)
-	p.PATCH("/parents/:id", primaryOnly, s.requireInteractiveParent(), s.updateParentRole)
-	p.DELETE("/parents/:id", primaryOnly, s.requireInteractiveParent(), s.deleteParent)
+	p.interactive(http.MethodPost, "/parents", primaryOnly, s.createParent)
+	p.interactive(http.MethodPatch, "/parents/:id", primaryOnly, s.updateParentRole)
+	p.interactive(http.MethodDelete, "/parents/:id", primaryOnly, s.deleteParent)
 
 	p.GET("/children", everyone, s.listChildren)
 	p.POST("/children", admins, s.createChild)
@@ -355,9 +358,9 @@ func (s *Server) Router() (*gin.Engine, error) {
 	// server that can answer "what keys does this family have" is useful. Everything that changes
 	// the set is console-only.
 	p.GET("/api-keys", primaryOnly, s.listAPIKeys)
-	p.POST("/api-keys", primaryOnly, s.requireInteractiveParent(), s.createAPIKey)
-	p.POST("/api-keys/:id/revoke", primaryOnly, s.requireInteractiveParent(), s.revokeAPIKey)
-	p.DELETE("/api-keys/:id", primaryOnly, s.requireInteractiveParent(), s.deleteAPIKey)
+	p.interactive(http.MethodPost, "/api-keys", primaryOnly, s.createAPIKey)
+	p.interactive(http.MethodPost, "/api-keys/:id/revoke", primaryOnly, s.revokeAPIKey)
+	p.interactive(http.MethodDelete, "/api-keys/:id", primaryOnly, s.deleteAPIKey)
 
 	p.GET("/audit", admins, s.listAudit)
 	// The console reads this stream with fetch() rather than EventSource, because EventSource

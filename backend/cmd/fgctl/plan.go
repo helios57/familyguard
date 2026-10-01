@@ -51,6 +51,16 @@ type todayDoc struct {
 			Minutes   int    `json:"minutes"`
 		} `json:"credits"`
 	} `json:"earned"`
+	// FR-28.5: today's "Mehr Zeit erbitten", newest first, for `fgctl today` and get_today.
+	TimeRequests []struct {
+		ID             string `json:"id"`
+		Minutes        int    `json:"minutes"`
+		Note           string `json:"note"`
+		State          string `json:"state"`
+		GrantedMinutes int    `json:"granted_minutes"`
+		RequestedAt    string `json:"requested_at"`
+	} `json:"time_requests"`
+	TimeRequestsLeft int `json:"time_requests_left"`
 }
 
 func cmdPlan(ctx context.Context, env *environment, args []string) error {
@@ -152,6 +162,17 @@ func renderToday(w *tabwriter.Writer, day *todayDoc) {
 	fmt.Fprintf(w, "earned time left\t%s (available %d, spent today %d)\n", left, day.Earned.Available, day.Earned.Spent)
 	for _, c := range day.Earned.Credits {
 		fmt.Fprintf(w, "  credit\t%d min earned %s, usable until %s\n", c.Minutes, c.EarnedOn, c.ExpiresOn)
+	}
+	for _, r := range day.TimeRequests {
+		state := strings.ToLower(r.State)
+		if r.State == "GRANTED" {
+			state = fmt.Sprintf("granted %d min", r.GrantedMinutes)
+		}
+		note := ""
+		if r.Note != "" {
+			note = " «" + r.Note + "»"
+		}
+		fmt.Fprintf(w, "time request	%d min%s, %s	%s\n", r.Minutes, note, state, r.ID)
 	}
 	if len(day.Groups) == 0 {
 		fmt.Fprintln(w, "no tasks today")
