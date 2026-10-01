@@ -519,8 +519,8 @@ child; and the phone must arrive at that state by itself, on a device the child 
 
 - FR-16.1 The control plane holds a catalog of application builds. A build enters it either by
   being uploaded, or by being copied into the server's application directory on the node and
-  scanned — an operator with shell access must not have to go through a browser to add a 200 MB
-  file. Nothing about a build is taken on the uploader's word: the package name, version, size,
+  scanned — on demand, and by the server itself when it starts — so an operator with shell access
+  does not have to go through a browser to add a 200 MB file. Nothing about a build is taken on the uploader's word: the package name, version, size,
   minimum SDK and signer are read out of the archive itself.
 - FR-16.2 A build can be uploaded through the console and through the REST API, and the API accepts
   both a browser's multipart form and a raw request body, so `curl --data-binary @app.apk` is a
@@ -565,6 +565,10 @@ checks, reading and writing the same records, and appearing in the audit trail a
   and credentials), a browser's own Web Push subscription, the event stream and the adb byte stream,
   and deleting a phone or a child — which the console does not offer either, and `fgctl rm-device` /
   `rm-child` do behind `--yes`.
+- FR-17.6 A key never crosses the network in cleartext from the command line: `fgctl` refuses a
+  server address that is not https, at login before the key is read and on every command (the
+  address can also come from `FAMILYGUARD_URL`). Plain http is accepted for this machine only
+  (loopback), where nothing crosses a wire. The stored credential is readable by its owner only.
 
 ### FR-18 Applications nobody in the family should have (the blocklist)
 A phone arrives with software on it that the family did not choose — a social network, a vendor's

@@ -91,11 +91,6 @@ object FilterState {
 
     fun listState(context: Context): FilterListState = store(context).state()
 
-    fun forget(context: Context) {
-        store(context).clear()
-        engine?.update(DomainIndex.EMPTY, enabled = false)
-    }
-
     private fun engine(context: Context, policy: FilterPolicy): FilterEngine {
         engine?.let { return it }
         synchronized(lock) {

@@ -202,17 +202,6 @@ class FilterListStoreTest {
     }
 
     @Test
-    fun `clearing forgets the list and the metadata`() {
-        val store = store(serving = list)
-        store.refresh(url)
-
-        store.clear()
-
-        assertTrue(store.state().isEmpty())
-        assertNull(store.compiled())
-    }
-
-    @Test
     fun `metadata that was damaged reads as no cache at all`() {
         val store = store(serving = list)
         store.refresh(url)

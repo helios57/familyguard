@@ -189,7 +189,7 @@ func TestFgctlSelfUpdateReplacesTheRunningBinary(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		stale += ".exe"
 	}
-	build := exec.Command("go", "build", "-ldflags", "-X main.version=v0.0.0-stale", "-o", stale, "./cmd/fgctl")
+	build := exec.Command("go", append(append([]string{"build"}, coverBuildFlags()...), "-ldflags", "-X main.version=v0.0.0-stale", "-o", stale, "./cmd/fgctl")...)
 	build.Dir = filepath.Join("..", "..", "backend")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building a stale fgctl: %v\n%s", err, out)
@@ -236,7 +236,7 @@ func TestFgctlSelfUpdateRefusesWhatItCannotTrust(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		stale += ".exe"
 	}
-	build := exec.Command("go", "build", "-ldflags", "-X main.version=v0.0.0-stale", "-o", stale, "./cmd/fgctl")
+	build := exec.Command("go", append(append([]string{"build"}, coverBuildFlags()...), "-ldflags", "-X main.version=v0.0.0-stale", "-o", stale, "./cmd/fgctl")...)
 	build.Dir = filepath.Join("..", "..", "backend")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building a stale fgctl: %v\n%s", err, out)
@@ -298,6 +298,17 @@ func TestFgctlSelfUpdateRefusesWhatItCannotTrust(t *testing.T) {
 				return body
 			},
 			want: "but the manifest says 12345",
+		},
+		{
+			// A server that hosts builds, none of them for this machine: say which it has.
+			name: "no build for this platform",
+			before: func(t *testing.T, dir string) {
+				other := "fgctl-plan9-arm64"
+				if err := os.Rename(filepath.Join(dir, artifact), filepath.Join(dir, other)); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "but not for " + runtime.GOOS + "/" + runtime.GOARCH + "; available: plan9/arm64",
 		},
 		{
 			name: "the published binary does not run",
@@ -365,4 +376,14 @@ func TestFgctlSelfUpdateRefusesWhatItCannotTrust(t *testing.T) {
 			}
 		})
 	}
+}
+
+// coverBuildFlags instruments a binary a test builds itself, the way run.sh builds the suite's own
+// when E2E_COVERDIR is set; without it the self-update path, which runs a binary built here, would
+// read as never reached.
+func coverBuildFlags() []string {
+	if os.Getenv("E2E_COVERDIR") == "" {
+		return nil
+	}
+	return []string{"-cover", "-coverpkg=./..."}
 }

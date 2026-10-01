@@ -4023,10 +4023,10 @@ proven.
 | FR-14 audit | 3.7 | e2e `TestEveryAuditedActionIsWritten` — all **21** audited actions driven over real HTTP (17 parent-side, 4 device-side), each asserted as a row naming actor type, actor id, action, target type and target *id*; nine detail keys checked so the row says *which* change was made; every row required to carry a `request_id`; and a source-scanning ratchet over `internal/httpapi/*.go` that fails when a 22nd action appears. **Calibrated 6/6** — see the record below. Also `TestRecoveryAndAudit`, which checks ten action names |
 | FR-15 keeping the DPC current | 9 | three layers, and only the third can see it. JVM: `AppUpdaterTest` drives the five checks with every dependency a function, so the whole decision runs off a device. Server + e2e: `TestAPKInfoDescribesTheFileThisServerWillHandOver`, `TestAPKInfoIsNotFoundWhenTheServerHostsNoDPC`, `TestAParentCanTellThePhoneToUpdateItself`, `TestTheHeartbeatReportsWhichDPCThePhoneIsRunning`, `TestAnAPKReplacedUnderTheRunningServerIsRefused`, and `apk_test.go`'s seven over the bytes themselves. Device: **`tests/android/self-update.sh` + `TestTheServerReplacesTheDPCOnARealDevice`**, which builds the DPC twice from one tree, enrols the lower build against a real server and watches the higher one arrive — passed 2026-09-05 in 176 s, with the phone's own log as the second witness (`wake:connected: commands done=1` → `PackageManager: installation completed` → `FamilyGuardUpdate: self-update installed`) on a device whose adb had been off since the first policy applied. Its negative control is the same command again, declined as "already running". `tests/android/calibrate-update.sh` breaks each of the five checks in turn and records the refusal. **Not proven anywhere:** the update path on a phone that is not an emulator, and the `MY_PACKAGE_REPLACED` restart on an OEM build that kills background starts more aggressively than AOSP |
 | FR-15.7 reporting an update that did not take | 17, **26** | Device: `UpdateReportTest` (8) — the record is kept until a build **above** the one it names runs, the latest attempt wins, and `a failure recorded against the newest build never clears itself, and only clear() ends it` pins the hole that `AlreadyCurrent` now closes. `AppUpdaterTest` splits the two shapes a failed `apk-info` can have: a server that ANSWERED stays a refusal in the server's own words, a server that was never reached propagates so the caller's "nothing was attempted" branch — which had been unreachable since it was written — finally runs. Console: e2e `TestTheConsoleShowsAPhoneThatIsBehindAndWhyItsUpdateFailed` drives a real browser and now holds the build fixed while the error stays set, which is the state a real family reached and the one combination its old two-variable control could not distinguish ([26.4](#264--why-the-e2e-suite-had-this-state-and-still-missed-it)). **Calibrated 3/3** ([26.5](#265--calibration-3-probes-3-red)). **Not proven:** the `AlreadyCurrent` call site has no JVM test — `updateCheck` is inside an Android `Service` — and neither device-side fix has run on a handset |
-| FR-16 managed applications | 12 | four layers, and the one that decided the design is the device. Server: `TestAnUploadedAPKIsReadRatherThanDescribed`, `TestMultipartAndRawBodyAgree`, `TestTwoVersionsOfOneAppBothLive`, `TestTheSameFileTwiceIsNotAConflict`, `TestAPackageSignedByAnotherKeyIsRefused`, `TestWhatIsNotAnAPKIsRefusedAsSuch`, `TestTheDirectoryOnTheNodeIsAlsoASource`, `TestADeploymentWithoutAnAPKDirSaysSo`, `TestDeletingAnAppRemovesItsFileToo`, `TestAManagedAppDownloadNeedsADeviceCredential`, plus `internal/apk`'s parser tests. Policy: `TestDeclaringAnAppReachesThePhoneAsSomethingItCanFetch`, `TestAnUpgradeIsANewVersionInTheSamePolicy`, `TestWithdrawingAnAppRemovesItFromThePolicy`, `TestDeclaringSomethingTheCatalogDoesNotHaveIsRefused`, `TestTheConsoleSeesADeclarationWithNothingBehindIt`; the shared vectors carry three new cases so both engines normalise a declared set identically. JVM: `ManagedAppApplierTest` (12) and `AppUpdaterTest`'s four new cases. **Device: `ManagedInstallTest`** — the restriction matrix in [12.1](#121--which-restrictions-bind-the-device-owner-measured-on-a-phone-rather-than-argued-from-the-source), the install→upgrade→withdraw lifecycle against a real second application, and `getInstallSourceInfo` as a real filter. **Calibrated 11/11** ([12.2](#122--the-jvm-calibration-including-one-break-that-proved-a-test-binds-to-nothing)), and the record includes one assertion that binds to nothing at the JVM layer and says so. **Not proven:** any of it on hardware rather than an emulator, and the API 29 floor |
-| FR-17 API keys | 12 | e2e `TestAnAPIKeyIsTheSameParent`, `TestTheTokenIsShownOnceAndNeverAgain`, `TestRevokingAKeyEndsItImmediately`, `TestAKeyCannotMintACredential`, `TestAKeyThatWasNeverIssuedIsNotDistinguishable`, `TestOnlyThePrimaryAdminMintsKeys`, `TestAKeyNeedsAName`, `TestTheAuditTrailTellsAScriptFromAPerson` — the last two of those are the ones that matter most: a key must not be able to mint a credential that outlives its own revocation, and an audit row must say a script acted rather than a person · **FR-17.5 (Phase 52):** Go `TestMCPCoversEveryParentRoute` (every parent route to a tool or a reason), e2e `TestMCPDoesWhatTheConsoleDoes` |
+| FR-16 managed applications | 12 | four layers, and the one that decided the design is the device. Server: `TestAnUploadedAPKIsReadRatherThanDescribed`, `TestMultipartAndRawBodyAgree`, `TestTwoVersionsOfOneAppBothLive`, `TestTheSameFileTwiceIsNotAConflict`, `TestAPackageSignedByAnotherKeyIsRefused`, `TestWhatIsNotAnAPKIsRefusedAsSuch`, `TestTheDirectoryOnTheNodeIsAlsoASource`, `TestTheDirectoryIsScannedAtStartup` (Phase 53), `TestADeploymentWithoutAnAPKDirSaysSo`, `TestDeletingAnAppRemovesItsFileToo`, `TestAManagedAppDownloadNeedsADeviceCredential`, plus `internal/apk`'s parser tests. Policy: `TestDeclaringAnAppReachesThePhoneAsSomethingItCanFetch`, `TestAnUpgradeIsANewVersionInTheSamePolicy`, `TestWithdrawingAnAppRemovesItFromThePolicy`, `TestDeclaringSomethingTheCatalogDoesNotHaveIsRefused`, `TestTheConsoleSeesADeclarationWithNothingBehindIt`; the shared vectors carry three new cases so both engines normalise a declared set identically. JVM: `ManagedAppApplierTest` (12) and `AppUpdaterTest`'s four new cases. **Device: `ManagedInstallTest`** — the restriction matrix in [12.1](#121--which-restrictions-bind-the-device-owner-measured-on-a-phone-rather-than-argued-from-the-source), the install→upgrade→withdraw lifecycle against a real second application, and `getInstallSourceInfo` as a real filter. **Calibrated 11/11** ([12.2](#122--the-jvm-calibration-including-one-break-that-proved-a-test-binds-to-nothing)), and the record includes one assertion that binds to nothing at the JVM layer and says so. **Not proven:** any of it on hardware rather than an emulator, and the API 29 floor |
+| FR-17 API keys | 12 | e2e `TestAnAPIKeyIsTheSameParent`, `TestTheTokenIsShownOnceAndNeverAgain`, `TestRevokingAKeyEndsItImmediately`, `TestAKeyCannotMintACredential`, `TestAKeyThatWasNeverIssuedIsNotDistinguishable`, `TestOnlyThePrimaryAdminMintsKeys`, `TestAKeyNeedsAName`, `TestTheAuditTrailTellsAScriptFromAPerson` — the last two of those are the ones that matter most: a key must not be able to mint a credential that outlives its own revocation, and an audit row must say a script acted rather than a person · **FR-17.5 (Phase 52):** Go `TestMCPCoversEveryParentRoute` (every parent route to a tool or a reason), e2e `TestMCPDoesWhatTheConsoleDoes` · **FR-17.6 (Phase 53):** Go `TestServerURLMustBeTLSUnlessLoopback`, e2e `TestFgctlNeverSendsTheKeyInCleartext` (also the stored credential's mode) |
 | FR-18 family blocklist | 14 | e2e `TestTheCuratedBlocklistIsSeededAndReachesAPhone`, `TestTheBlocklistCoversAChildAddedAfterIt`, `TestAChildAllowExemptsOnlyThatChild`, `TestTheCriticalWhitelistOutranksTheBlocklist`, `TestDeletingACuratedEntryIsPermanent`, `TestABlocklistChangeBumpsEveryChildsPolicyVersion`, `TestTheBlocklistIsReachableByAPIKeyAndGuardedByRole`, `TestTheBlocklistRefusesWhatCanNeverMatchAnApp`, `TestTheBlocklistIsAudited`; three shared vectors replayed by **both** engines. The four that carry the requirement rather than the plumbing: the phone is told to hide packages **no inventory reported** (an implementation that blocks only what it can see leaves the installer stub that puts Facebook back); a child created *after* the entry is covered by it; one child's ALLOW exempts that child and a **second child is the control** that the entry did not simply vanish; and the device's own dialer, put on the list deliberately, is neither hidden nor suspended — with a non-critical package blocked in the same call, so an implementation that ignored the list entirely could not pass by doing nothing. `TestDeletingACuratedEntryIsPermanent` restarts the server, which is the only thing that separates "seeded once" from "re-applied on boot". **Calibrated 3/3 on the engine** (drop the union / drop the ALLOW carve-out / apply the list after the critical whitelist), each break red in the vector that owns the property and green on restore. **Not proven:** any of it on hardware — no phone has yet reported one of these packages back as hidden. `com.spotify.music` was added as a parent row on the live database in 16.7 and is in the same position: the app is not installed on the only enrolled phone, so the entry is pre-emptive by design |
-| FR-19 remote debugging | 31, 48 | e2e `TestRemoteADBRelaysBytesBothWays`, `TestRemoteADBStreamBelongsToOnePhone`, `TestRemoteADBIsRefusedWhileDebuggingIsOff`, `TestRemoteADBCarriesThePhonesReason`, `TestRemoteADBOutlivesTheRequestTimeout`; JVM `CommandHandlersTest`, `LoopbackAdbProbeTest`. **Device:** `TestRemoteADBReachesARealPhonesAdbd` (`tests/android/remote-adb.sh`), `TestRemoteADBFindsWirelessDebuggingWithTheFilterOn` (`tests/android/remote-adb-wireless.sh`, API 33 and 37). Calibration in Phases 31 and 48 |
+| FR-19 remote debugging | 31, 48 | e2e `TestRemoteADBRelaysBytesBothWays`, `TestRemoteADBStreamBelongsToOnePhone`, `TestRemoteADBIsRefusedWhileDebuggingIsOff`, `TestRemoteADBCarriesThePhonesReason`, `TestRemoteADBOutlivesTheRequestTimeout`; Go `TestSpliceEndsAnIdleSession`, `TestSpliceEndsASessionThatNeverCarriedAByte`, `TestSpliceKeepsABusySessionOpen`, `TestSpliceEndsABusySessionAtTheCeiling` (FR-19.6, Phase 53); JVM `CommandHandlersTest`, `LoopbackAdbProbeTest`, `RemoteDebugDecisionTest`, `AdbPortFinderTest`, `StreamSlotsTest`. **Device:** `TestRemoteADBReachesARealPhonesAdbd` (`tests/android/remote-adb.sh`), `TestRemoteADBFindsWirelessDebuggingWithTheFilterOn` (`tests/android/remote-adb-wireless.sh`, API 33 and 37). Calibration in Phases 31 and 48 |
 | FR-20 roles and rights | 34 | e2e `TestEveryParentRouteDeclaresWhoMayCallIt`, `TestParentRoutesInstallTheRoleCheck`, `TestAGuardianMayCallExactlyTheGuardianAllowlist`, `TestAGuardianIsRefusedEverythingOutsideTheGuardianWindow`, `TestOnlyThePrimaryAdminChangesRolesAndNeverTheirOwn`, `TestARoleChangeTakesEffectOnTheNextRequest`, `TestADemotedParentsKeyIsDemotedWithThem`, `TestThePrimaryAdminPicksAndChangesRole`, `TestAnAdminHasTheGuardianWindowAsTheFirstTab`. Calibration in Phase 34 |
 | FR-21 pause and today's time | 35 | e2e `TestAGuardianPausesAndTakesTimeAway`, `TestAGuardianCanPauseAndBadRequestsSayWhy`, `TestTodaysTimeGoesDownAsWellAsUp`, `TestAReductionWithoutALimitSaysSo`, `TestFgctlPausesAndAdjustsTime`; the shared vectors (`TestAPauseTakesEverythingButCallsAndMessages`, `TestUnpausingDuringBedtimeLeavesBedtime`) replayed by both engines. **Device:** `TestAPauseSuspendsAppsOnARealPhone` (`tests/android/pause.sh`). Calibration in Phase 35 |
 | FR-22 daily plan and earned time | 36 | e2e `TestAConfirmedGroupEarnsTimeThatCarriesTheDay`, `TestACreditLastsSevenDaysCountingItsOwn`, `TestAnOverdraftIsADebtTheNextCreditSettles`, `TestAReportOutsideItsDaysIsRefusedAndDecisionsAreChecked`, `TestAGuardianConfirmsTasksAndSeesBonuszeit`, `TestABonusAppWithoutEarnedTimeSaysWhyItIsPaused`, `TestFgctlDrivesTheDailyPlan`, `TestEarnedTimeReachesTheEngine`; JVM `DayPlanTest`, `EarnedAccountTest`, `EarnedAttributionTest`. **Device:** `TestABonusAppOpensOnlyWithEarnedTimeOnARealPhone` (`tests/android/bonus.sh`). Calibration in Phase 36 |
@@ -8929,3 +8929,109 @@ the repository goes public. CI and Release green on the moved tag; one ready pod
 `/readyz` 200, `/fgctl` offering 0.6.36 with six artifacts, `/dpc.apk` byte-identical. Both phones
 report 0.6.36 (45). The operator's own fgctl updated itself 0.6.30 → 0.6.36 and, over MCP against
 the live server, lists **59 tools** and reads the hosted build back as 0.6.36 (45).
+
+## Phase 53 — a full review, and every path a test reaches (0.6.37, FR-16.1, FR-17.6, FR-19.6)
+
+The owner, 2026-10-01: *"Do a full review over the whole project, fix all found issues and make sure
+everything is e2e tested and with unit-tests"*. Six reviewers read the project by area (server API and
+auth; store and domain; fgctl, server main and infrastructure; the phone's enforcement core; the
+phone's filter, update, recovery and debug; the console and the e2e suite as a suite). The areas where
+nothing was found are recorded as such rather than left out: the console (every string through
+`el()`, the one `innerHTML` a server-built SVG), the infrastructure (self-update, APK parsing, Web
+Push fencing, CI pinning) and the phone's bypass surface.
+
+**"Everything is tested" was made a measurement.** `E2E_COVERDIR=<dir> tests/e2e/run.sh` builds the
+server and fgctl with `-cover` and has every process the suite starts write its counters there; merged
+with the unit tests' (`go test -cover -coverpkg=./... ./... -args -test.gocoverdir=…`) it names every
+function no test reaches. Before: **83.7%** of server+fgctl statements, 40 functions at 0%. After:
+**86.0%** measured on the e2e run, and the five functions still at 0% then (`restrictionAdvice`,
+`redact`, `readUTF8Len`, `summarise`, `platformList`) each got a test afterwards. Of the 40, seven had
+no caller at all and were deleted (`GetApp`, `GetCommand`, `RecoveryMaterial`, `EarnedMinutesForDay`,
+`BlockedPackages`, `UsageMinutesCountedForDay`, `Server.Catalog` — which turned out to be a missing
+call, below); on the phone `FilterState.forget` and the `clear` only it used.
+
+**Fixed:**
+
+- **CORS never allowed PUT.** With `ALLOWED_ORIGINS` set, the browser refused every plan, alarm,
+  agenda, holiday, calendar, app-rule and managed-app save of a cross-origin console, while every curl
+  worked. The unit test reads the methods from the real route table.
+- **Location history was pruned after 30 days** by default, against the owner's "keep it for at least
+  1 year". Now 365 (`LOCATION_RETENTION_DAYS`).
+- **The app directory was never scanned at startup**, although `Server.Catalog()` was documented as
+  existing for exactly that: an APK copied to the node while the server was down stayed invisible
+  until a parent pressed scan (FR-16.1). Now a scan runs beside the server at every start.
+- **FR-19.6's hour-idle cut was the ingress's, not the server's** — `proxy-read-timeout` in one
+  deployment and absent from the next. The relay now ends a stream nothing has crossed for an hour.
+- **fgctl:** `locations` printed `<nil>` for every time (it read `recorded_at`; the API says
+  `captured_at`), `usage` printed Go's map syntax, `version` ignored `--json`, and `login --url
+  http://<remote>` was accepted — every later command, self-update included, then ran in cleartext.
+  FR-17.6: http is accepted for loopback only, at login and for `FAMILYGUARD_URL`.
+- **Phone, the critical one:** the screen-off usage report ran without the sync lock that every other
+  report holds, racing the tracker, ledger and reporter it drains. `SyncLock` now hands a body a
+  `Held` token that `report()` requires, so a report outside the lock does not compile, and re-entry
+  throws instead of waiting on itself. Found while fixing it: the screen-on clock was written from the
+  main thread and drained from the sync's — a screen-off landing mid-drain lost the session it had just
+  recorded. Its methods are serialised.
+- **Phone:** the alarm receivers did keystore and `commit()` work on the main thread at the minute the
+  alarm must ring; it now runs under `goAsync()` (the ring starts first), and `AlarmClock` is
+  serialised because the main thread no longer orders it against a sync. The stop/snooze write in
+  `AlarmRingService` stays on the main thread on purpose (a lost snooze is an alarm that never rings).
+- **Phone:** the four-stream cap on remote adb was read when a command arrived and counted only once
+  the stream was spliced; two commands at once could open a fifth. `StreamSlots` reserves the slot.
+- **Decided and pinned:** a new app with no launcher icon still waits for approval (hiding the icon is
+  not a way past FR-5.4) — one shared vector, both engines; `queryInt` clamps list sizes rather than
+  refusing them.
+
+### 53.1 — tests and calibration
+
+New e2e: `TestTheDirectoryIsScannedAtStartup`, `TestTelemetryIsKeptForAYearAndThenPruned`,
+`TestWebPushKeyAndUnsubscribe` (the key signs every push and survives a restart; unsubscribe is scoped
+to its parent), `TestFgctlEveryReadCommandShowsWhatTheServerHolds` (devices, policy, commands, apps,
+blocklist, usage, locations, audit, keys, version — both renderings, and no `<nil>`/`map[`/`%!` in
+either), `TestFgctlRemovesOnlyWhenTold`, `TestFgctlLogoutForgetsTheCredential`,
+`TestFgctlNeverSendsTheKeyInCleartext`, `TestFgctlSelfUpdateRefusesWhatItCannotTrust` (a file changed
+on disk — the server's own 503 —, bytes altered in transit, a manifest whose size lies, a binary that
+does not run, no build for this platform; the running binary byte-identical each time),
+`TestConcurrentWritesKeepTheirInvariants` (a group's last two tasks confirmed at once credit 30 once,
+eight "Mehr Zeit erbitten" at once open one request, two parents granting at once grant once), and a
+PUT preflight in `TestCORSAllowsOnlyTheConfiguredOrigins`. Unit: the CORS route-table test, splice's
+idle and ceiling (four), `queryInt`, the earned look-back edge and a credit across the clock change,
+the cleartext rule, UTF-8 string pools, calendar-error redaction, the background-restriction advice,
+an HTML error page summarised. Phone (1016 JVM tests, was 981): `SyncLockTest`, `ScreenOnClockTest`,
+`AlarmReceiversOffMainThreadTest`, `RemoteDebugDecisionTest`, `AdbPortFinderTest`, `StreamSlotsTest`,
+`CriticalPackagesTest`, two agenda midnight cases.
+
+| # | the one value | measured |
+|---|---|---|
+| V1 | the preflight's methods without PUT (e2e) | **RED** *a preflight for PUT answered Allow-Methods "GET, POST, PATCH, DELETE, OPTIONS"* |
+| V2 | the startup scan returns at once | **RED** *the APK copied in before startup is still not in the catalog* (a first probe passed a nil catalog and crashed the server — not counted) |
+| R1 | location retention default 30 | **RED** *want locations=1/0* and the log's count |
+| R2 | the prune deletes nothing | **RED** the same two |
+| P1 | unsubscribe deletes nothing | **RED** *after DELETE the subscription is still held* |
+| P2 | unsubscribe ignores whose it is | **RED** *another parent's DELETE removed this parent's push subscription* |
+| F1 | rm-* without the --yes guard | **RED** *rm-device without --yes exited 0* |
+| F2 | logout removes another file | **RED** *children after logout exited 0, want 3* |
+| U1 | http allowed to any host (e2e, and the unit test) | **RED** — and the probe's log shows the key being sent to `guard.example.test` |
+| U2 | the stored credential written 0644 | **RED** *the stored credential is mode 644* |
+| S1 | no checksum check | **RED** *exited <nil> … replaced* |
+| S2 | no size check | **RED** *want a refusal saying "but the manifest says 12345"* |
+| S3 | no run-before-swap | **RED** *want a refusal saying "was NOT installed"* |
+| PL | the platform list without the architecture | **RED** *available: plan9* |
+| D1 | the idle timer's first window ×1000 | **RED** *a session that never carried a byte is still open* (the same probe before that test existed stayed green: the first byte reset the window) |
+| D2 | the idle reset ×1000 | **RED** two |
+| D3 | no idle reset | **RED** *the session closed while in use* |
+| D4 | the ceiling ×1000 | **RED** *a busy session outlived its ceiling* |
+| Q | queryInt's max ×1000 | **RED** *?limit=501 gave 501* |
+| E1/E2 | the look-back one day short / long | **RED** each edge |
+| C1 | DecideTask without `FOR UPDATE OF g` | **RED** *credited 0* — the race loses the credit rather than doubling it |
+| C2 | the one-open-request index not unique | **RED** *[409 409 409 200 409 409 409 200]* |
+| C3 | a decision may overwrite a GRANTED one | **RED** *[200 200]* |
+| G/K | Go / Kotlin engine skip a new app with no icon | **RED** on the new vector, both engines |
+| SS | `StreamSlots` as check-then-count | **RED** *round 2: … expected 4 but was 5* (a single round stayed green, so the test now runs 300 rounds through a barrier) |
+| T1–T4 | UTF-8 char count, no redaction, advice inverted, no 200-char cap | **RED** each |
+| phone | 17 probes by the phone-side pass (lock, re-entry, receivers, `@Synchronized`, `finish`, adb lookup order ×5, port range, critical packages ×3, agenda midnight, screen clock) | **RED** each, restored byte-identical |
+
+**49 probes, 49 red (plus three that stayed green and were written up above). Cumulative: 470.**
+Devices: `tests/android/alarm.sh` (rang 2 s after its minute, offline and in forced Doze, with the new
+receivers), `remote-adb.sh` and `instrumented.sh` (24 testcases provisioned, 1 after a real reboot),
+all on the API 37 emulator.

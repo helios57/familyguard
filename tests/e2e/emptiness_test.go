@@ -364,9 +364,6 @@ var collectionsCoveredElsewhere = map[string]string{
 	"ListParents": "asserted by name and role in section 2: this is the one collection that is " +
 		"legitimately non-empty on a fresh system, because a deployer configured it",
 	"ListAudit": "asserted in section 2 as exactly one row — the sign-in this test performed",
-	"BlockedPackages": "not its own endpoint; it arrives inside the policy response as " +
-		"input.settings.blocked_packages, which section 7 checks for nulls along with every " +
-		"other array in that tree",
 	"WebPushSubscriptions": "never serialised: the Web Push sender reads it and sends to each row " +
 		"inside the server (FR-28.4); time_request_test drives it end to end, and a nil result sends nothing",
 	"DeviceIDsForChild": "never serialised. It fans a policy change out to a child's devices " +

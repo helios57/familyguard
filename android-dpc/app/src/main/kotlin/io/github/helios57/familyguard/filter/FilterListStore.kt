@@ -182,12 +182,6 @@ class FilterListStore(
         return RefreshResult.Updated(fresh, compiled.second)
     }
 
-    /** Forget the cached list. Used when a parent switches the filter off for good. */
-    fun clear() {
-        listFile.delete()
-        metaFile.delete()
-    }
-
     private fun failed(temporary: File, reason: String): RefreshResult {
         temporary.delete()
         log(reason)

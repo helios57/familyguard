@@ -19,7 +19,6 @@ import java.io.OutputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
@@ -62,13 +61,27 @@ class RemoteDebug(
     private val switchOn: () -> String? = { DpmRestrictionGateway.switchWirelessDebuggingOn(context) },
 ) {
     private val context = context.applicationContext
-    private val open = AtomicInteger()
+    private val slots = StreamSlots(MAX_STREAMS)
 
     fun open(params: JsonObject): CommandOutcome {
-        val request = when (val read = DebugRequest.of(params, openStreams = open.get(), maxStreams = MAX_STREAMS)) {
+        val request = when (val read = DebugRequest.of(params, openStreams = slots.inUse, maxStreams = MAX_STREAMS)) {
             is DebugRequest.Refused -> return CommandOutcome.Failed(read.reason)
             is DebugRequest.Open -> read
         }
+        // The slot is held from here, through the lookups, until the stream closes — or given back
+        // below if it never opens. The read above only words the common refusal early.
+        if (slots.tryTake() == null) {
+            return CommandOutcome.Failed("$MAX_STREAMS debug streams are already open on this phone")
+        }
+        var spliced = false
+        try {
+            return openInSlot(request).also { spliced = it is CommandOutcome.Done }
+        } finally {
+            if (!spliced) slots.release()
+        }
+    }
+
+    private fun openInSlot(request: DebugRequest.Open): CommandOutcome {
 
         val users = context.getSystemService(UserManager::class.java)
         if (users?.hasUserRestriction(UserManager.DISALLOW_DEBUGGING_FEATURES) == true) {
@@ -188,15 +201,15 @@ class RemoteDebug(
 
     private class Leg(val socket: Socket, val input: InputStream, val output: OutputStream)
 
+    /** Runs in the slot [open] took; closing the stream gives it back. */
     private fun splice(adbd: Socket, server: Leg) {
-        val streams = open.incrementAndGet()
-        notify(streams)
+        notify(slots.inUse)
         val closed = java.util.concurrent.atomic.AtomicBoolean(false)
         val closeBoth = {
             if (closed.compareAndSet(false, true)) {
                 adbd.closeQuietly()
                 server.socket.closeQuietly()
-                notify(open.decrementAndGet())
+                notify(slots.release())
                 Log.i(TAG, "debug stream closed")
             }
         }

@@ -125,6 +125,10 @@ class AlarmRingService : Service() {
         }
         restoreVolume = null
         ringing = false
+        // On the main thread on purpose, unlike the receivers (AlarmReceivers.offMainThread): this
+        // is a tap on an alarm that is already ringing, so the encrypted store was opened minutes
+        // ago and the write is short — and stopSelf follows at once, so a write handed to a thread
+        // could be lost with the process, and a lost snooze is an alarm that never rings again.
         if (snooze) {
             AlarmClock.snooze(this, Instant.now().plusMillis(SNOOZE_MILLIS))
         } else {

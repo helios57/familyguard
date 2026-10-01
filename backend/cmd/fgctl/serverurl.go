@@ -6,7 +6,7 @@ import (
 	"net/url"
 )
 
-// requireSafeServerURL refuses a server address that would send the API key in cleartext.
+// requireSafeServerURL refuses a server address that would send the API key in cleartext (FR-17.6).
 //
 // Every request carries the key, and `fgctl self-update` trusts the checksums the server publishes
 // because the connection to it is TLS — there is no separate signature (fgctldist). An http://
