@@ -1,5 +1,9 @@
 # Go
 /backend/bin/
+# A `go build` run inside a command's own directory leaves its binary there; one was committed once
+# (0.6.36's first tag, removed in the next commit).
+/backend/cmd/fgctl/fgctl
+/backend/cmd/server/server
 *.test
 *.out
 
