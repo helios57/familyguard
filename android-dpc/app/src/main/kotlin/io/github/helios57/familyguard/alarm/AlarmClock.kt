@@ -19,6 +19,12 @@ import java.time.Instant
  * Re-booked from everything that can move the answer: a new rule from the server, a ring, a snooze,
  * a stop, a boot, an update of this app, a change of time or timezone. Each call replaces the booking
  * (one PendingIntent, FLAG_UPDATE_CURRENT), so calling it too often costs nothing.
+ *
+ * Every entry point is `@Synchronized`, because each is read-decide-book and its callers are on
+ * different threads: the receivers' background threads, the sync's IO thread, the ring service's
+ * main thread. Two interleaved can land out of order — an `update` that read the state a moment
+ * before `fired` recorded the ring books that minute again after `fired` booked tomorrow, and the
+ * alarm rings twice. The monitor is reentrant, so the entry points that end in [rebook] are fine.
  */
 object AlarmClock {
 
@@ -29,6 +35,7 @@ object AlarmClock {
     private const val REQUEST_SHOW = 7302
 
     /** A new rule from the server. */
+    @Synchronized
     fun update(context: Context, schedule: AlarmSchedule) {
         val store = EncryptedAlarmStore(context)
         if (store.schedule() == schedule) return
@@ -37,6 +44,7 @@ object AlarmClock {
     }
 
     /** Books the next ring, or cancels the booking when there is none. Returns what was booked. */
+    @Synchronized
     fun rebook(context: Context, now: Instant = Instant.now()): Instant? {
         val store = EncryptedAlarmStore(context)
         val schedule = store.schedule() ?: AlarmSchedule()
@@ -67,18 +75,21 @@ object AlarmClock {
     }
 
     /** The booked ring has come: remember it so it is not booked again, then book the next. */
+    @Synchronized
     fun fired(context: Context, at: Instant) {
         val store = EncryptedAlarmStore(context)
         store.saveState(AlarmState(snoozeUntil = null, lastRang = at))
         rebook(context)
     }
 
+    @Synchronized
     fun snooze(context: Context, until: Instant) {
         val store = EncryptedAlarmStore(context)
         store.saveState(store.state().copy(snoozeUntil = until))
         rebook(context)
     }
 
+    @Synchronized
     fun stopped(context: Context) {
         val store = EncryptedAlarmStore(context)
         store.saveState(store.state().copy(snoozeUntil = null))
