@@ -8851,3 +8851,14 @@ notified. **26 probes counted (T1–T11, M1–M15), 26 red. Cumulative: 415 prob
 Push from a real push service to a real parent's phone (the bench is its own push service; the
 encryption and the signature are checked, the delivery through Google or Apple is not), Safari on an
 iPhone at all, and the family's read of the new words.
+
+### 51.2 — live
+
+Deployed 2026-10-01 as **0.6.35** (image `sha256:c9185573…eff4`, APK `515fcbc7…61df`, versionCode
+44), server first; CI and Release green on the tagged commit; one ready pod on that digest,
+`/readyz` 200, `/sw.js` served as JavaScript, the new console code (`bittet um`) read back from the
+public host with a control string that is absent, `/api/v1/push/key` refusing an unauthenticated
+caller (401), and `/dpc.apk` read back byte-identical. Both phones took the update by push — the
+Android 16 phone in 7 s, the Android 13 phone in 1 min 47 s — and report 0.6.35 (44) with no update
+error. Not measured: a request from a family phone, an answer from a parent's browser, and a push
+through Google's or Apple's push service — the first one a parent switches on is the first real one.
