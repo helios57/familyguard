@@ -69,7 +69,7 @@ class AdbPortFinder(context: Context) {
                 // Resolved one at a time: NsdManager refuses a second resolve while one is running
                 // (FAILURE_ALREADY_ACTIVE), and there are rarely more than one or two candidates.
                 val resolved = resolve(manager, next, left) ?: continue
-                if (resolved.address in own && resolved.port in 1..65535) return resolved
+                if (isThisPhones(resolved, own)) return resolved
             }
         } finally {
             try {
@@ -112,5 +112,15 @@ class AdbPortFinder(context: Context) {
     companion object {
         private const val TAG = "FGDebug"
         const val DEFAULT_TIMEOUT_MILLIS = 5_000L
+
+        /**
+         * Whether an announcement is this phone's adbd: from one of [own] addresses, on a real port.
+         *
+         * The address is the whole safety of this class. On a home network the parent's laptop or
+         * another phone may announce the same service type, and relaying a child's debug session
+         * into somebody else's adbd is the one wrong answer this can give.
+         */
+        internal fun isThisPhones(found: Found, own: Set<InetAddress>): Boolean =
+            found.address in own && found.port in 1..65535
     }
 }

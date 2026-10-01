@@ -65,13 +65,9 @@ class RemoteDebug(
     private val open = AtomicInteger()
 
     fun open(params: JsonObject): CommandOutcome {
-        val stream = params["stream"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        val target = params["target"]?.jsonPrimitive?.contentOrNull ?: "connect"
-        val explicitPort = params["port"]?.jsonPrimitive?.intOrNull ?: 0
-        if (stream.isEmpty()) return CommandOutcome.Failed("the command carried no stream id")
-        if (target != "connect" && target != "pair") return CommandOutcome.Failed("unknown debug target '$target'")
-        if (open.get() >= MAX_STREAMS) {
-            return CommandOutcome.Failed("$MAX_STREAMS debug streams are already open on this phone")
+        val request = when (val read = DebugRequest.of(params, openStreams = open.get(), maxStreams = MAX_STREAMS)) {
+            is DebugRequest.Refused -> return CommandOutcome.Failed(read.reason)
+            is DebugRequest.Open -> read
         }
 
         val users = context.getSystemService(UserManager::class.java)
@@ -82,51 +78,29 @@ class RemoteDebug(
             )
         }
 
-        val service = if (target == "pair") AdbPortFinder.Service.PAIRING else AdbPortFinder.Service.CONNECT
-        var enabledNote: String? = null
-        var foundBy = "given"
-        val adbd: Socket = if (explicitPort > 0) {
-            connectLocal(listOf(LOOPBACK), explicitPort)
-                ?: return CommandOutcome.Failed("nothing on this phone accepts connections on port $explicitPort")
-        } else if (service == AdbPortFinder.Service.CONNECT) {
-            // The phone's own loopback first: it cannot answer with another device's adbd and does
-            // not depend on mDNS, which on the family's Android 13 phone never announced this port
-            // while the ad filter ran. mDNS second, for whatever the probe cannot see.
-            var local = probe.find()
-            var announced: AdbPortFinder.Found? = null
-            if (local == null) announced = finder.find(service)
-            if (local == null && announced == null) {
-                enabledNote = switchOn()
-                if (enabledNote == null) {
-                    // mDNS listens for the announcement, which is also the wait for adbd to start;
-                    // one more sweep of the loopback covers a phone whose announcement never comes.
-                    announced = finder.find(service, ENABLE_WAIT_MILLIS)
-                    if (announced == null) local = probe.find()
-                }
-            }
-            when {
-                local != null -> {
-                    foundBy = "loopback"
-                    connectLocal(listOf(LOOPBACK), local)
-                        ?: return CommandOutcome.Failed("adb answered on port $local of this phone and then refused a connection")
-                }
-                announced != null -> {
-                    foundBy = "mdns"
-                    connectLocal(listOf(LOOPBACK, announced.address), announced.port)
-                        ?: return CommandOutcome.Failed(
-                            "adb announced port ${announced.port} on this phone and refused a connection to it"
-                        )
-                }
-                else -> return CommandOutcome.Failed(notFound(service, enabledNote))
-            }
-        } else {
-            foundBy = "mdns"
-            val found = finder.find(service) ?: return CommandOutcome.Failed(notFound(service, enabledNote))
-            connectLocal(listOf(LOOPBACK, found.address), found.port)
+        val service = request.service
+        val route = AdbdRoute.locate(
+            service = service,
+            explicitPort = request.explicitPort,
+            probe = { probe.find() },
+            announced = { timeout -> finder.find(service, timeout) },
+            switchOn = switchOn,
+            enableWaitMillis = ENABLE_WAIT_MILLIS,
+        )
+        val adbd: Socket = when (route) {
+            is AdbdRoute.Given -> connectLocal(listOf(LOOPBACK), route.port)
+                ?: return CommandOutcome.Failed("nothing on this phone accepts connections on port ${route.port}")
+            is AdbdRoute.Loopback -> connectLocal(listOf(LOOPBACK), route.port)
+                ?: return CommandOutcome.Failed("adb answered on port ${route.port} of this phone and then refused a connection")
+            is AdbdRoute.Announced -> connectLocal(listOf(LOOPBACK, route.found.address), route.found.port)
                 ?: return CommandOutcome.Failed(
-                    "adb announced port ${found.port} on this phone and refused a connection to it"
+                    "adb announced port ${route.found.port} on this phone and refused a connection to it"
                 )
+            is AdbdRoute.Missing -> return CommandOutcome.Failed(notFound(service, route.note))
         }
+        val target = request.target
+        val stream = request.stream
+        val foundBy = route.foundBy
 
         val leg = try {
             dialServer(api.debugLeg(stream))
@@ -142,7 +116,6 @@ class RemoteDebug(
                 put("target", target)
                 put("port", adbd.port.toString())
                 put("found_by", foundBy)
-                enabledNote?.let { put("note", it) }
             }
         )
     }
@@ -287,7 +260,99 @@ class RemoteDebug(
         private val LOOPBACK: InetAddress = InetAddress.getByName("127.0.0.1")
         private const val CONNECT_TIMEOUT_MILLIS = 5_000
         private const val HANDSHAKE_TIMEOUT_MILLIS = 15_000
-        private const val ENABLE_WAIT_MILLIS = 8_000L
-        private const val MAX_STREAMS = 4
+        internal const val ENABLE_WAIT_MILLIS = 8_000L
+        internal const val MAX_STREAMS = 4
+    }
+}
+
+/** A debug command's parameters, read and checked before anything on the phone is touched (FR-19). */
+internal sealed interface DebugRequest {
+
+    data class Open(val stream: String, val target: String, val explicitPort: Int) : DebugRequest {
+        val service: AdbPortFinder.Service
+            get() = if (target == "pair") AdbPortFinder.Service.PAIRING else AdbPortFinder.Service.CONNECT
+    }
+
+    data class Refused(val reason: String) : DebugRequest
+
+    companion object {
+        /**
+         * The cap is checked here, before the lookups, so a phone already relaying [maxStreams]
+         * sessions does not switch Wireless debugging on for a fifth it will refuse anyway.
+         */
+        fun of(params: JsonObject, openStreams: Int, maxStreams: Int): DebugRequest {
+            val stream = params["stream"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            val target = params["target"]?.jsonPrimitive?.contentOrNull ?: "connect"
+            val explicitPort = params["port"]?.jsonPrimitive?.intOrNull ?: 0
+            if (stream.isEmpty()) return Refused("the command carried no stream id")
+            if (target != "connect" && target != "pair") return Refused("unknown debug target '$target'")
+            if (openStreams >= maxStreams) return Refused("$maxStreams debug streams are already open on this phone")
+            return Open(stream, target, explicitPort)
+        }
+    }
+}
+
+/**
+ * Where this phone's adbd was found, and how (FR-19.3). Reported as `found_by`, so a parent can tell
+ * a port they typed from one the phone looked up.
+ */
+internal sealed interface AdbdRoute {
+    val foundBy: String
+
+    /** The port the command named. Nothing was looked up. */
+    data class Given(val port: Int) : AdbdRoute {
+        override val foundBy get() = "given"
+    }
+
+    /** The phone's own loopback answered as adb on [port]. */
+    data class Loopback(val port: Int) : AdbdRoute {
+        override val foundBy get() = "loopback"
+    }
+
+    /** An mDNS announcement from one of this phone's own addresses. */
+    data class Announced(val found: AdbPortFinder.Found) : AdbdRoute {
+        override val foundBy get() = "mdns"
+    }
+
+    /** Not found; [note] is why Wireless debugging could not be switched on, when that is the reason. */
+    data class Missing(val note: String?) : AdbdRoute {
+        override val foundBy get() = "none"
+    }
+
+    companion object {
+        /**
+         * The order is the contract, and every step costs seconds, so each runs only when the one
+         * before it found nothing:
+         *
+         * 1. A port the command named: used as given, nothing looked up.
+         * 2. For `pair`: mDNS only. The pairing service exists only while its dialog is open, so
+         *    switching Wireless debugging on cannot conjure it and the loopback probe cannot tell it
+         *    from adb itself.
+         * 3. For `connect`: the phone's own loopback first — it cannot answer with another device's
+         *    adbd and does not depend on mDNS, which on the family's Android 13 phone never announced
+         *    this port while the ad filter ran. mDNS second, for whatever the probe cannot see.
+         * 4. Only then is Wireless debugging switched on. A refusal ends the search with its own
+         *    words. Otherwise mDNS listens for the announcement, which is also the wait for adbd to
+         *    start, and one more sweep of the loopback covers a phone whose announcement never comes.
+         */
+        fun locate(
+            service: AdbPortFinder.Service,
+            explicitPort: Int,
+            probe: () -> Int?,
+            announced: (timeoutMillis: Long) -> AdbPortFinder.Found?,
+            switchOn: () -> String?,
+            enableWaitMillis: Long,
+        ): AdbdRoute {
+            if (explicitPort > 0) return Given(explicitPort)
+            if (service == AdbPortFinder.Service.PAIRING) {
+                return announced(AdbPortFinder.DEFAULT_TIMEOUT_MILLIS)?.let(::Announced) ?: Missing(null)
+            }
+            probe()?.let { return Loopback(it) }
+            announced(AdbPortFinder.DEFAULT_TIMEOUT_MILLIS)?.let { return Announced(it) }
+            switchOn()?.let { refused -> return Missing(refused) }
+            announced(enableWaitMillis)?.let { return Announced(it) }
+            probe()?.let { return Loopback(it) }
+            return Missing(null)
+        }
     }
 }
