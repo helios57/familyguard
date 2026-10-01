@@ -8744,3 +8744,12 @@ Found by measuring rather than reading, and worth keeping: `getBoundingClientRec
 inside a **closed `<details>`** still reports a size in current Chrome, because the closed body is
 skipped with `content-visibility` rather than taken out of layout — a visibility check written that
 way passes on a hidden field. `checkVisibility()` answers the question.
+
+### 50.2 — live
+
+Deployed 2026-10-01 as **0.6.34** (image `sha256:c10dde1c…c8f1`, APK `42cd9a0e…90d8`, versionCode 43),
+server first; one ready pod on that digest, `/readyz` 200, the new console code (`editorBox`,
+`.view-loading`) read back from the public host with a control string that is absent, and `/dpc.apk`
+read back byte-identical. Both phones took the update by push — the Android 16 phone in 15 s, the
+Android 13 phone in 51 s — and report 0.6.34 (43) with no update error. Not measured: the family's
+read of the new screens.
