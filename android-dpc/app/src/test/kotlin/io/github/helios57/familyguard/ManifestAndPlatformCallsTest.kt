@@ -557,6 +557,98 @@ class ManifestAndPlatformCallsTest {
         )
     }
 
+    /**
+     * Every usage report runs with the sync lock held (FR-3.2, FR-3.3).
+     *
+     * `report()` measures and delivers: [io.github.helios57.familyguard.usage.UsageTracker.tick]
+     * drains the screen clock and moves the window, the ledger adds the credited minutes, and the
+     * reporter flushes the pending days. None of those is thread-safe, and none needs to be — the
+     * poll and the sync both hold `syncLock` while they report. Until 2026-10-01 the screen-off
+     * report did not: it was launched straight onto the IO pool, so a phone put down during a poll
+     * ran two ticks at once. Two ticks over one window credit it twice or lose it, and either way
+     * the quota a parent set is wrong with nothing red. `SyncLock.Held` makes a bare call a compile
+     * error; this is the check that the lock is the one the other reports take, and it is
+     * calibrated on the exact shape the screen-off watcher had.
+     */
+    @Test
+    fun `every usage report runs inside the sync lock`() {
+        val service = File(main, "kotlin/io/github/helios57/familyguard/sync/ConnectionService.kt")
+        assertTrue("${service.path} is not where the connection loop lives any more", service.isFile)
+        val text = code(service)
+
+        val withTheBug = """
+            Intent.ACTION_SCREEN_OFF -> {
+                scope.launch { withContext(Dispatchers.IO) { report(reports, "screen-off") } }
+            }
+            private suspend fun poll() {
+                syncLock.withLock { report(reports, "poll") }
+            }
+        """
+        assertEquals(
+            "the reader does not single out the report that is outside the lock, so its answer on " +
+                "the real file means nothing",
+            listOf("""scope.launch { withContext(Dispatchers.IO) { report(reports, "screen-off") } }"""),
+            reportsOutsideTheLock(withTheBug),
+        )
+
+        // "No report outside the lock" is trivially true of a file that reports nothing.
+        val calls = reportCalls(text)
+        assertTrue(
+            "${service.path} has ${calls.size} report call(s); the poll, the sync and screen-off " +
+                "make three, so this guard is reading the wrong shape",
+            calls.size >= 3,
+        )
+
+        assertEquals(
+            "a usage report runs without syncLock; it can tick the tracker while another report does",
+            emptyList<String>(),
+            reportsOutsideTheLock(text),
+        )
+    }
+
+    /** Offsets of every call to `report(` — not its declaration, and not `something.report(`. */
+    private fun reportCalls(code: String): List<Int> =
+        Regex("""(?<![\w.])report\(""").findAll(code)
+            .map { it.range.first }
+            .filterNot { code.substring(maxOf(0, it - 4), it) == "fun " }
+            .toList()
+
+    /** Every line holding a `report(` call that no `syncLock.withLock { … }` block encloses. */
+    private fun reportsOutsideTheLock(code: String): List<String> {
+        val locked = lockedBlocks(code)
+        return reportCalls(code)
+            .filter { at -> locked.none { at in it } }
+            .map { at ->
+                val start = code.lastIndexOf('\n', at) + 1
+                val end = code.indexOf('\n', at).let { if (it < 0) code.length else it }
+                code.substring(start, end).trim()
+            }
+    }
+
+    /** The source range of the block of every `syncLock.withLock { … }`. */
+    private fun lockedBlocks(code: String): List<IntRange> {
+        val found = mutableListOf<IntRange>()
+        var from = 0
+        while (true) {
+            val at = code.indexOf("syncLock.withLock", from)
+            if (at < 0) return found
+            val open = code.indexOf('{', at)
+            if (open < 0) throw AssertionError("a syncLock.withLock with no block; the reader is lost")
+            var depth = 0
+            var end = open
+            while (end < code.length) {
+                if (code[end] == '{') depth++
+                if (code[end] == '}' && --depth == 0) break
+                end++
+            }
+            if (depth != 0) {
+                throw AssertionError("the braces from offset $open never balanced; the reader is lost")
+            }
+            found += open..end
+            from = open + 1
+        }
+    }
+
     /** Every line inside a `syncLock.withLock { … }` block that calls a drain. */
     private fun drainsInsideTheLock(code: String): List<String> {
         val found = mutableListOf<String>()

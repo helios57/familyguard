@@ -114,8 +114,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
@@ -157,7 +155,7 @@ class ConnectionService : Service() {
      * and an applier is read-decide-write against the platform, so interleaving two would let one
      * plan against a device the other has half changed.
      */
-    private val syncLock = Mutex()
+    private val syncLock = SyncLock()
 
     /**
      * The provisioning extras, kept across restarts of the loop rather than captured by it.
@@ -855,7 +853,15 @@ class ConnectionService : Service() {
                         // Measured here rather than only at the next poll: the window that just
                         // ended is the one the child spent, and a phone that is put down for the
                         // night may not sync again before midnight moves it onto another day.
-                        scope.launch { withContext(Dispatchers.IO) { report(reports, "screen-off") } }
+                        //
+                        // Under [syncLock] like every other report: a tick drains the screen clock
+                        // and moves the window, and one racing the poll's would credit the same
+                        // minutes twice or lose them (FR-3.2).
+                        scope.launch {
+                            syncLock.withLock { held ->
+                                withContext(Dispatchers.IO) { report(held, reports, "screen-off") }
+                            }
+                        }
                     }
                 }
             }
@@ -884,9 +890,9 @@ class ConnectionService : Service() {
             reports.awaitScreenOn()
             delay(POLL_INTERVAL_MILLIS)
             if (!reports.screenIsOn()) continue
-            syncLock.withLock {
+            syncLock.withLock { held ->
                 withContext(Dispatchers.IO) {
-                    report(reports, "poll")
+                    report(held, reports, "poll")
                     val result = synchronizer.enforceFromCache()
                     if (result is SyncResult.Applied) {
                         if (result.state.suspendReason.isNotEmpty()) {
@@ -910,7 +916,8 @@ class ConnectionService : Service() {
      * phone all day and makes the daily limit unreachable, and it looks exactly like a well-behaved
      * child. "not measured" has to be visible as itself.
      */
-    private fun report(reports: Reporting, why: String) {
+    @Suppress("UNUSED_PARAMETER") // [held] is the proof the lock is taken, not an input; see SyncLock.
+    private fun report(held: SyncLock.Held, reports: Reporting, why: String) {
         val outcome = reports.measureAndDeliver()
         when (val tick = outcome.tick) {
             is UsageTick.Measured ->
@@ -971,7 +978,7 @@ class ConnectionService : Service() {
         synchronizer: Synchronizer,
         reports: Reporting,
         why: String,
-    ): SyncTick? = syncLock.withLock {
+    ): SyncTick? = syncLock.withLock { held ->
         val result = withContext(Dispatchers.IO) { synchronizer.sync() }
         when (result) {
             is SyncResult.Applied -> {
@@ -989,14 +996,14 @@ class ConnectionService : Service() {
                         // is over (FR-1.8). Cleared here and nowhere else: only the server can end
                         // a condition that is entirely about what the server thinks.
                         linkRefusedNotice(refused = false)
-                        report(reports, why)
+                        report(held, reports, why)
                         // Only here, and for the same reason: this is the one moment the device
                         // knows the control plane answered. A recovery entered offline is delivered
                         // by the first sync that gets through, however many days later that is.
                         flushRecovery(why)
                     }
                 }
-                return SyncTick(
+                return@withLock SyncTick(
                     pending = result.pendingCommands,
                     // A policy that came from the *cache* is one the server never answered for, and
                     // a `SYNC_POLICY` command must not report "re-fetched" for it. An applier that
@@ -1012,7 +1019,7 @@ class ConnectionService : Service() {
             is SyncResult.Refused -> {
                 Log.e(TAG, "$why: the server refused this device's credential: ${result.cause}")
                 withContext(Dispatchers.IO) { linkRefusedNotice(refused = true, status = result.cause.status) }
-                return null
+                return@withLock null
             }
             // Both remaining cases mean nothing was enforced and nothing here learned whether a
             // command is waiting. `pending = 0` is the count this sync *learned* about — the next
@@ -1020,12 +1027,12 @@ class ConnectionService : Service() {
             is SyncResult.Deferred -> {
                 val problem = "nothing to enforce yet — ${result.cause.message}"
                 Log.w(TAG, "$why: $problem")
-                return SyncTick(pending = 0, problem = problem)
+                return@withLock SyncTick(pending = 0, problem = problem)
             }
             is SyncResult.Rejected -> {
                 val problem = "the policy could not be evaluated: ${result.cause.message}"
                 Log.e(TAG, "$why: $problem")
-                return SyncTick(pending = 0, problem = problem)
+                return@withLock SyncTick(pending = 0, problem = problem)
             }
             is SyncResult.Released -> {
                 // WARN and not ERROR: an unmanaged phone is the *intended* outcome here, and a
@@ -1034,7 +1041,7 @@ class ConnectionService : Service() {
                 val problem = "released by a recovery code since ${result.since ?: "an unknown time"}" +
                     "; enforcing nothing until the server is reached — ${result.outcome}"
                 Log.w(TAG, "$why: $problem")
-                return SyncTick(pending = 0, problem = problem)
+                return@withLock SyncTick(pending = 0, problem = problem)
             }
         }
     }
