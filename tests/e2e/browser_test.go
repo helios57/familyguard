@@ -602,6 +602,16 @@ func (b *browser) navigate(rawURL string) {
 	b.waitFor("document.readyState === 'complete'", 30*time.Second, "the page to finish loading")
 }
 
+// reload reloads the page and returns once the NEW document has loaded. A bare
+// `location.reload()` returns at once, and the next wait can be satisfied by the old document still
+// on screen — measured on CI 2026-10-01: a row found in the old page, then clicked in the new one
+// before it had any rows ("Cannot read properties of undefined (reading 'click')").
+func (b *browser) reload() {
+	b.t.Helper()
+	b.eval(`window.__fgOldDocument = true; location.reload()`, nil)
+	b.waitFor("!window.__fgOldDocument && document.readyState === 'complete'", 30*time.Second, "the reloaded page")
+}
+
 // eval runs an expression in the page and decodes its value.
 //
 // `awaitPromise` so an async expression is waited for rather than returning a pending promise that

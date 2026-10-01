@@ -86,14 +86,14 @@ func TestTheConsoleSaysWhenAPhoneIsResting(t *testing.T) {
 	// FR-26.3: with a push address the card says a change reaches it within seconds.
 	h.call(http.MethodPost, "/device/heartbeat", f.deviceToken(), map[string]any{"connectivity": "wifi", "push_token": "fid-1"}).
 		expect(http.StatusOK)
-	b.eval(`location.reload()`, nil)
+	b.reload()
 	openPhoneSheet(t, b, f.device.Name)
 	b.waitFor(`!!document.querySelector('#sheet [data-resting="push"]') && document.querySelector('#sheet [data-resting="push"]').textContent.includes('per Push')`,
 		15*time.Second, "the sheet to say a resting phone is woken by push")
 
 	stream := h.openStream("/device/stream", f.deviceToken())
 	defer stream.Close()
-	b.eval(`location.reload()`, nil)
+	b.reload()
 	b.waitFor(`!!document.querySelector('#view [data-link="listening"]')`, 15*time.Second, "the row to say online once the phone holds its stream")
 	openPhoneSheet(t, b, f.device.Name)
 	var resting bool

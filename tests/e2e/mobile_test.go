@@ -1016,8 +1016,9 @@ func deviceCardButton(deviceName, pattern string) string {
 func openPhoneSheet(t *testing.T, b *browser, deviceName string) {
 	t.Helper()
 	row := `[...document.querySelectorAll('#view button.device-row')].find((r) => (r.querySelector('b')?.textContent || '').includes(` + jsString(deviceName) + `))`
-	b.waitFor(row+` !== undefined`, 20*time.Second, "the row of "+deviceName)
-	b.eval(row+`.click()`, nil)
+	// Found and clicked in one evaluation: a wait and a separate click can straddle a redraw or a
+	// reload, and then the click lands on nothing.
+	b.waitFor(`((r) => !!r && (r.click(), true))(`+row+`)`, 20*time.Second, "the row of "+deviceName)
 	b.waitFor(`document.getElementById('sheet').open && document.getElementById('sheet').dataset.kind === 'device' && `+
 		`document.getElementById('sheet-title').textContent === `+jsString(deviceName), 10*time.Second, "the phone sheet of "+deviceName)
 }

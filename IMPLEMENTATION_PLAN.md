@@ -8730,6 +8730,16 @@ token on screen, controls ≥ 48 dp, nothing wider than the screen. **27 probes 
 green recorded and not counted. Cumulative: 389 probes.** Not measured: the phone screens on the
 family's phones (the next update brings them), and the alarm screen on an Android 10/11 phone.
 
+**The release run's e2e went red where CI's had passed, on the same commit**:
+`TestTheConsoleSaysWhenAPhoneIsResting` threw *"Cannot read properties of undefined (reading
+'click')"*. `location.reload()` returns at once, so the helper's wait for the phone's row was
+satisfied by the OLD document and its click ran in the new one, which had no rows yet. A race in the
+test, not the console: the suite now reloads through `browser.reload()`, which waits for the new
+document by a marker the old one carries, and `openPhoneSheet` finds and clicks the row in one
+evaluation. Not calibrated: the race showed once on CI and never locally, so there is no known-bad
+input to take a red from; the fix removes the window rather than narrowing it. v0.6.34 had published
+nothing (its publish job was skipped), so the tag was moved to the fixed commit.
+
 Found by measuring rather than reading, and worth keeping: `getBoundingClientRect` on an element
 inside a **closed `<details>`** still reports a size in current Chrome, because the closed body is
 skipped with `content-visibility` rather than taken out of layout — a visibility check written that
