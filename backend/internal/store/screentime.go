@@ -18,24 +18,6 @@ const MaxBonusMinutesPerDay = 1440
 // ErrBonusTooLarge is a grant that would take the day's bonus past MaxBonusMinutesPerDay.
 var ErrBonusTooLarge = errors.New("the bonus for one day cannot exceed 1440 minutes")
 
-// UsageMinutesCountedForDay is UsageMinutesForDay without the packages whose foreground time is not
-// use (FR-3.8). Floored the same way, so the phone — which leaves out the same packages from its own
-// count — reaches the same number.
-func (s *Store) UsageMinutesCountedForDay(ctx context.Context, deviceID uuid.UUID, day string, uncounted []string) (int, error) {
-	if uncounted == nil {
-		uncounted = []string{}
-	}
-	var ms int64
-	err := s.pool.QueryRow(ctx,
-		`SELECT COALESCE(SUM(foreground_ms), 0) FROM usage_samples
-		  WHERE device_id = $1 AND day = $2::date AND NOT (package_name = ANY($3))`,
-		deviceID, day, uncounted).Scan(&ms)
-	if err != nil {
-		return 0, err
-	}
-	return int(ms / 60000), nil
-}
-
 // AdjustDay adds a signed number of minutes to a child's adjustment for one local day (FR-3.11,
 // FR-21.2) and returns the day's new total.
 //

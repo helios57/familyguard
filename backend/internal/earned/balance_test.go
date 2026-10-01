@@ -74,3 +74,27 @@ func TestSpendingBeforeACreditWasEarnedCannotUseIt(t *testing.T) {
 		t.Fatalf("a 10-minute debt from before is settled by the credit: %d, want 20", b.AvailableToday)
 	}
 }
+
+// The look-back is two validity periods: a debt from exactly 14 days ago is still owed, one from 15
+// days ago is forgiven. Pinned at the edge, because an off-by-one there forgives a week early or
+// carries a fortnight-old overdraft forever, and neither shows up anywhere but here.
+func TestAnOverdraftIsForgivenAfterTwoValidityPeriods(t *testing.T) {
+	if b := Compute(nil, map[string]int{"2026-10-01": 10}, "2026-10-15"); b.AvailableToday != -10 {
+		t.Errorf("a debt from 14 days ago: available %d, want -10", b.AvailableToday)
+	}
+	if b := Compute(nil, map[string]int{"2026-09-30": 10}, "2026-10-15"); b.AvailableToday != 0 {
+		t.Errorf("a debt from 15 days ago: available %d, want 0 (forgiven)", b.AvailableToday)
+	}
+}
+
+// A week that contains the end of summer time (Europe, 2026-10-25, a 25-hour day) is still seven
+// calendar days: the balance counts days, never hours.
+func TestACreditSpanningTheClockChangeLastsSevenDays(t *testing.T) {
+	credits := []Credit{{Day: "2026-10-21", Minutes: 30}}
+	if b := Compute(credits, nil, "2026-10-27"); b.AvailableToday != 30 || b.Credits[0].ExpiresOn != "2026-10-27" {
+		t.Errorf("on its seventh day, across the clock change: %+v", b)
+	}
+	if b := Compute(credits, nil, "2026-10-28"); b.AvailableToday != 0 {
+		t.Errorf("on the eighth day it has expired: %+v", b)
+	}
+}

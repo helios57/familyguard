@@ -103,11 +103,6 @@ func (s *Store) ListCommands(ctx context.Context, deviceID uuid.UUID, limit int)
 	return collectCommands(rows)
 }
 
-// GetCommand returns one command, scoped to nothing — callers must check ownership.
-func (s *Store) GetCommand(ctx context.Context, id uuid.UUID) (*Command, error) {
-	return scanCommand(s.pool.QueryRow(ctx, `SELECT `+commandCols+` FROM commands WHERE id = $1`, id))
-}
-
 func scanCommand(row pgx.Row) (*Command, error) {
 	var c Command
 	if err := row.Scan(&c.ID, &c.DeviceID, &c.Type, &c.Params, &c.State, &c.IssuedBy,

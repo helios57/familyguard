@@ -340,3 +340,39 @@ func TestClientAddressKeyNeverAnswersEmpty(t *testing.T) {
 		t.Fatal("an unparseable peer address produced an empty key, which RateLimitBy refuses")
 	}
 }
+
+// TestCORSPreflightAllowsEveryMethodTheAPIUses holds the preflight's Allow-Methods answer to the
+// real route table, not to a list restated here. A cross-origin console (ALLOWED_ORIGINS) is
+// refused by the BROWSER for any method the preflight does not name, and that refusal looks like a
+// network error on the parent's screen while every curl against the server works: PUT was missing
+// until 0.6.37, so every plan, alarm, agenda, holiday and app-rule save failed cross-origin.
+func TestCORSPreflightAllowsEveryMethodTheAPIUses(t *testing.T) {
+	routes, err := ParentRouteTable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newTestRouter(CORS([]string{"https://guard.example.ch"}))
+	seen := map[string]bool{}
+	for _, route := range routes {
+		if seen[route.Method] {
+			continue
+		}
+		seen[route.Method] = true
+		req := httptest.NewRequest(http.MethodOptions, "/ping", nil)
+		req.Header.Set("Origin", "https://guard.example.ch")
+		req.Header.Set("Access-Control-Request-Method", route.Method)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		allowed := map[string]bool{}
+		for _, m := range strings.Split(w.Header().Get("Access-Control-Allow-Methods"), ",") {
+			allowed[strings.TrimSpace(m)] = true
+		}
+		if w.Code != http.StatusNoContent || !allowed[route.Method] {
+			t.Errorf("a preflight for %s (used by %s) answered %d with Allow-Methods %q: the browser refuses the real request",
+				route.Method, route.Path, w.Code, w.Header().Get("Access-Control-Allow-Methods"))
+		}
+	}
+	if len(seen) < 4 {
+		t.Fatalf("the route table used only %d methods; this would check almost nothing", len(seen))
+	}
+}

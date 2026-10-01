@@ -1,15 +1,21 @@
 package e2e
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -136,6 +142,7 @@ func TestFgctlSelfUpdateReplacesTheRunningBinary(t *testing.T) {
 		"AppData=" + filepath.Join(home, "AppData"),
 		"FAMILYGUARD_URL=" + h.base,
 	}
+	env = append(env, coverEnv()...)
 
 	// --check first. It must not modify anything, which is asserted by comparing the file before
 	// and after: a --check that quietly updated would otherwise look identical to a correct one.
@@ -215,5 +222,147 @@ func TestFgctlSelfUpdateReplacesTheRunningBinary(t *testing.T) {
 	}
 	if !strings.Contains(string(versionOut), report.Available) {
 		t.Errorf("the replaced binary reports %q, want the server's %s", versionOut, report.Available)
+	}
+}
+
+// TestFgctlSelfUpdateRefusesWhatItCannotTrust is the known-bad half of the test above, which only
+// ever saw a good download: the three checks that are the point of self-update — the published
+// checksum, the published size, and running the staged binary before swapping it in — had never
+// been shown to refuse anything. Each case must leave the running binary byte-for-byte as it was,
+// and leave no staged file behind beside it.
+func TestFgctlSelfUpdateRefusesWhatItCannotTrust(t *testing.T) {
+	home := t.TempDir()
+	stale := filepath.Join(home, "stale-fgctl")
+	if runtime.GOOS == "windows" {
+		stale += ".exe"
+	}
+	build := exec.Command("go", "build", "-ldflags", "-X main.version=v0.0.0-stale", "-o", stale, "./cmd/fgctl")
+	build.Dir = filepath.Join("..", "..", "backend")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building a stale fgctl: %v\n%s", err, out)
+	}
+	original, err := os.ReadFile(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := "fgctl-" + runtime.GOOS + "-" + runtime.GOARCH
+	if runtime.GOOS == "windows" {
+		artifact += ".exe"
+	}
+
+	for _, tc := range []struct {
+		name string
+		// before runs on the staged directory before the server starts; after, once it has
+		// published its manifest.
+		before, after func(t *testing.T, dir string)
+		// proxy, when set, sits between fgctl and the server and may rewrite any answer.
+		proxy func(path string, body []byte) []byte
+		want  string
+	}{
+		{
+			name: "the file changed after the server published its checksum",
+			after: func(t *testing.T, dir string) {
+				p := filepath.Join(dir, artifact)
+				b, err := os.ReadFile(p)
+				if err != nil {
+					t.Fatal(err)
+				}
+				b[len(b)/2] ^= 0xff
+				if err := os.WriteFile(p, b, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			// The server re-checks the file it serves and refuses rather than hand out bytes its own
+			// manifest does not describe.
+			want: "HTTP 503",
+		},
+		{
+			// Bytes altered on the way, which the server cannot see: only the client's checksum
+			// stands between them and the swap.
+			name: "the download was altered in transit",
+			proxy: func(path string, body []byte) []byte {
+				if strings.HasSuffix(path, "/"+artifact) {
+					body[len(body)/2] ^= 0xff
+				}
+				return body
+			},
+			want: "does not match the checksum",
+		},
+		{
+			// A manifest whose size disagrees with the bytes it hashes.
+			name: "the manifest's size disagrees with the download",
+			proxy: func(path string, body []byte) []byte {
+				if path == "/fgctl" {
+					return regexp.MustCompile(`"size":\s*\d+`).ReplaceAll(body, []byte(`"size": 12345`))
+				}
+				return body
+			},
+			want: "but the manifest says 12345",
+		},
+		{
+			name: "the published binary does not run",
+			before: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, artifact), []byte("#!/nonexistent/interpreter\nnot a program\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "was NOT installed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Each case its own copy: a case whose check failed open replaces the binary, and the
+			// next case must not inherit that and fail for a reason of its own.
+			home := t.TempDir()
+			stale := filepath.Join(home, filepath.Base(stale))
+			if err := os.WriteFile(stale, original, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			dir := stageFgctl(t)
+			if tc.before != nil {
+				tc.before(t, dir)
+			}
+			h := newHarness(t, withFgctlDir(dir))
+			if tc.after != nil {
+				tc.after(t, dir)
+			}
+			base := h.base
+			if tc.proxy != nil {
+				target, _ := url.Parse(h.base)
+				rp := httputil.NewSingleHostReverseProxy(target)
+				rp.ModifyResponse = func(r *http.Response) error {
+					body, err := io.ReadAll(r.Body)
+					r.Body.Close()
+					if err != nil {
+						return err
+					}
+					body = tc.proxy(r.Request.URL.Path, body)
+					r.Body = io.NopCloser(bytes.NewReader(body))
+					r.ContentLength = int64(len(body))
+					r.Header.Set("Content-Length", strconv.Itoa(len(body)))
+					return nil
+				}
+				srv := httptest.NewServer(rp)
+				t.Cleanup(srv.Close)
+				base = srv.URL
+			}
+			update := exec.Command(stale, "self-update", "--json")
+			update.Env = append([]string{
+				"PATH=" + os.Getenv("PATH"),
+				"HOME=" + home,
+				"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
+				"FAMILYGUARD_URL=" + base,
+			}, coverEnv()...)
+			out, err := update.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), tc.want) {
+				t.Fatalf("self-update exited %v and said %q; want a refusal saying %q", err, out, tc.want)
+			}
+			if now, _ := os.ReadFile(stale); !bytes.Equal(now, original) {
+				t.Fatal("a refused self-update still changed the running binary")
+			}
+			left, _ := filepath.Glob(filepath.Join(home, ".fgctl-update-*"))
+			if len(left) != 0 {
+				t.Errorf("a refused self-update left its staged download behind: %v", left)
+			}
+		})
 	}
 }

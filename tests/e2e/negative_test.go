@@ -936,6 +936,24 @@ func TestCORSAllowsOnlyTheConfiguredOrigins(t *testing.T) {
 		}
 	}
 
+	// Every method the console sends must be named in the preflight's answer, or the BROWSER refuses
+	// the real request and the parent sees a network error while curl works. PUT was missing until
+	// 0.6.37: every plan, alarm, agenda, holiday and app-rule save failed from a cross-origin console.
+	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
+		req := h.newRequest(http.MethodOptions, "/me", "", nil)
+		req.Header.Set("Origin", "https://console.example.test")
+		req.Header.Set("Access-Control-Request-Method", method)
+		resp := h.send(req).expect(http.StatusNoContent)
+		named := false
+		for _, m := range strings.Split(resp.Header.Get("Access-Control-Allow-Methods"), ",") {
+			named = named || strings.TrimSpace(m) == method
+		}
+		if !named {
+			t.Fatalf("a preflight for %s answered Allow-Methods %q: a browser refuses the real request",
+				method, resp.Header.Get("Access-Control-Allow-Methods"))
+		}
+	}
+
 	// A preflight that is not allowed is refused rather than answered: a 204 would confirm the
 	// endpoint exists and is reachable.
 	for _, tc := range []struct {

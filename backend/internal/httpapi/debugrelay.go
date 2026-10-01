@@ -56,9 +56,12 @@ const (
 	// waiting (404) and report a failure that describes nobody's request.
 	debugCommandTTL = 45 * time.Second
 
-	// debugMaxSession bounds one stream however busy it is (FR-19.6). ingress-nginx already cuts one that is
-	// idle for an hour (proxy-read-timeout); this is the ceiling on one that never goes idle, so a
-	// forgotten `adb logcat` does not hold a door open on a child's phone for days.
+	// debugIdle ends a stream nothing has crossed for an hour (FR-19.6), in the relay itself: the
+	// ingress's proxy-read-timeout does the same in one deployment, and is absent from the next.
+	debugIdle = time.Hour
+
+	// debugMaxSession bounds one stream however busy it is (FR-19.6): the ceiling on one that never
+	// goes idle, so a forgotten `adb logcat` does not hold a door open on a child's phone for days.
 	debugMaxSession = 4 * time.Hour
 )
 
@@ -206,10 +209,15 @@ func switchProtocols(c *gin.Context) (debugLeg, error) {
 	return debugLeg{conn: conn, r: r}, nil
 }
 
-// splice copies both ways until either side ends, the session ceiling passes, or ctx ends, and
-// then closes both. Closing both on the first end is right for adb, which never half-closes, and
-// it is the only way to unblock the copy running the other direction.
-func splice(ctx context.Context, a, b debugLeg, ceiling time.Duration) (aToB, bToA int64) {
+// splice copies both ways until either side ends, nothing has crossed in either direction for
+// idle, the session ceiling passes, or ctx ends, and then closes both. Closing both on the first end
+// is right for adb, which never half-closes, and it is the only way to unblock the copy running the
+// other direction.
+//
+// The idle cut is the relay's own (FR-19.6). It used to be left to ingress-nginx's
+// proxy-read-timeout, which is a property of one deployment: without that proxy an idle session
+// stayed open for the whole ceiling.
+func splice(ctx context.Context, a, b debugLeg, ceiling, idle time.Duration) (aToB, bToA int64) {
 	var once sync.Once
 	closeBoth := func() {
 		once.Do(func() {
@@ -219,23 +227,43 @@ func splice(ctx context.Context, a, b debugLeg, ceiling time.Duration) (aToB, bT
 	}
 	timer := time.AfterFunc(ceiling, closeBoth)
 	defer timer.Stop()
+	quiet := time.AfterFunc(idle, closeBoth)
+	defer quiet.Stop()
 	stop := context.AfterFunc(ctx, closeBoth)
 	defer stop()
+
+	// Every byte, either way, restarts the idle window. Reset races a firing timer harmlessly:
+	// at worst a session that just carried a byte is closed as idle at the very edge of the window.
+	active := func(r io.Reader) io.Reader { return activityReader{r, func() { quiet.Reset(idle) }} }
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		aToB, _ = io.Copy(b.conn, a.r)
+		aToB, _ = io.Copy(b.conn, active(a.r))
 		closeBoth()
 	}()
 	go func() {
 		defer wg.Done()
-		bToA, _ = io.Copy(a.conn, b.r)
+		bToA, _ = io.Copy(a.conn, active(b.r))
 		closeBoth()
 	}()
 	wg.Wait()
 	return aToB, bToA
+}
+
+// activityReader calls touch after every read that returned bytes.
+type activityReader struct {
+	r     io.Reader
+	touch func()
+}
+
+func (a activityReader) Read(p []byte) (int, error) {
+	n, err := a.r.Read(p)
+	if n > 0 {
+		a.touch()
+	}
+	return n, err
 }
 
 // openDebugStream is the parent's leg (FR-19.1).
@@ -340,7 +368,7 @@ func (s *Server) openDebugStream(c *gin.Context) {
 	c.Request = c.Request.WithContext(context.WithoutCancel(ctx))
 
 	started := s.now()
-	up, down := splice(context.Background(), parent, phone, debugMaxSession)
+	up, down := splice(context.Background(), parent, phone, debugMaxSession, debugIdle)
 	s.auditParent(c, "DEBUG_STREAM_CLOSED", "device", id.String(), map[string]any{
 		"command": cmd.ID.String(), "target": target,
 		"seconds": int(s.now().Sub(started).Seconds()), "bytes_to_phone": up, "bytes_from_phone": down,

@@ -393,24 +393,6 @@ func (s *Store) DeviceIDsForChild(ctx context.Context, childID uuid.UUID) ([]uui
 	return out, rows.Err()
 }
 
-// RecoveryMaterial returns the salted hash material for a device, for the DPC to embed.
-func (s *Store) RecoveryMaterial(ctx context.Context, deviceID uuid.UUID) (*RecoverySecret, error) {
-	var rec RecoverySecret
-	var salt, hash []byte
-	var iter *int
-	err := s.pool.QueryRow(ctx,
-		`SELECT recovery_salt, recovery_iterations, recovery_hash FROM devices WHERE id = $1`, deviceID).
-		Scan(&salt, &iter, &hash)
-	if err != nil {
-		return nil, mapErr(err)
-	}
-	if salt == nil || hash == nil || iter == nil {
-		return nil, ErrNotFound
-	}
-	rec.Salt, rec.Hash, rec.Iterations = salt, hash, *iter
-	return &rec, nil
-}
-
 // RecordRecoveryEvent stores a reported unlock attempt (FR-12.5). Both outcomes are recorded: a
 // store that only kept successes would make a brute-force attempt invisible.
 func (s *Store) RecordRecoveryEvent(ctx context.Context, deviceID uuid.UUID, succeeded bool, occurredAt time.Time) error {

@@ -261,8 +261,9 @@ removed when that is no longer needed, and until then it is bounded like this.
   sessions.
 - **Visible and audited.** The phone shows a notification for as long as any session is open.
   `DEBUG_STREAM_REQUESTED` and `DEBUG_STREAM_CLOSED` are written for every session, the second with
-  its duration and byte counts. A session ends after an hour idle (the ingress) and after four hours
-  regardless (the server).
+  its duration and byte counts. A session ends after an hour idle and after four hours regardless —
+  both in the server's relay (the idle cut was left to the ingress until 0.6.37, so a deployment
+  without ingress-nginx never had one).
 - **Wireless debugging is switched on by the device owner when asked for, and not switched off
   afterwards.** Leaving it on is what lets the next session start without anyone at the phone; the
   adb keys are what keep that from being an open door.

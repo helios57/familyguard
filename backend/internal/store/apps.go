@@ -98,11 +98,6 @@ func (s *Store) ListApps(ctx context.Context) ([]App, error) {
 	return out, rows.Err()
 }
 
-// GetApp returns one catalog entry.
-func (s *Store) GetApp(ctx context.Context, id uuid.UUID) (*App, error) {
-	return scanApp(s.pool.QueryRow(ctx, `SELECT `+appCols+` FROM apps WHERE id = $1`, id))
-}
-
 // LatestApp returns the newest registered version of a package.
 func (s *Store) LatestApp(ctx context.Context, packageName string) (*App, error) {
 	return scanApp(s.pool.QueryRow(ctx,

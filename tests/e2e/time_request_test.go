@@ -473,3 +473,96 @@ func TestAPushIsNeverRedirected(t *testing.T) {
 		t.Errorf("the server followed a push service's redirect %d time(s)", followed)
 	}
 }
+
+// TestWebPushKeyAndUnsubscribe covers the two push routes nothing else drives (FR-28.4): the key a
+// browser subscribes with, and turning notifications off. The key must be the one that signs every
+// push (a browser rejects a push signed by any other) and must survive a restart (a new key would
+// silently orphan every subscription already made). Turning off must stop the pushes to THAT
+// browser only, and only its own parent can do it.
+func TestWebPushKeyAndUnsubscribe(t *testing.T) {
+	inbox := newPushInbox(t)
+	h := newHarness(t, withEnv("WEB_PUSH_EXTRA_HOSTS", inbox.host()))
+	f := enrolledFixture(t, h)
+	h.patchPolicy(f.parent.Token, f.child.ID, map[string]any{"daily_limit_minutes": 60})
+	h.addParent(f.parent.Token, guardianIdentity.Email, "GUARDIAN")
+	guardian := h.signIn(guardianIdentity)
+
+	var key struct {
+		PublicKey string `json:"public_key"`
+	}
+	h.call(http.MethodGet, "/push/key", f.parent.Token, nil).expect(http.StatusOK).decode(&key)
+	raw, err := base64.RawURLEncoding.DecodeString(key.PublicKey)
+	if err != nil || len(raw) != 65 || raw[0] != 0x04 {
+		t.Fatalf("/push/key %q is not an uncompressed P-256 point in base64url (%d bytes, %v)", key.PublicKey, len(raw), err)
+	}
+
+	ownEndpoint, guardianEndpoint := inbox.srv.URL+"/push/parent", inbox.srv.URL+"/push/guardian"
+	h.call(http.MethodPut, "/push/subscription", f.parent.Token, newBrowserKeys(t).subscription(ownEndpoint)).expect(http.StatusOK)
+	h.call(http.MethodPut, "/push/subscription", guardian.Token, newBrowserKeys(t).subscription(guardianEndpoint)).expect(http.StatusOK)
+	subscribed := func(token, endpoint string) bool {
+		var status struct {
+			Subscribed bool `json:"subscribed"`
+		}
+		h.call(http.MethodPost, "/push/subscription/status", token, map[string]string{"endpoint": endpoint}).
+			expect(http.StatusOK).decode(&status)
+		return status.Subscribed
+	}
+
+	// The guardian cannot turn the parent's browser off: the endpoint is scoped to whoever holds it.
+	h.call(http.MethodDelete, "/push/subscription", guardian.Token, map[string]string{"endpoint": ownEndpoint}).expect(http.StatusOK)
+	if !subscribed(f.parent.Token, ownEndpoint) {
+		t.Fatal("another parent's DELETE removed this parent's push subscription")
+	}
+
+	// The first push reaches both, and its VAPID header names the published key.
+	var first todayRequestsDTO
+	h.call(http.MethodPost, "/device/time-requests", f.deviceToken(), map[string]any{"minutes": 15}).
+		expect(http.StatusOK).decode(&first)
+	got := inbox.await(t, 2)
+	for _, m := range got {
+		if !strings.Contains(m.Headers.Get("Authorization"), "k="+key.PublicKey) {
+			t.Errorf("the push to %s is signed with a key other than /push/key: %q", m.Path, m.Headers.Get("Authorization"))
+		}
+	}
+
+	// Now the parent turns notifications off in this browser.
+	var off struct {
+		Subscribed bool `json:"subscribed"`
+	}
+	h.call(http.MethodDelete, "/push/subscription", f.parent.Token, map[string]string{"endpoint": ownEndpoint}).
+		expect(http.StatusOK).decode(&off)
+	if off.Subscribed || subscribed(f.parent.Token, ownEndpoint) {
+		t.Fatal("after DELETE the subscription is still held")
+	}
+
+	// The key outlives a restart.
+	h.restart()
+	parent, guardianAgain := h.signIn(primaryParent), h.signIn(guardianIdentity)
+	var again struct {
+		PublicKey string `json:"public_key"`
+	}
+	h.call(http.MethodGet, "/push/key", parent.Token, nil).expect(http.StatusOK).decode(&again)
+	if again.PublicKey != key.PublicKey {
+		t.Fatal("the VAPID key changed across a restart: every browser subscribed before it now rejects every push")
+	}
+	if !subscribed(guardianAgain.Token, guardianEndpoint) {
+		t.Fatal("the guardian's subscription did not survive a restart")
+	}
+
+	// A second notification: the guardian's browser is the positive control that one was sent at
+	// all, so the parent's silence means the DELETE held rather than that nothing happened.
+	h.call(http.MethodPost, "/children/"+f.child.ID+"/time-requests/"+first.TimeRequests[0].ID+"/decision", parent.Token,
+		map[string]any{"decision": "decline"}).expect(http.StatusOK)
+	h.call(http.MethodPost, "/device/time-requests", f.deviceToken(), map[string]any{"minutes": 10}).expect(http.StatusOK)
+	inbox.await(t, 3)
+	time.Sleep(500 * time.Millisecond)
+	inbox.mu.Lock()
+	defer inbox.mu.Unlock()
+	perPath := map[string]int{}
+	for _, m := range inbox.messages {
+		perPath[m.Path]++
+	}
+	if perPath["/push/guardian"] != 2 || perPath["/push/parent"] != 1 {
+		t.Fatalf("pushes per browser %v: want the guardian's 2 and the parent's 1 (none after turning off)", perPath)
+	}
+}

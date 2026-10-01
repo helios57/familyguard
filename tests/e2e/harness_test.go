@@ -354,7 +354,7 @@ func (h *harness) tryStart() error {
 	// A clean environment, never os.Environ(): an ambient DATABASE_URL or OAUTH_CLIENT_ID on the
 	// developer's machine would silently change what is under test, and the run that finds it is
 	// the one that cannot be reproduced anywhere else.
-	cmd.Env = envSlice(h.env)
+	cmd.Env = append(envSlice(h.env), coverEnv()...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		h.t.Fatalf("stdout pipe: %v", err)
@@ -1041,6 +1041,16 @@ func writeAPKFixture(t *testing.T) (path, checksum string) {
 	}
 	sum := sha256.Sum256(content)
 	return path, b64(sum[:])
+}
+
+// coverEnv is what a binary under test needs to write its coverage counters when run.sh built it
+// with -cover (E2E_COVERDIR set): the server and fgctl run in clean environments, so GOCOVERDIR has
+// to be handed to each of them. Empty otherwise, and a binary built without -cover ignores it.
+func coverEnv() []string {
+	if dir := os.Getenv("E2E_COVERDIR"); dir != "" {
+		return []string{"GOCOVERDIR=" + dir}
+	}
+	return nil
 }
 
 func envSlice(env map[string]string) []string {

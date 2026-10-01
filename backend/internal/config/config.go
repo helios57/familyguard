@@ -202,7 +202,7 @@ func Load() (*Config, error) {
 	} else if c.AuditRetentionDays < 1 {
 		fail("AUDIT_RETENTION_DAYS must be positive, got %d", c.AuditRetentionDays)
 	}
-	if locDays, err := envInt("LOCATION_RETENTION_DAYS", 30); err != nil {
+	if locDays, err := envInt("LOCATION_RETENTION_DAYS", 365); err != nil {
 		fail("LOCATION_RETENTION_DAYS: %v", err)
 	} else if locDays < 1 {
 		fail("LOCATION_RETENTION_DAYS must be positive, got %d", locDays)

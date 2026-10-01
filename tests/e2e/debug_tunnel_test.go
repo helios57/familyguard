@@ -128,6 +128,7 @@ func startADBRelay(t *testing.T, env map[string]string, deviceID string, extra .
 		"HOME=" + home,
 		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
 	}
+	environ = append(environ, coverEnv()...)
 	for k, v := range env {
 		environ = append(environ, k+"="+v)
 	}

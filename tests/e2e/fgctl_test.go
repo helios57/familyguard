@@ -42,6 +42,7 @@ func fgctlRun(t *testing.T, home string, env map[string]string, args ...string) 
 		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
 		"AppData=" + filepath.Join(home, "AppData"),
 	}
+	environ = append(environ, coverEnv()...)
 	for k, v := range env {
 		environ = append(environ, k+"="+v)
 	}
@@ -303,6 +304,7 @@ func startMCP(t *testing.T, home string, env map[string]string) *mcpSession {
 		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
 		"AppData=" + filepath.Join(home, "AppData"),
 	}
+	environ = append(environ, coverEnv()...)
 	for k, v := range env {
 		environ = append(environ, k+"="+v)
 	}
@@ -408,6 +410,7 @@ func fgctlPipe(t *testing.T, home, stdinText string, args ...string) fgctlResult
 		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
 		"AppData=" + filepath.Join(home, "AppData"),
 	}
+	cmd.Env = append(cmd.Env, coverEnv()...)
 	cmd.Stdin = strings.NewReader(stdinText + "\n")
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout

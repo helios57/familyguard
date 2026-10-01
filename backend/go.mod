@@ -2,6 +2,8 @@ module github.com/helios57/familyguard/backend
 
 go 1.27
 
+toolchain go1.27.1
+
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608

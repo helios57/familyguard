@@ -384,17 +384,3 @@ func (s *Store) EarnedSpentByDay(ctx context.Context, childID uuid.UUID, since s
 	}
 	return out, rows.Err()
 }
-
-// EarnedMinutesForDay is the earned time one device spent on a day, leaving out the packages whose
-// time is not use (FR-3.8) — floored like the phone's own split, so the two agree.
-func (s *Store) EarnedMinutesForDay(ctx context.Context, deviceID uuid.UUID, day string, uncounted []string) (int, error) {
-	if uncounted == nil {
-		uncounted = []string{}
-	}
-	var ms int64
-	err := s.pool.QueryRow(ctx,
-		`SELECT COALESCE(SUM(earned_ms), 0) FROM usage_samples
-		  WHERE device_id = $1 AND day = $2::date AND NOT (package_name = ANY($3))`,
-		deviceID, day, uncounted).Scan(&ms)
-	return int(ms / 60000), err
-}

@@ -135,7 +135,9 @@ func CORS(allowed []string) gin.HandlerFunc {
 			h.Set("Access-Control-Allow-Origin", c.GetHeader("Origin"))
 			h.Set("Access-Control-Allow-Credentials", "true")
 			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-Id")
-			h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			// Every method a route uses — TestCORSPreflightAllowsEveryMethodTheAPIUses reads them from
+			// the route table, because a method left out here fails only in the browser.
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			h.Set("Access-Control-Max-Age", "600")
 			h.Add("Vary", "Origin")
 		}

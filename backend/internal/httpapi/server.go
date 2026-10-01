@@ -552,6 +552,10 @@ func uuidParam(c *gin.Context, name string) (uuid.UUID, bool) {
 	return id, true
 }
 
+// queryInt reads a list size from the query string, clamped to [min, max]. A size is a hint, so a
+// value past either end is answered with the nearest one the server gives, and one that is not a
+// non-negative whole number with the default — not refused, unlike an id or a day, which name a
+// thing and are wrong rather than merely large (TestQueryIntClampsListSizesRatherThanRefusing).
 func queryInt(c *gin.Context, name string, def, min, max int) int {
 	raw := c.Query(name)
 	if raw == "" {

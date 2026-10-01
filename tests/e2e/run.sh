@@ -87,8 +87,20 @@ WORK="$(mktemp -d)" || notmeasured "could not create a work directory"
 # module boundary clean: the e2e module imports nothing from the backend, so it cannot accidentally
 # check the server against the server's own constants.
 
+# E2E_COVERDIR=<dir> builds both binaries with -cover and has every server and fgctl the suite starts
+# write its counters there; `go tool covdata percent -i=<dir>` then says which code the black-box
+# suite actually reached. Off by default: an instrumented binary is not the artefact that ships.
+COVER=()
+if [ -n "${E2E_COVERDIR:-}" ]; then
+  mkdir -p "$E2E_COVERDIR" || notmeasured "could not create E2E_COVERDIR $E2E_COVERDIR"
+  E2E_COVERDIR="$(cd "$E2E_COVERDIR" && pwd)"
+  export E2E_COVERDIR
+  COVER=(-cover -coverpkg=./...)
+  echo "coverage: instrumented binaries, counters in $E2E_COVERDIR"
+fi
+
 echo "building the control plane…"
-if ! (cd "$ROOT/backend" && "$GO" build -o "$WORK/family-guard" ./cmd/server); then
+if ! (cd "$ROOT/backend" && "$GO" build "${COVER[@]}" -o "$WORK/family-guard" ./cmd/server); then
   notmeasured "the control plane did not build"
 fi
 
@@ -96,7 +108,7 @@ fi
 # pipe, so it must not be able to import the client's own constants and check them against
 # themselves.
 echo "building fgctl…"
-if ! (cd "$ROOT/backend" && "$GO" build -o "$WORK/fgctl" ./cmd/fgctl); then
+if ! (cd "$ROOT/backend" && "$GO" build "${COVER[@]}" -o "$WORK/fgctl" ./cmd/fgctl); then
   notmeasured "fgctl did not build"
 fi
 

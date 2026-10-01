@@ -149,27 +149,6 @@ func (s *Store) ListAppRules(ctx context.Context, childID uuid.UUID) ([]AppRule,
 	return out, rows.Err()
 }
 
-// BlockedPackages returns just the package names the child may not use, which is the shape the
-// enforcement engine consumes.
-func (s *Store) BlockedPackages(ctx context.Context, childID uuid.UUID) ([]string, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT package_name FROM app_rules WHERE child_id = $1 AND action = $2 ORDER BY package_name`,
-		childID, ActionBlock)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []string{}
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
-}
-
 // ---- blocked domains ------------------------------------------------------
 
 // AddBlockedDomain adds a custom domain block. Adding a domain that is already blocked succeeds

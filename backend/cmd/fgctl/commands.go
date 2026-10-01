@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -108,8 +110,10 @@ func cmdLogin(ctx context.Context, env *environment, args []string) error {
 	if baseURL == "" {
 		return fgclient.ErrNoServer
 	}
-	if !strings.HasPrefix(baseURL, "https://") && !strings.HasPrefix(baseURL, "http://") {
-		return fmt.Errorf("--url must include the scheme, e.g. https://guard.example.com")
+	// Refused before the key is read, so it is never typed into a login that would send it in
+	// cleartext.
+	if err := requireSafeServerURL(baseURL); err != nil {
+		return fmt.Errorf("--url: %w", err)
 	}
 
 	token, err := readToken(fromStdin)
@@ -210,8 +214,10 @@ func cmdConfig(_ context.Context, env *environment, _ []string) error {
 }
 
 func cmdVersion(_ context.Context, env *environment, _ []string) error {
-	fmt.Fprintf(env.out, "fgctl %s\n", version)
-	return nil
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	return env.emit(map[string]string{"version": version, "platform": platform}, func(w *tabwriter.Writer) {
+		fmt.Fprintf(w, "fgctl %s (%s)\n", version, platform)
+	})
 }
 
 func cmdWhoami(ctx context.Context, env *environment, _ []string) error {
@@ -530,19 +536,57 @@ func cmdUsage(ctx context.Context, env *environment, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: fgctl usage <device-id>")
 	}
-	var body map[string]any
-	if err := env.client.Get(ctx, "/api/v1/devices/"+args[0]+"/usage", &body); err != nil {
+	var body struct {
+		Day      string `json:"day"`
+		Timezone string `json:"timezone"`
+		Minutes  int    `json:"minutes"`
+		Packages []struct {
+			PackageName  string `json:"package_name"`
+			Label        string `json:"label"`
+			ForegroundMs int64  `json:"foreground_ms"`
+			EarnedMs     int64  `json:"earned_ms"`
+		} `json:"packages"`
+		History []struct {
+			Day     string `json:"day"`
+			Minutes int    `json:"minutes"`
+		} `json:"history"`
+	}
+	var raw json.RawMessage
+	if err := env.client.Get(ctx, "/api/v1/devices/"+args[0]+"/usage", &raw); err != nil {
 		return err
 	}
-	return env.emit(body, func(w *tabwriter.Writer) {
-		if len(body) == 0 {
-			fmt.Fprintln(w, "nothing reported")
-			return
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return fmt.Errorf("the server's usage answer: %w", err)
+	}
+	// --json passes the server's document through untouched, so a field this renderer does not
+	// know about is not silently dropped from a script's input.
+	return env.emit(raw, func(w *tabwriter.Writer) {
+		fmt.Fprintf(w, "%s (%s): %d min\n", body.Day, body.Timezone, body.Minutes)
+		if len(body.Packages) == 0 {
+			fmt.Fprintln(w, "nothing reported today")
+		} else {
+			fmt.Fprintln(w, "\nAPP\tMINUTES\tOF THEM BONUSZEIT")
+			for _, p := range body.Packages {
+				fmt.Fprintf(w, "%s\t%d min\t%d min\n", firstNonEmpty(p.Label, p.PackageName)+labelSuffix(p.Label, p.PackageName),
+					p.ForegroundMs/60000, p.EarnedMs/60000)
+			}
 		}
-		for _, k := range sortedKeys(body) {
-			fmt.Fprintf(w, "%s\t%v\n", k, body[k])
+		if len(body.History) > 0 {
+			fmt.Fprintln(w, "\nDAY\tMINUTES")
+			for _, d := range body.History {
+				fmt.Fprintf(w, "%s\t%d min\n", d.Day, d.Minutes)
+			}
 		}
 	})
+}
+
+// labelSuffix shows the package name beside a label, because two apps can share a label and the
+// package is what every other command takes as its argument.
+func labelSuffix(label, pkg string) string {
+	if strings.TrimSpace(label) == "" || label == pkg {
+		return ""
+	}
+	return " (" + pkg + ")"
 }
 
 func cmdLocations(ctx context.Context, env *environment, args []string) error {
@@ -562,7 +606,13 @@ func cmdLocations(ctx context.Context, env *environment, args []string) error {
 		}
 		fmt.Fprintln(w, "AT\tLATITUDE\tLONGITUDE\tACCURACY")
 		for _, l := range body.Locations {
-			fmt.Fprintf(w, "%v\t%v\t%v\t%v\n", l["recorded_at"], l["latitude"], l["longitude"], l["accuracy_m"])
+			// captured_at is when the phone took the fix; it said recorded_at here, a field the API has
+			// never had, and the column printed "<nil>" for every row.
+			accuracy := "—"
+			if a, ok := l["accuracy_m"]; ok && a != nil {
+				accuracy = fmt.Sprintf("%v m", a)
+			}
+			fmt.Fprintf(w, "%v\t%v\t%v\t%s\n", l["captured_at"], l["latitude"], l["longitude"], accuracy)
 		}
 	})
 }

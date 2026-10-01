@@ -83,7 +83,8 @@ func TestLoadAcceptsAValidEnvironment(t *testing.T) {
 	}
 	// Zero here would mean "delete everything older than now", so the defaults are asserted rather
 	// than assumed: a retention sweep that silently keeps nothing is worse than one that never runs.
-	if c.AuditRetentionDays != 365 || c.LocationRetention != 30*24*time.Hour {
+	// The owner's ruling (2026-09): "keep it for at least 1 year" — locations included.
+	if c.AuditRetentionDays != 365 || c.LocationRetention != 365*24*time.Hour {
 		t.Fatalf("retention defaults not applied: %d days, %v", c.AuditRetentionDays, c.LocationRetention)
 	}
 	if c.MaintenanceInterval <= 0 {

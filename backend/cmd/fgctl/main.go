@@ -123,6 +123,10 @@ func run(ctx context.Context, argv []string) error {
 		if cfg.Token == "" {
 			return fgclient.ErrNoCredential
 		}
+		// Here as well as at login: FAMILYGUARD_URL overrides the file, and is never checked there.
+		if err := requireSafeServerURL(cfg.BaseURL); err != nil {
+			return err
+		}
 	}
 	return cmd.run(ctx, env, rest)
 }

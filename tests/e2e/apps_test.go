@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ---- the shapes a client sees ----------------------------------------------
@@ -386,6 +387,60 @@ func TestTheDirectoryOnTheNodeIsAlsoASource(t *testing.T) {
 	// it found would make the next `ls` unrecognisable.
 	if _, err := os.Stat(filepath.Join(dir, "dropped-by-an-operator.apk")); err != nil {
 		t.Errorf("the scan moved the operator's file: %v", err)
+	}
+}
+
+// TestTheDirectoryIsScannedAtStartup covers the other half of FR-16.1: a file copied to the node
+// while the server was down is in the catalog once it is back, without anyone pressing "scan". The
+// server had a Catalog() accessor documented as "so the caller can scan the directory at startup"
+// that nothing ever called, until 0.6.37 — an operator's copy sat unregistered until a parent
+// happened to open the console and scan.
+func TestTheDirectoryIsScannedAtStartup(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "copied-while-down.apk"), fixtureAPK(t, "fixture-v1.apk"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	h := newHarness(t, withAPKDir(dir))
+	parent := h.signIn(primaryParent)
+
+	// The scan runs beside the server rather than in front of it — a directory of 200 MB builds
+	// must not hold readiness — so it is waited for, with a deadline, not assumed done.
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		var list appListDTO
+		h.call(http.MethodGet, "/apps", parent.Token, nil).expect(http.StatusOK).decode(&list)
+		if len(list.Apps) == 1 && list.Apps[0].PackageName == fixturePackage {
+			if list.Apps[0].Source != "NODE" {
+				t.Errorf("source %q, want NODE", list.Apps[0].Source)
+			}
+			break
+		}
+		if len(list.Apps) > 1 {
+			t.Fatalf("the startup scan registered %d apps from one file: %+v", len(list.Apps), list.Apps)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the APK copied in before startup is still not in the catalog: %+v", list.Apps)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// A restart scans again, and finds the same build again: one row, not two. Waited for on the
+	// server's own log line, which carries the counts, rather than on a fixed sleep.
+	h.restart()
+	parent = h.signIn(primaryParent)
+	for deadline := time.Now().Add(15 * time.Second); !h.logs.contains(`"msg":"app catalog scanned at startup"`); {
+		if time.Now().After(deadline) {
+			t.Fatalf("the restarted server never logged its startup scan:\n%s", h.logs.String())
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !h.logs.contains(`"registered":1`) {
+		t.Errorf("the startup scan's log line does not count the one build it read:\n%s", h.logs.String())
+	}
+	var list appListDTO
+	h.call(http.MethodGet, "/apps", parent.Token, nil).expect(http.StatusOK).decode(&list)
+	if len(list.Apps) != 1 {
+		t.Fatalf("after a restart the catalog holds %d rows for one file: %+v", len(list.Apps), list.Apps)
 	}
 }
 

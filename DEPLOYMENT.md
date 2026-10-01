@@ -1115,8 +1115,9 @@ for as long as a session is open, and each session is audited when it opens and 
 requests answered `101 Switching Protocols` with `Upgrade: familyguard-debug`. ingress-nginx
 forwards any Upgrade token with no configuration; a proxy that only special-cases `websocket`
 answers the request as an ordinary GET, and `fgctl adb` then reports the proxy's response rather
-than a stream. The ingress `proxy-read-timeout` (3600 s here, for the event streams) is also what
-ends a session that has been idle for an hour.
+than a stream. The relay itself ends a session nothing has crossed for an hour, so a proxy's read
+timeout only needs to be at least that long (`proxy-read-timeout` is 3600 s here, for the event
+streams); a shorter one cuts idle adb sessions early.
 
 ### Windows
 

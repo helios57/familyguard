@@ -22,6 +22,7 @@ import (
 
 	"github.com/helios57/familyguard/backend/internal/apk"
 	"github.com/helios57/familyguard/backend/internal/auth"
+	"github.com/helios57/familyguard/backend/internal/catalog"
 	"github.com/helios57/familyguard/backend/internal/config"
 	"github.com/helios57/familyguard/backend/internal/fgctldist"
 	"github.com/helios57/familyguard/backend/internal/httpapi"
@@ -188,6 +189,7 @@ func run() error {
 	}
 
 	go maintain(ctx, st, cfg, log)
+	go scanCatalog(ctx, srv.Catalog(), log)
 
 	log.Info("listening",
 		"addr", listener.Addr().String(), "public_url", cfg.PublicURL.String(), "version", version)
@@ -358,6 +360,26 @@ func maintain(ctx context.Context, st *store.Store, cfg *config.Config, log *slo
 			sweep()
 		}
 	}
+}
+
+// scanCatalog registers what an operator copied into APK_DIR while the server was down (FR-16.1),
+// so the console's "scan" button is not the only way such a file ever becomes visible.
+//
+// It runs beside the server, not in front of it: every APK is parsed and hashed, and a directory of
+// 200 MB builds must not hold readiness. It logs counts and names the failures, because "the scan
+// ran" and "the scan read everything" are different facts.
+func scanCatalog(ctx context.Context, cat *catalog.Catalog, log *slog.Logger) {
+	if !cat.Configured() {
+		return
+	}
+	res, err := cat.Scan(ctx)
+	if err != nil {
+		log.Error("app catalog: startup scan", "error", err)
+		return
+	}
+	// Each failure is already logged by name inside Scan; this line is the count that says the pass
+	// finished.
+	log.Info("app catalog scanned at startup", "registered", len(res.Registered), "failed", len(res.Failed))
 }
 
 func newLogger(level string) *slog.Logger {

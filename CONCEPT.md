@@ -421,7 +421,7 @@ one restart per mistake is how a misconfiguration survives a maintenance window.
 | `RATE_LIMIT_FLOOD_PER_MINUTE` | 1200 | one client address, every route, before authentication — the bound on what one address can make this server do at all |
 | `RATE_LIMIT_PARENT_PER_MINUTE` | 600 | one signed-in parent, keyed by their id. Two parents on one home network no longer share a bucket, and answering a queue of waiting apps is measured against a person's own budget rather than an anonymous caller's |
 | `RATE_LIMIT_DEVICE_PER_MINUTE` | 240 | one enrolled phone, keyed by its device id. A household leaves through one address, so an address-keyed budget made a family's phones compete with each other and with the console |
-| `AUDIT_RETENTION_DAYS`, `LOCATION_RETENTION_DAYS` | 365, 30 | a child's location history is the most sensitive thing here, so it expires soon and by default; the audit log is the record of what the adults did and is kept for a year. Zero is rejected — it would mean "delete everything older than now" |
+| `AUDIT_RETENTION_DAYS`, `LOCATION_RETENTION_DAYS` | 365, 365 | the owner's ruling is "keep it for at least 1 year", and it covers a child's location history too (it said 30 days until 0.6.37, which deleted most of what a parent would look back for). Both still expire by default, and a deployment may shorten either. Zero is rejected — it would mean "delete everything older than now" |
 | `FAMILY_NAME`, `ADDR`, `LOG_LEVEL`, `DPC_COMPONENT` | | |
 
 The provisioning QR carries two checksums, both computed from bytes at startup, never typed in:
