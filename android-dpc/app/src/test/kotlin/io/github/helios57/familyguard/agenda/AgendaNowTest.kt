@@ -74,6 +74,37 @@ class AgendaNowTest {
         assertNull(v.tomorrow)
     }
 
+    /**
+     * A calendar event that runs over midnight — a sleepover, a night train — arrives clipped to
+     * each day it touches: 21:00–23:59 on the first and 00:00–08:00 on the second (FR-25.3). Both
+     * halves must be "now" while they run, including the very first minute of the day.
+     */
+    @Test
+    fun `an event across midnight is on now on both sides of it, from the first minute`() {
+        val evening = AgendaItem(entryId = "", title = "Übernachtung", startsAt = "21:00", endsAt = "23:59", source = "calendar")
+        val morning = evening.copy(startsAt = "00:00", endsAt = "08:00")
+        val overnight = AgendaBlock(listOf(
+            AgendaDay(day = "2026-10-09", items = listOf(evening)),
+            AgendaDay(day = "2026-10-10", items = listOf(morning, school.copy(startsAt = "10:00", endsAt = "11:00"))),
+        ))
+        assertEquals(evening, AgendaNow.of(overnight, at("2026-10-09T23:30")).current)
+
+        val atMidnight = AgendaNow.of(overnight, at("2026-10-10T00:00"))
+        assertEquals("2026-10-10", atMidnight.today?.day)
+        assertEquals(morning, atMidnight.current)
+        assertEquals("Schule", atMidnight.next?.title)
+    }
+
+    /** Days are found by their date, so the order the server lists them in cannot move "today". */
+    @Test
+    fun `the days are matched by date, whatever order they arrive in`() {
+        val reversed = AgendaBlock(block.days.reversed())
+        val v = AgendaNow.of(reversed, at("2026-10-07T09:00"))
+        assertEquals("2026-10-07", v.today?.day)
+        assertEquals("2026-10-08", v.tomorrow?.day)
+        assertEquals(school, v.current)
+    }
+
     /** FR-25: an all-day calendar event is not "now" or "next" — it is the day, said on its own line. */
     @Test
     fun `an all-day event is listed for the day, and is neither now nor next`() {

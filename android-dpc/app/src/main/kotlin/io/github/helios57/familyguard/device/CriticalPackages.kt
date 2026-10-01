@@ -31,31 +31,40 @@ object CriticalPackages {
      * The IMEs are in the list because a suspended keyboard is a phone that cannot dial a number it
      * does not already know — a subtler version of the same failure as suspending the dialer.
      */
-    fun onThisDevice(context: Context): List<String> {
-        val found = LinkedHashSet<String>()
+    fun onThisDevice(context: Context): List<String> = reportable(
+        buildList {
+            // The dialer as the platform itself resolves it, which is what the emergency path uses.
+            add(context.getSystemService(TelecomManager::class.java)?.defaultDialerPackage)
 
-        // The dialer as the platform itself resolves it, which is what the emergency path uses.
-        context.getSystemService(TelecomManager::class.java)?.defaultDialerPackage?.let { found += it }
+            // The launcher. Suspending it does not merely hide an app — it leaves a phone whose home
+            // button does nothing, which is indistinguishable from a brick to the person holding it.
+            add(resolve(context, Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)))
 
-        // The launcher. Suspending it does not merely hide an app — it leaves a phone whose home
-        // button does nothing, which is indistinguishable from a brick to the person holding it.
-        resolve(context, Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))?.let { found += it }
+            // Settings, so that Wi-Fi, aeroplane mode and — the point of FR-2.3 — the reset menu stay
+            // reachable while the phone is locked down.
+            add(resolve(context, Intent(Settings.ACTION_SETTINGS)))
 
-        // Settings, so that Wi-Fi, aeroplane mode and — the point of FR-2.3 — the reset menu stay
-        // reachable while the phone is locked down.
-        resolve(context, Intent(Settings.ACTION_SETTINGS))?.let { found += it }
+            add(Telephony.Sms.getDefaultSmsPackage(context))
 
-        Telephony.Sms.getDefaultSmsPackage(context)?.let { found += it }
+            context.getSystemService(InputMethodManager::class.java)
+                ?.enabledInputMethodList
+                ?.forEach { add(it.serviceInfo.packageName) }
+        }
+    )
 
-        context.getSystemService(InputMethodManager::class.java)
-            ?.enabledInputMethodList
-            ?.forEach { found += it.serviceInfo.packageName }
+    /**
+     * What the platform answered, as the list this phone reports: in the order asked, each package
+     * once, and without the answers that are not packages.
+     *
+     * A read that found nothing (null) or an empty name is dropped rather than reported. `android`
+     * is dropped because it is what the framework's own resolver answers when nothing is set as
+     * default — it is not a package the child uses, suspending it was never possible, and counting
+     * it as the home screen (FR-3.8) would exempt the chooser instead of a launcher.
+     */
+    internal fun reportable(answers: List<String?>): List<String> =
+        answers.filterNotNull().filter { it.isNotBlank() && it != FRAMEWORK_RESOLVER }.distinct()
 
-        // The framework's own resolver answers with this when nothing is set as default; it is not a
-        // package the child uses and suspending it was never possible anyway.
-        found -= "android"
-        return found.filter { it.isNotBlank() }
-    }
+    private const val FRAMEWORK_RESOLVER = "android"
 
     /**
      * @return the package that would handle [intent], or null when nothing would.
@@ -71,8 +80,7 @@ object CriticalPackages {
      * spent a whole daily limit with nobody holding the phone.
      */
     fun homeScreen(context: Context): List<String> =
-        listOfNotNull(resolve(context, Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)))
-            .filter { it.isNotBlank() && it != "android" }
+        reportable(listOf(resolve(context, Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))))
 
     private fun resolve(context: Context, intent: Intent): String? {
         val pm = context.packageManager
