@@ -17,6 +17,43 @@ class ScreenOnClockTest {
 
     private val minute = 60_000L
 
+    /**
+     * The clock is written from two threads: the screen broadcasts arrive on the main thread, and
+     * the poll drains it on an IO thread under the sync lock. Unserialised, a screen-off that lands
+     * between drain's read of the banked time and its reset loses the whole session it banked —
+     * minutes a child spent that the quota never sees (FR-3.2, FR-3.3).
+     *
+     * Asserted by holding the clock's monitor and watching each call wait for it: a method that is
+     * not synchronized runs straight through, and that is the red.
+     */
+    @Test
+    fun `every call waits while another holds the clock`() {
+        val calls = mapOf<String, (ScreenOnClock) -> Unit>(
+            "onScreenOn" to { it.onScreenOn(5 * minute) },
+            "onScreenOff" to { it.onScreenOff(5 * minute) },
+            "drain" to { it.drain(5 * minute) },
+            "isScreenOn" to { it.isScreenOn() },
+        )
+        val ranThrough = calls.filter { (_, call) ->
+            val clock = ScreenOnClock(screenOn = true, startMillis = 0)
+            synchronized(clock) {
+                val other = Thread { call(clock) }.apply { start() }
+                val deadline = System.nanoTime() + 5_000_000_000L
+                while (other.state != Thread.State.BLOCKED && other.state != Thread.State.TERMINATED &&
+                    System.nanoTime() < deadline
+                ) {
+                    Thread.sleep(1)
+                }
+                val state = other.state
+                if (state != Thread.State.BLOCKED && state != Thread.State.TERMINATED) {
+                    throw AssertionError("the probe thread is $state after 5 s; this measured nothing")
+                }
+                state == Thread.State.TERMINATED
+            }
+        }.keys
+        assertEquals("these ran while another call held the clock", emptySet<String>(), ranThrough)
+    }
+
     @Test
     fun `a session that is still open is drained up to now`() {
         val clock = ScreenOnClock(screenOn = true, startMillis = 0)

@@ -11,6 +11,10 @@ package io.github.helios57.familyguard.usage
  * It is a small class on purpose. It is the only thing standing between "the platform said this app
  * was in the foreground for six hours" and a quota that believes it, and the whole of FR-3.3 is the
  * single rule that intervals with the screen off are not counted.
+ *
+ * Synchronized because it has two writers on two threads: the screen broadcasts arrive on the main
+ * thread and the poll drains on an IO thread. A screen-off landing between [drain]'s read of the
+ * banked time and its reset would otherwise lose the whole session it had just banked.
  */
 class ScreenOnClock(
     screenOn: Boolean,
@@ -22,6 +26,7 @@ class ScreenOnClock(
     private var accumulated: Long = 0
 
     /** @return true when this changed the state; a repeated broadcast for the same state is a no-op. */
+    @Synchronized
     fun onScreenOn(atMillis: Long): Boolean {
         if (on) return false
         on = true
@@ -36,6 +41,7 @@ class ScreenOnClock(
      * the next drain instead would credit the whole of a night's sleep to whatever app was last in
      * the foreground.
      */
+    @Synchronized
     fun onScreenOff(atMillis: Long): Boolean {
         if (!on) return false
         accumulated += interval(atMillis)
@@ -45,6 +51,7 @@ class ScreenOnClock(
     }
 
     /** Whether the screen is on as far as this clock has been told. */
+    @Synchronized
     fun isScreenOn(): Boolean = on
 
     /**
@@ -53,6 +60,7 @@ class ScreenOnClock(
      * Draining while the screen is on leaves the open interval running from [atMillis], so no time
      * is counted twice and none is lost between two polls that both happen mid-session.
      */
+    @Synchronized
     fun drain(atMillis: Long): Long {
         val banked = accumulated
         accumulated = 0
