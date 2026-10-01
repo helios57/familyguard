@@ -8917,3 +8917,15 @@ never in the answer.
 | M3 | `set_managed_app false` installs instead | **RED** *list_managed_apps after managed=false* still lists it |
 
 **6 probes, 6 red. Cumulative: 421.**
+
+### 52.2 — live
+
+Deployed 2026-10-01 as **0.6.36** (image `sha256:6d7e80cb…80f9`, APK `dad7e774…7f81`, versionCode 45 —
+the phone's code is unchanged, the release guard moves its version with the tag). The first push of
+the tag carried a 14.8 MB `fgctl` binary a local `go build` had left in `backend/cmd/fgctl/`; both
+runs were cancelled before anything was published, the next commit removed it and ignores it, and the
+tag was moved there. The binary stays in `main`'s history until the history cleanup planned before
+the repository goes public. CI and Release green on the moved tag; one ready pod on that digest,
+`/readyz` 200, `/fgctl` offering 0.6.36 with six artifacts, `/dpc.apk` byte-identical. Both phones
+report 0.6.36 (45). The operator's own fgctl updated itself 0.6.30 → 0.6.36 and, over MCP against
+the live server, lists **59 tools** and reads the hosted build back as 0.6.36 (45).
