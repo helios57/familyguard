@@ -303,6 +303,41 @@ const fmtDuration = (seconds) => {
   return fmtMinutes(Math.round(s / 60));
 };
 
+/* "07:00–08:00", or "ganzer Tag" for a window that is the whole day. */
+function fmtWindow(from, to) {
+  return from === '00:00' && (to === '23:59' || to === '24:00') ? 'ganzer Tag' : from + '–' + to;
+}
+
+/* A weekday bitmask (bit 0 = Monday) as a person says it: "täglich", "Mo–Fr", "Sa, So", "Mo, Mi–Fr". */
+function fmtDays(mask) {
+  if ((mask & 127) === 127) return 'täglich';
+  if (!(mask & 127)) return 'keine Tage';
+  const runs = [];
+  for (let i = 0; i < 7; i++) {
+    if (!(mask & (1 << i))) continue;
+    let j = i;
+    while (j + 1 < 7 && (mask & (1 << (j + 1)))) j++;
+    runs.push(j - i >= 2 ? WEEKDAYS_SHORT[i] + '–' + WEEKDAYS_SHORT[j]
+      : j > i ? WEEKDAYS_SHORT[i] + ', ' + WEEKDAYS_SHORT[j] : WEEKDAYS_SHORT[i]);
+    i = j;
+  }
+  return runs.join(', ');
+}
+
+/* An editor that is one line until opened: the summary says what the entry IS ("Schule · Mo–Fr ·
+   08:00–12:00"), the fields are inside. `item._open` keeps it open across redraws and marks a new
+   entry, which opens by itself; it is never sent to the server, because every save builds its body
+   field by field. */
+function editorBox(item, title, meta, ...content) {
+  const box = el('details', { class: 'editor', open: !!item._open },
+    el('summary', {},
+      el('span', { class: 'grow' }, el('b', { text: title }), el('small', { text: meta })),
+      icon('chevron-right', 'icon-sm')),
+    el('div', { class: 'editor-body stack' }, content));
+  box.addEventListener('toggle', () => { item._open = box.open; });
+  return box;
+}
+
 /** `2026-09-20` plus or minus whole days, done in UTC where a day is always 86400000 ms. */
 function shiftDay(day, by) {
   const [y, m, d] = day.split('-').map(Number);
@@ -510,8 +545,21 @@ async function refresh() {
       isAdmin() ? el('button', { class: 'btn btn-primary', type: 'button', text: 'Kind hinzufügen', onclick: addChild }) : null));
     return;
   }
+  // A different page than the one on screen: after a moment with nothing to show, say that it is
+  // coming rather than leaving the previous page (or, on first load, nothing) standing under the new
+  // tab. Not at once, because a fast load would flash it; and never on a background refresh of the
+  // same page, which keeps what it shows until the new data is in.
+  const arriving = state.dataView !== state.view;
+  const waiting = arriving && setTimeout(() => {
+    if (mine !== refreshToken) return;
+    main.setAttribute('aria-busy', 'true');
+    main.replaceChildren(el('div', { class: 'view-loading', role: 'status' },
+      el('span', { class: 'spinner', 'aria-hidden': 'true' }), el('span', { text: 'Lädt …' })));
+  }, 200);
   try {
     const data = await view.load();
+    if (waiting) clearTimeout(waiting);
+    main.removeAttribute('aria-busy');
     if (mine !== refreshToken) return;   // a newer refresh already won
     state.data = data;
     state.dataView = state.view;
@@ -520,6 +568,8 @@ async function refresh() {
     main.replaceChildren(...view.render(data).filter((n) => n !== null && n !== undefined && n !== false));
     if (view.afterRender) view.afterRender(data);
   } catch (err) {
+    if (waiting) clearTimeout(waiting);
+    main.removeAttribute('aria-busy');
     if (err instanceof ApiError && err.status === 401) return;
     if (mine !== refreshToken) return;
     main.replaceChildren(el('div', { class: 'card full' },

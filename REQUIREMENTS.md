@@ -460,7 +460,8 @@ a device offline when it stops reporting.
   been reached in a week, or cannot see usage at all looks identical from the server. Anything the
   phone could not measure must be shown as *not measured* — never as a zero, and never less
   prominently than a fault. No secret appears on this screen: it is reachable by anyone holding the
-  phone.
+  phone. It is written in the phone's language (FR-13.5), and a fact the person holding the phone can
+  fix — background activity, exact alarms, usage access — offers the settings screen that fixes it.
 
 ### FR-14 Auditability
 Every policy change, command, enrollment and recovery attempt is recorded with actor, target,

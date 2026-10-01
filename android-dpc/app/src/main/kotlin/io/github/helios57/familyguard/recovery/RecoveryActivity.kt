@@ -37,6 +37,7 @@ import io.github.helios57.familyguard.status.StatusLevel
 import io.github.helios57.familyguard.status.StatusLine
 import io.github.helios57.familyguard.status.deviceStatus
 import io.github.helios57.familyguard.status.deviceStatusFacts
+import io.github.helios57.familyguard.status.statusWords
 import io.github.helios57.familyguard.sync.ConnectionService
 import io.github.helios57.familyguard.usage.TodayReportReader
 import java.util.concurrent.TimeUnit
@@ -105,6 +106,8 @@ class RecoveryActivity : AppCompatActivity() {
 
     // FR-1.8. Shown whenever this phone holds a credential — see [render].
     private lateinit var relinkGroup: LinearLayout
+    private lateinit var relinkBody: LinearLayout
+    private lateinit var todayMeter: ProgressBar
     private lateinit var relinkExplain: TextView
     private lateinit var relinkCode: EditText
     private lateinit var relinkSubmit: Button
@@ -138,6 +141,11 @@ class RecoveryActivity : AppCompatActivity() {
         todayPlanStatus = findViewById(R.id.today_plan_status)
 
         relinkGroup = findViewById(R.id.relink_group)
+        relinkBody = findViewById(R.id.relink_body)
+        todayMeter = findViewById(R.id.today_meter)
+        findViewById<Button>(R.id.relink_toggle).setOnClickListener {
+            relinkBody.visibility = if (relinkBody.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
         relinkExplain = findViewById(R.id.relink_explain)
         relinkCode = findViewById(R.id.relink_code)
         relinkSubmit = findViewById(R.id.relink_submit)
@@ -313,6 +321,8 @@ class RecoveryActivity : AppCompatActivity() {
         relinkExplain.setText(
             if (state.unlinked) R.string.unlinked_text else R.string.relink_explain_linked
         )
+        // Open by itself in the one state the fields are certainly for; a parent's own tap otherwise.
+        if (state.unlinked) relinkBody.visibility = View.VISIBLE
         when {
             !state.available -> {
                 // The reason belongs to the controller, so the screen and a submitted code give the
@@ -414,7 +424,9 @@ class RecoveryActivity : AppCompatActivity() {
     private fun refreshStatus() {
         scope.launch {
             val computed = withContext(Dispatchers.IO) {
-                runCatching { deviceStatus(deviceStatusFacts(this@RecoveryActivity)) }.getOrNull()
+                runCatching {
+                    deviceStatus(deviceStatusFacts(this@RecoveryActivity), statusWords(this@RecoveryActivity))
+                }.getOrNull()
             }
             renderStatus(computed)
         }
@@ -534,14 +546,15 @@ class RecoveryActivity : AppCompatActivity() {
             setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleMedium)
         })
         for (group in plan.groups) {
+            val window = window(group.startsAt, group.endsAt)
             todayPlan.addView(TextView(this).apply {
                 text = if (group.earnedMinutes > 0) {
-                    getString(R.string.plan_group_worth, group.title, group.startsAt, group.endsAt, group.earnedMinutes)
+                    getString(R.string.plan_group_worth, group.title, window, group.earnedMinutes)
                 } else {
-                    getString(R.string.plan_group, group.title, group.startsAt, group.endsAt)
+                    getString(R.string.plan_group, group.title, window)
                 }
-                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyLarge)
-                setPadding(0, dp(12), 0, dp(4))
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleSmall)
+                setPadding(0, dp(14), 0, dp(2))
             })
             if (group.creditedMinutes > 0) {
                 todayPlan.addView(TextView(this).apply {
@@ -554,33 +567,37 @@ class RecoveryActivity : AppCompatActivity() {
     }
 
     private fun taskRow(group: DayGroup, task: DayTask): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
-            minimumHeight = dp(48)
-        }
+        val row = LayoutInflater.from(this).inflate(R.layout.plan_task_row, todayPlan, false)
         val state = when (task.state) {
             DayTask.REPORTED -> getString(R.string.task_state_reported)
             DayTask.CONFIRMED -> getString(R.string.task_state_confirmed)
             DayTask.REJECTED -> getString(R.string.task_state_rejected)
             else -> if (!group.open) getString(R.string.task_state_closed, group.startsAt, group.endsAt) else null
         }
-        row.addView(TextView(this).apply {
-            text = listOfNotNull(
-                task.title + if (task.note.isNotBlank()) " (${task.note})" else "",
-                state,
-            ).joinToString("\n")
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        })
+        row.findViewById<TextView>(R.id.task_title).text =
+            task.title + if (task.note.isNotBlank()) " (${task.note})" else ""
+        row.findViewById<TextView>(R.id.task_state).apply {
+            text = state.orEmpty()
+            visibility = if (state == null) View.GONE else View.VISIBLE
+            when (task.state) {
+                DayTask.CONFIRMED -> setTextColor(getColor(R.color.earned_gold))
+                DayTask.REJECTED -> setTextColor(colorFor(androidx.appcompat.R.attr.colorError))
+                else -> Unit
+            }
+        }
         if (DayPlanView.canReport(group, task)) {
-            row.addView(Button(this).apply {
-                text = getString(R.string.task_done)
+            row.findViewById<Button>(R.id.task_done).apply {
+                visibility = View.VISIBLE
                 contentDescription = getString(R.string.task_done) + ": " + task.title
                 setOnClickListener { button -> report(task, button) }
-            })
+            }
         }
         return row
     }
+
+    /** "07:00–08:00", or "ganzer Tag" for a window that is the whole day. */
+    private fun window(from: String, to: String): String =
+        if (from == "00:00" && (to == "23:59" || to == "24:00")) getString(R.string.whole_day) else "$from–$to"
 
     /** "Fertig": needs the server, and says so rather than pretending when it cannot reach it. */
     private fun report(task: DayTask, button: View) {
@@ -615,6 +632,15 @@ class RecoveryActivity : AppCompatActivity() {
             return
         }
         todayGroup.visibility = View.VISIBLE
+        // One scale: the limit plus any bonus, so a bar at its end is a day at its end.
+        // A limit of 0 with a daily limit set is no time left, which draws as a full bar.
+        if (report.dailyLimitMinutes > 0) {
+            todayMeter.max = maxOf(1, report.limitMinutes)
+            todayMeter.progress = if (report.limitMinutes <= 0) todayMeter.max else minOf(report.usedMinutes, report.limitMinutes)
+            todayMeter.visibility = View.VISIBLE
+        } else {
+            todayMeter.visibility = View.GONE
+        }
         todaySummary.text = when {
             report.dailyLimitMinutes <= 0 -> getString(R.string.today_used_nolimit, report.usedMinutes)
             report.bonusMinutes < 0 -> getString(
@@ -804,6 +830,12 @@ class RecoveryActivity : AppCompatActivity() {
                 // The whole list, where the parent has to find this app among every app installed.
                 Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
                 Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, self),
+            )
+
+            StatusAction.ALLOW_USAGE_ACCESS -> listOf(
+                // The per-app screen on the builds that have one, the list otherwise.
+                Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS, self),
+                Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS),
             )
 
             StatusAction.ALLOW_EXACT_ALARMS -> buildList {

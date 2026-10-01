@@ -28,6 +28,11 @@ class AlarmActivity : Activity() {
         setTurnScreenOn(true)
         setContentView(R.layout.activity_alarm)
         findViewById<TextView>(R.id.alarm_time).text = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+        // "Montag, 5. Oktober" in the phone's language, from the platform's own pattern for it.
+        val locale = resources.configuration.locales[0]
+        findViewById<TextView>(R.id.alarm_day).text = java.time.LocalDate.now().format(
+            DateTimeFormatter.ofPattern(android.text.format.DateFormat.getBestDateTimePattern(locale, "EEEEdMMMM"), locale),
+        )
         findViewById<Button>(R.id.alarm_stop).setOnClickListener {
             AlarmRingService.send(this, AlarmRingService.ACTION_STOP)
             finish()

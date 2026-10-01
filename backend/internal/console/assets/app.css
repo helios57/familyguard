@@ -381,8 +381,11 @@ p:last-child { margin-bottom: 0; }
 .help[open] summary { padding-bottom: 4px; }
 .help > p { margin: 0 0 8px 26px; }
 
-.empty { text-align: center; padding: 28px 18px; }
-.empty .empty-icon {
+/* Scoped to the card: `.empty` alone also matched the chart's empty hours (`.hr-fill.empty`) and gave
+   each one 28 px of padding — grey blocks wider than their column, past the card's edge (tour,
+   2026-10-01). */
+.card.empty { text-align: center; padding: 28px 18px; }
+.card.empty .empty-icon {
   width: 56px; height: 56px;
   margin: 0 auto 12px;
   display: grid; place-items: center;
@@ -390,10 +393,10 @@ p:last-child { margin-bottom: 0; }
   background: var(--accent-soft);
   color: var(--accent);
 }
-.empty .empty-icon .icon { width: 26px; height: 26px; }
-.empty h2 { margin-bottom: 6px; }
-.empty p { color: var(--text-dim); font-size: 0.95rem; max-width: 44ch; margin-inline: auto; }
-.empty .btn { margin-top: 4px; align-self: center; }
+.card.empty .empty-icon .icon { width: 26px; height: 26px; }
+.card.empty h2 { margin-bottom: 6px; }
+.card.empty p { color: var(--text-dim); font-size: 0.95rem; max-width: 44ch; margin-inline: auto; }
+.card.empty .btn { margin-top: 4px; align-self: center; }
 
 .steps { margin: 0 0 14px; padding: 0; list-style: none; counter-reset: step; }
 .steps li { position: relative; counter-increment: step; padding: 0 0 14px 40px; border-left: 2px solid var(--line); margin-left: 13px; }
@@ -433,10 +436,17 @@ p:last-child { margin-bottom: 0; }
   /* German runs to long single words — "Wiederherstellungscode" is wider than half a phone — so a
      button may shrink and break the word where German breaks it (the page is lang="de-CH"). */
   min-width: 0;
+  white-space: nowrap;
+}
+/* Where buttons share a row in fixed columns, a long German word ("Wiederherstellungscode") is wider
+   than its column. There, and only there, a word may break: hyphenated where the browser has a
+   dictionary, anywhere where it has none — `anywhere`, not `break-word`, because only `anywhere`
+   lowers a button's minimum width (the phone sheet measured 414 px of 360 with `break-word`).
+   Everywhere else a button keeps its word whole: "Entfer-nen" beside a select was the price of
+   applying this to every button (tour, 2026-10-01). */
+.action-grid .btn, .quick .btn, .btn-grid .btn, .pending-actions .btn {
+  white-space: normal;
   hyphens: auto;
-  /* `anywhere`, not `break-word`: only `anywhere` lowers the button's minimum width, and hyphenation
-     needs a dictionary a browser may not have — the test browser does not, and it measured the
-     phone sheet at 414 px of 360 with `break-word`. */
   overflow-wrap: anywhere;
 }
 .btn:active { transform: translateY(1px); }
@@ -448,7 +458,8 @@ p:last-child { margin-bottom: 0; }
 .btn-danger { color: var(--danger); }
 .btn-danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn-quiet { background: transparent; border-color: transparent; color: var(--text-dim); }
-.btn-block { display: flex; width: 100%; }
+/* A full-width button has the row to itself: its label wraps at spaces like a sentence. */
+.btn-block { display: flex; width: 100%; white-space: normal; text-align: center; }
 .btn-icon { min-width: var(--tap); padding: 0; }
 .btn-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -608,7 +619,7 @@ input:disabled { opacity: 0.5; }
 .time-block .row b { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .time-block .row .muted { text-align: right; }
 
-.quick { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.quick { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
 .quick .btn { flex-direction: column; gap: 4px; padding: 10px 4px; min-height: 64px; font-size: 0.86rem; }
 .quick .btn .icon { width: 22px; height: 22px; }
 
@@ -639,7 +650,19 @@ div.device-row > .btn { flex: 1 1 100%; }
 .device-row > .icon:last-child { color: var(--text-dim); }
 
 .tasks { display: grid; gap: 10px; }
-.task-group .row { margin-bottom: 4px; }
+.guardian-tasks { gap: 6px; }
+.task-group { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); }
+.task-group summary {
+  display: flex; align-items: center; gap: 10px;
+  min-height: var(--tap); padding: 8px 12px;
+  cursor: pointer; list-style: none;
+}
+.task-group summary::-webkit-details-marker { display: none; }
+.task-group summary .grow b, .task-group summary .grow small { display: block; }
+.task-group summary .grow small { color: var(--text-dim); font-size: 0.82rem; }
+.task-group summary > .icon { color: var(--text-dim); transition: transform 0.15s; }
+.task-group[open] summary > .icon { transform: rotate(90deg); }
+.task-group .list { padding: 0 12px 4px; }
 .task-group .list li { padding: 6px 0; }
 .earned { color: var(--gold); font-weight: 600; margin: 0; }
 .earned.debt { color: var(--danger); }
@@ -712,9 +735,23 @@ div.device-row > .btn { flex: 1 1 100%; }
 
 /* ---- Regeln ---------------------------------------------------------------- */
 
-.plan-group { padding: 12px 0; border-bottom: 1px solid var(--line); }
-.plan-group:first-child { padding-top: 0; }
-.plan-group:last-child { border-bottom: none; }
+.plan-group { padding: 0; }
+/* One line until opened; see editorBox in app.js. */
+.editor { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.editor summary {
+  display: flex; align-items: center; gap: 10px;
+  min-height: var(--tap); padding: 8px 12px;
+  cursor: pointer; list-style: none;
+}
+.editor summary::-webkit-details-marker { display: none; }
+.editor summary .grow b, .editor summary .grow small { display: block; }
+.editor summary .grow b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor summary .grow small { color: var(--text-dim); font-size: 0.82rem; }
+.editor summary > .icon { color: var(--text-dim); transition: transform 0.15s; }
+.editor[open] summary > .icon { transform: rotate(90deg); }
+.editor[open] summary { border-bottom: 1px solid var(--line); }
+.editor-body { padding: 12px; }
+.holiday.plan-group { padding: 12px 0; border-bottom: 1px solid var(--line); }
 /* Seven 44 px day buttons need 316 px and a card on a 360 px phone has 302, so a phone gets two rows
    of four; from 480 px they fit on one. */
 .plan-days { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
@@ -831,3 +868,17 @@ div.device-row > .btn { flex: 1 1 100%; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* A page on its way (refresh in app.js): shown only when the load takes a moment. */
+.view-loading {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  min-height: 40vh; color: var(--text-dim);
+}
+.spinner {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }

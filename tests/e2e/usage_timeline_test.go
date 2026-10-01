@@ -126,6 +126,13 @@ const timelineCardJS = `((name) => {
         // the hour the server said the screen was on for.
         height: fill ? fill.style.height : '',
         empty: !!fill && fill.classList.contains('empty'),
+        // And the rendered box, for one property only: the bar stays inside its own column. A
+        // stylesheet rule meant for something else once gave every empty hour 28 px of padding,
+        // and the bars spilled past the chart and the card while every value above was right.
+        inside: !fill || (() => {
+          const cb = c.getBoundingClientRect(), fb = fill.getBoundingClientRect();
+          return fb.left >= cb.left - 0.5 && fb.right <= cb.right + 0.5 && fb.top >= cb.top - 0.5 && fb.bottom <= cb.bottom + 0.5;
+        })(),
       };
     }),
     ticks: Array.from(card.querySelectorAll('.hr-tick')).map((s) => ({
@@ -157,6 +164,7 @@ type hourColumn struct {
 	Title  string `json:"title"`
 	Height string `json:"height"`
 	Empty  bool   `json:"empty"`
+	Inside bool   `json:"inside"`
 }
 
 type axisTick struct {
@@ -428,6 +436,12 @@ func TestTheConsoleDrawsWhatRanWhen(t *testing.T) {
 	// which on the two mornings the clocks move is 23 or 25 rather than 24.
 	if len(drawn.Columns) != wantHours {
 		t.Errorf("the chart drew %d columns; %s had %d hours on %s", len(drawn.Columns), loc, wantHours, day)
+	}
+	for _, col := range drawn.Columns {
+		if !col.Inside {
+			t.Errorf("the bar for %q is drawn outside its own column: the chart spills past its edges", col.Title)
+			break
+		}
 	}
 	if len(drawn.Ticks) != len(drawn.Columns) {
 		t.Fatalf("%d ticks under %d columns — the axis cannot be lining up with the chart",

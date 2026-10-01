@@ -34,11 +34,14 @@ function renderActivity(data) {
       'Bildschirmzeit, App-Nutzung und Standorte kommen von einem eingerichteten Handy. Sobald eines da ist, füllt sich diese Seite von selbst.',
       setUpAPhoneLink())];
   }
+  // The phone's name on the side cards only when the child has more than one phone: with one, the
+  // day card above already says whose it is, and the name three times was a third of the headings.
+  const many = data.devices.length > 1;
   return data.devices.map((dev, i) => el('div', { class: 'cols wide-left activity-device' },
     dayActivityCard(dev, data.timelines[i]),
     el('div', { class: 'col' },
-      locationCard(dev, data.locations[i]),
-      energyCard(dev, data.energy && data.energy[i]))));
+      locationCard(dev, data.locations[i], many),
+      energyCard(dev, data.energy && data.energy[i], many))));
 }
 
 VIEWS.activity = { load: loadActivity, render: renderActivity, perChild: true };
@@ -254,9 +257,9 @@ function appStatusText(a, screen) {
 
 /* Where the phone was: the latest position as the answer, with its age and accuracy, and the ones
    before folded away. A dot with no time on it reads as "here now" when it may be an hour old. */
-function locationCard(dev, locs) {
+function locationCard(dev, locs, many) {
   const list = (locs && locs.locations) || [];
-  const head = el('div', { class: 'card-head' }, el('h2', { text: 'Wo ' + dev.name + ' war' }));
+  const head = el('div', {}, el('h2', { text: 'Standort' }), many ? el('p', { class: 'muted', text: dev.name }) : null);
   if (!list.length) {
     return el('div', { class: 'card location-card' }, head,
       el('p', { class: 'muted', text: 'Noch keine Position. «Orten» im Handy-Menü unter Übersicht fragt das Handy danach.' }));
@@ -288,8 +291,10 @@ function locationCard(dev, locs) {
  * "why is the battery empty", and the answer can be "not us". A phone that has not reported says so
  * rather than drawing zeros.
  */
-function energyCard(dev, e) {
-  const head = el('div', {}, el('h2', { text: 'Energie' }), el('p', { class: 'muted', text: dev.name }));
+const MIN_UNPLUGGED_MINUTES = 15;
+
+function energyCard(dev, e, many) {
+  const head = el('div', {}, el('h2', { text: 'Energie' }), many ? el('p', { class: 'muted', text: dev.name }) : null);
   const t = e && e.total;
   if (!t || !(t.minutes > 0)) {
     return el('div', { class: 'card', 'data-energy': 'none' }, head,
@@ -297,9 +302,14 @@ function energyCard(dev, e) {
   }
   const hours = t.minutes / 60;
   const wakes = t.stream_opens + t.events + t.polls + t.pushes + t.other_syncs;
-  const battery = t.unplugged_minutes > 0
+  // A rate needs time to mean anything: one percent over a minute reads as "−60 % per hour". Below
+  // a quarter of an hour unplugged it is said as too short, never computed (tour, 2026-10-01:
+  // "−3234.6 % pro Stunde" from a one-second interval).
+  const battery = t.unplugged_minutes >= MIN_UNPLUGGED_MINUTES
     ? 'Akku −' + (t.battery_used / (t.unplugged_minutes / 60)).toFixed(1) + ' % pro Stunde ohne Ladegerät'
-    : 'Akku nicht gemessen (die ganze Zeit am Laden)';
+    : t.unplugged_minutes > 0
+      ? 'Akku: noch zu kurz ohne Ladegerät gemessen, um eine Rate zu nennen'
+      : 'Akku nicht gemessen (die ganze Zeit am Laden)';
   const facts = [
     'FamilyGuard braucht ' + (t.cpu_ms / 1000 / hours).toFixed(1) + ' s Rechenzeit pro Stunde',
     (wakes / hours).toFixed(1) + ' Aufwecker pro Stunde',

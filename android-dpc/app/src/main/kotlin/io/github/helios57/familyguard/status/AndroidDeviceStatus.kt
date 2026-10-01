@@ -1,6 +1,7 @@
 package io.github.helios57.familyguard.status
 
 import android.content.Context
+import io.github.helios57.familyguard.R
 import io.github.helios57.familyguard.enroll.EncryptedCredentialStore
 import io.github.helios57.familyguard.policy.DeviceOwnerPolicy
 import io.github.helios57.familyguard.recovery.AndroidRecoveryStore
@@ -12,6 +13,7 @@ import io.github.helios57.familyguard.usage.DayAttribution
 import io.github.helios57.familyguard.usage.EncryptedUsageStore
 import io.github.helios57.familyguard.usage.ForegroundReader
 import io.github.helios57.familyguard.usage.UsageLedger
+import io.github.helios57.familyguard.usage.UsageAccess
 import io.github.helios57.familyguard.usage.UsageStatsForegroundReader
 import java.net.URI
 import java.time.ZoneId
@@ -78,6 +80,7 @@ fun deviceStatusFacts(
         screenTimeUnavailableReason = runCatching { reader.unavailableReason() }
             .getOrDefault(UNKNOWN_USAGE_REASON),
         quotaMinutes = cached?.settings?.dailyLimitMinutes ?: 0,
+        usageAccess = runCatching { UsageAccess.granted(app) }.getOrNull(),
         unreportedRecoveryAttempts = stores
             ?.let { runCatching { RecoveryJournal(it.journal) { }.outstanding().size }.getOrNull() }
             ?: 0,
@@ -137,3 +140,50 @@ private const val PROBE_WINDOW_MILLIS = 60_000L
  */
 private const val UNKNOWN_USAGE_REASON =
     "not measured — this phone could not say why it cannot see screen time"
+
+/** The status block's phrases in the phone's language (see [StatusWords]). */
+fun statusWords(context: Context): StatusWords =
+    StatusWords(STATUS_WORD_IDS.mapValues { context.getString(it.value) })
+
+/** Every [StatusWords] key and the resource that carries it. `StatusWordsTest` asserts it is complete. */
+internal val STATUS_WORD_IDS: Map<String, Int> = mapOf(
+    "label_enrollment" to R.string.status_w_label_enrollment,
+    "label_management" to R.string.status_w_label_management,
+    "label_background" to R.string.status_w_label_background,
+    "label_alarms" to R.string.status_w_label_alarms,
+    "label_rules" to R.string.status_w_label_rules,
+    "label_policy" to R.string.status_w_label_policy,
+    "label_contact" to R.string.status_w_label_contact,
+    "label_screen_time" to R.string.status_w_label_screen_time,
+    "label_unreported" to R.string.status_w_label_unreported,
+    "enroll_none" to R.string.status_w_enroll_none,
+    "enroll_as" to R.string.status_w_enroll_as,
+    "enroll_as_with" to R.string.status_w_enroll_as_with,
+    "owner_unknown" to R.string.status_w_owner_unknown,
+    "owner_no" to R.string.status_w_owner_no,
+    "owner_yes" to R.string.status_w_owner_yes,
+    "background_unknown" to R.string.status_w_background_unknown,
+    "background_restricted" to R.string.status_w_background_restricted,
+    "allowed" to R.string.status_w_allowed,
+    "alarms_unknown" to R.string.status_w_alarms_unknown,
+    "alarms_restricted" to R.string.status_w_alarms_restricted,
+    "rules_off" to R.string.status_w_rules_off,
+    "rules_on" to R.string.status_w_rules_on,
+    "policy_none" to R.string.status_w_policy_none,
+    "policy_behind" to R.string.status_w_policy_behind,
+    "policy_ok" to R.string.status_w_policy_ok,
+    "contact_never" to R.string.status_w_contact_never,
+    "screen_of" to R.string.status_w_screen_of,
+    "screen_only" to R.string.status_w_screen_only,
+    "screen_no_access" to R.string.status_w_screen_no_access,
+    "screen_not_measured" to R.string.status_w_screen_not_measured,
+    "unreported_one" to R.string.status_w_unreported_one,
+    "unreported_other" to R.string.status_w_unreported_other,
+    "ago_now" to R.string.status_w_ago_now,
+    "ago_minute_one" to R.string.status_w_ago_minute_one,
+    "ago_minute_other" to R.string.status_w_ago_minute_other,
+    "ago_hour_one" to R.string.status_w_ago_hour_one,
+    "ago_hour_other" to R.string.status_w_ago_hour_other,
+    "ago_day_one" to R.string.status_w_ago_day_one,
+    "ago_day_other" to R.string.status_w_ago_day_other,
+)

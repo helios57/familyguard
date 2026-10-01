@@ -77,6 +77,22 @@ func TestTheAdminBuildsADailyPlanInTheConsole(t *testing.T) {
 
 	// Edited and saved again: the same group, not a new one.
 	b.waitFor(`document.querySelector('#view .plan-group input[data-field="title"]').value === 'Tag'`, 10*time.Second, "the saved plan redrawn")
+	// Saved, the group is one line saying what it is; its fields are a tap away.
+	var editor struct {
+		Open    bool
+		Title   string
+		Meta    string
+		Visible bool
+	}
+	b.eval(`(() => {
+	  const d = document.querySelector('#view .plan-group details.editor');
+	  const title = d.querySelector('input[data-field="title"]');
+	  return { Open: d.open, Title: d.querySelector('summary b').textContent, Meta: d.querySelector('summary small').textContent,
+	           Visible: title.checkVisibility() };
+	})()`, &editor)
+	if editor.Open || editor.Visible || editor.Title != "Tag" || editor.Meta != "täglich · 07:00–20:00 · +30 min · 2 Aufgaben" {
+		t.Errorf("a saved group is not one closed line saying what it is: %+v", editor)
+	}
 	b.eval(`(() => {
 	  const i = document.querySelector('#view .plan-group input[data-field="title"]'); i.value = 'Tagsüber'; i.dispatchEvent(new Event('input', { bubbles: true }));
 	  document.querySelector('#view button[data-save="all"]').click();
@@ -144,6 +160,14 @@ func TestAGuardianConfirmsTasksAndSeesBonuszeit(t *testing.T) {
 	card := func(task string) string {
 		return `#view .child-card button[data-task="` + task + `"][data-decision="confirm"]`
 	}
+	// The day's groups are one line each, closed, saying how far along they are; a parent opens one
+	// to act on its tasks, as here.
+	var summaries []string
+	b.eval(`Array.from(document.querySelectorAll('#view .child-card .task-group')).filter((d) => !d.open).map((d) => d.querySelector('summary').textContent)`, &summaries)
+	if len(summaries) == 0 || !strings.Contains(strings.Join(summaries, "|"), "bestätigt") {
+		t.Errorf("the day's groups are not drawn closed with their progress: %q", summaries)
+	}
+	b.eval(`document.querySelectorAll('#view .child-card .task-group').forEach((d) => { if (!d.open) d.querySelector('summary').click(); })`, nil)
 	b.waitFor(`!!document.querySelector('`+card(cat)+`')`, 10*time.Second, "the rejected task offered again on the card")
 	b.eval(`document.querySelector('`+card(cat)+`').click()`, nil)
 	waitState(cat, "CONFIRMED")
@@ -156,7 +180,7 @@ func TestAGuardianConfirmsTasksAndSeesBonuszeit(t *testing.T) {
 	// When it runs out, as a German reader says a day — never the ISO date the API carries.
 	var earnedText string
 	b.eval(`document.querySelector('#view .child-card .earned').textContent`, &earnedText)
-	if !regexp.MustCompile(`davon bis (Mo|Di|Mi|Do|Fr|Sa|So) \d{1,2}\.\d{1,2}\.$`).MatchString(earnedText) {
+	if !regexp.MustCompile(`(gültig|davon) bis (Mo|Di|Mi|Do|Fr|Sa|So) \d{1,2}\.\d{1,2}\.$`).MatchString(earnedText) {
 		t.Errorf("the Bonuszeit line does not say when it expires as a day: %q", earnedText)
 	}
 	// Each task over its state, not run into it ("Katze füttern" / "bestätigt").
@@ -173,6 +197,24 @@ func TestAGuardianConfirmsTasksAndSeesBonuszeit(t *testing.T) {
 	b.eval(`document.querySelectorAll('#view .waiting-card button[data-decision]').length`, &waiting)
 	if waiting != 0 {
 		t.Errorf("%d decision buttons still wait with nothing reported", waiting)
+	}
+
+	// Seventy minutes against a limit of sixty, with Bonuszeit left: the apps stay open on earned
+	// time, and the card says so — not "Frei" beside a full bar (tour, 2026-10-01).
+	h.call(http.MethodPost, "/device/usage", f.deviceToken(), map[string]any{
+		"day": time.Now().In(mustZurich()).Format("2006-01-02"), "samples": map[string]int64{pkgGame: 70 * 60 * 1000},
+	}).expect(http.StatusOK)
+	var word string
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		b.eval(`refresh()`, nil)
+		time.Sleep(700 * time.Millisecond)
+		b.eval(`(document.querySelector('#view .child-card [data-state]') || {}).dataset?.state || ''`, &word)
+		if word == "Bonuszeit" || time.Now().After(deadline) {
+			break
+		}
+	}
+	if word != "Bonuszeit" {
+		t.Errorf("over the limit with Bonuszeit left, the card's state reads %q, want Bonuszeit", word)
 	}
 	if len(b.pageErrors) != 0 {
 		t.Errorf("the guardian window made the page complain: %s", b.pageErrorReport())

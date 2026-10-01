@@ -190,12 +190,16 @@
     <string name="block_blocked">Blocked by your parents</string>
     <string name="block_pending">Waiting for your parents\' approval</string>
     <string name="plan_heading">To do today</string>
-    <string name="plan_group">%1$s · %2$s–%3$s</string>
-    <string name="plan_group_worth">%1$s · %2$s–%3$s · %4$d min earned time</string>
+    <string name="plan_group">%1$s · %2$s</string>
+    <string name="plan_group_worth">%1$s · %2$s · %3$d min earned time</string>
+    <!-- A plan group or agenda window that is the whole day (00:00–23:59). -->
+    <string name="whole_day">all day</string>
+    <!-- Above the parts of the screen that are for a parent. -->
+    <string name="parent_section">For parents</string>
     <string name="plan_group_done">Done: +%1$d min earned time</string>
     <string name="task_done">Done</string>
     <string name="task_state_reported">reported — waiting for your parents</string>
-    <string name="task_state_confirmed">confirmed</string>
+    <string name="task_state_confirmed">✓ confirmed</string>
     <string name="task_state_rejected">not done — report it again</string>
     <string name="task_state_closed">only %1$s–%2$s</string>
     <string name="report_failed">No connection — try again later.</string>
@@ -224,4 +228,44 @@
     <string name="agenda_optional">(optional)</string>
     <string name="agenda_today_all_day">Today: %1$s</string>
     <string name="agenda_all_day">(all day)</string>
+    <!-- The status block's phrases (StatusWords). StatusWordsTest holds values, values-de and ENGLISH together. -->
+    <string name="status_w_label_enrollment">Enrollment</string>
+    <string name="status_w_label_management">Management</string>
+    <string name="status_w_label_background">Background activity</string>
+    <string name="status_w_label_alarms">Alarms</string>
+    <string name="status_w_label_rules">Rules</string>
+    <string name="status_w_label_policy">Settings version</string>
+    <string name="status_w_label_contact">Last reached the family settings</string>
+    <string name="status_w_label_screen_time">Screen time today</string>
+    <string name="status_w_label_unreported">Waiting to be reported</string>
+    <string name="status_w_enroll_none">not set up yet — scan the QR code from the family settings</string>
+    <string name="status_w_enroll_as">set up as %1$s</string>
+    <string name="status_w_enroll_as_with">set up as %1$s with %2$s</string>
+    <string name="status_w_owner_unknown">could not be determined on this phone</string>
+    <string name="status_w_owner_no">this app is not this phone\'s device owner, so no rule can be applied</string>
+    <string name="status_w_owner_yes">this app manages this phone</string>
+    <string name="status_w_background_unknown">could not be read on this phone</string>
+    <string name="status_w_background_restricted">restricted, so every wake-up this app books is delayed — up to eight minutes on this phone. Tap the button and choose Allow. On a Samsung, also check Device care → Battery for a sleeping-apps list this app cannot read.</string>
+    <string name="status_w_allowed">allowed</string>
+    <string name="status_w_alarms_unknown">could not be read on this phone</string>
+    <string name="status_w_alarms_restricted">not allowed, so wake-ups are approximate and a bedtime can start late</string>
+    <string name="status_w_rules_off">off since %1$s — a recovery code was used. They come back when this phone next reaches the family settings.</string>
+    <string name="status_w_rules_on">on</string>
+    <string name="status_w_policy_none">no settings have reached this phone yet</string>
+    <string name="status_w_policy_behind">version %1$d was sent, but this phone is still applying version %2$d</string>
+    <string name="status_w_policy_ok">version %1$d</string>
+    <string name="status_w_contact_never">never</string>
+    <string name="status_w_screen_of">%1$d of %2$d minutes</string>
+    <string name="status_w_screen_only">%1$d minutes</string>
+    <string name="status_w_screen_no_access">not measured: usage access is off, so no daily limit is ever reached. Tap the button and switch FamilyGuard on.</string>
+    <string name="status_w_screen_not_measured">%1$s</string>
+    <string name="status_w_unreported_one">%1$d recovery attempt this phone has not been able to report yet</string>
+    <string name="status_w_unreported_other">%1$d recovery attempts this phone has not been able to report yet</string>
+    <string name="status_w_ago_now">just now</string>
+    <string name="status_w_ago_minute_one">%1$d minute ago</string>
+    <string name="status_w_ago_minute_other">%1$d minutes ago</string>
+    <string name="status_w_ago_hour_one">%1$d hour ago</string>
+    <string name="status_w_ago_hour_other">%1$d hours ago</string>
+    <string name="status_w_ago_day_one">%1$d day ago</string>
+    <string name="status_w_ago_day_other">%1$d days ago</string>
 </resources>

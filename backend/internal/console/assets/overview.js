@@ -77,7 +77,7 @@ VIEWS.overview = { load: loadOverview, render: renderOverview, afterRender: afte
 
 /* The state of a child in one word, with its colour. Paused by a parent beats everything, because
    it is the one a parent has to undo; then what the phones report. */
-function childStatus(child, devices) {
+function childStatus(child, devices, today) {
   const enrolled = devices.filter((d) => d.dev.enrolled);
   if (child.paused) return { cls: 'danger', word: 'Pausiert', reason: 'Nur Anrufe und Nachrichten gehen.' };
   if (!enrolled.length) return { cls: '', word: 'Kein Handy', reason: 'Noch kein Handy eingerichtet.' };
@@ -85,8 +85,22 @@ function childStatus(child, devices) {
   if (reasons.includes('BEDTIME')) return { cls: 'paused', word: 'Schlafenszeit', reason: 'Apps sind bis zum Morgen pausiert.' };
   if (reasons.includes('QUOTA')) return { cls: 'paused', word: 'Limit erreicht', reason: 'Das Tageslimit ist aufgebraucht.' };
   if (reasons.length) return { cls: 'paused', word: 'Pausiert', reason: 'Apps pausiert: ' + guardianReason(reasons[0]) + '.' };
+  // The limit is used up and the apps are still open: that is earned time being spent, and a card
+  // reading "Frei" beside a full red bar contradicts itself (tour, 2026-10-01).
+  if (enrolled.some((d) => onEarnedTime(d.desired)) && earnedLeft(today) > 0) {
+    return { cls: 'gold', word: 'Bonuszeit', reason: 'Tageslimit aufgebraucht — läuft mit Bonuszeit.' };
+  }
   const online = enrolled.some((d) => d.dev.state && d.dev.state.online);
   return { cls: 'ok', word: 'Frei', reason: online ? 'Apps sind offen.' : 'Apps sind offen · Handy gerade nicht erreichbar.' };
+}
+
+/* Over today's quota with a limit in force: whatever runs now is paid from earned time. */
+function onEarnedTime(desired) {
+  return !!desired && (desired.daily_limit_minutes || 0) > 0 && (desired.used_minutes || 0) >= (desired.quota_minutes || 0);
+}
+
+function earnedLeft(today) {
+  return (today && today.earned && today.earned.left_minutes) || 0;
 }
 
 function guardianReason(reason) {
@@ -108,17 +122,19 @@ function guardianToday(desired) {
 /* Time used against the quota as one bar. A limit exists when the plain limit says so: the quota can
    be 0 with a limit in force — a day with its time taken away (FR-21) — and that is "0 min left",
    never "no daily limit". */
-function timeMeter(desired) {
+function timeMeter(desired, earned) {
   const used = desired.used_minutes || 0;
   const quota = desired.quota_minutes || 0;
   const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 100;
+  // Gold, not red, when the time past the limit is earned time: nothing is wrong, the child earned it.
+  const cls = used >= quota ? (earned > 0 ? 'bonus' : 'over') : '';
   return el('div', { class: 'meter', role: 'img', 'aria-label': fmtMinutes(used) + ' von ' + fmtMinutes(quota) },
-    el('span', { class: used >= quota ? 'over' : '', style: { width: pct + '%' } }));
+    el('span', { class: cls, style: { width: pct + '%' } }));
 }
 
 function childCard(profile) {
   const { child, today, devices } = profile;
-  const status = childStatus(child, devices);
+  const status = childStatus(child, devices, today);
   const enrolled = devices.filter((d) => d.dev.enrolled);
   const card = el('div', { class: 'card child-card', 'data-child': child.id },
     el('div', { class: 'child-head' },
@@ -139,7 +155,7 @@ function childCard(profile) {
     const limited = (desired.daily_limit_minutes || 0) > 0;
     hasLimit = hasLimit || limited;
     time.append(el('p', { class: 'today', text: (enrolled.length > 1 ? dev.name + ' — ' : '') + guardianToday(desired) }));
-    if (limited) time.append(timeMeter(desired));
+    if (limited) time.append(timeMeter(desired, earnedLeft(today)));
   }
   if (time.childElementCount) card.append(time);
   const earned = guardianEarned(today);
@@ -283,7 +299,10 @@ function guardianEarned(today) {
       ? 'Bonuszeit: −' + fmtMinutes(-left) + ' (wird mit der nächsten verrechnet)'
       : 'Bonuszeit: ' + fmtMinutes(left)
         + (e.spent_minutes > 0 ? ' (heute ' + fmtMinutes(e.spent_minutes) + ' gebraucht)' : '')
-        + (next && left > 0 ? ' · ' + fmtMinutes(next.minutes) + ' davon bis ' + fmtDayDe(next.expires_on) : '') });
+        // "gültig bis" when all of it ends that day; "davon" only when part of it ends sooner.
+        + (next && left > 0
+          ? (next.minutes >= left ? ' · gültig bis ' : ' · ' + fmtMinutes(next.minutes) + ' davon bis ') + fmtDayDe(next.expires_on)
+          : '') });
 }
 
 /* One decision on one task of today: Bestätigen, Nicht erledigt, or Rückgängig. */
@@ -328,22 +347,42 @@ function waitingCard(profiles) {
 
 const TASK_STATE = { OPEN: 'offen', REPORTED: 'gemeldet', CONFIRMED: 'bestätigt', REJECTED: 'nicht erledigt' };
 
-/* Today's groups on a child's card. Every task that is not confirmed can be confirmed from here —
-   a child who forgot to tap "Fertig" still did the task — and a confirmed one can be taken back. */
+/* Today's groups on a child's card, one line each — "Morgen · 2/2 · +15 min verdient" — opening to
+   the tasks. Every task that is not confirmed can be confirmed from there (a child who forgot to tap
+   "Fertig" still did it), and a confirmed one taken back. The reported ones are also in "Wartet auf
+   dich" above, which is where a parent acts on them; listing every task of the day on the card
+   pushed the phones below the fold (tour, 2026-10-01). A group stays open across redraws once
+   opened. */
 function guardianTasks(child, today) {
   if (!today || !today.groups.length) return null;
-  return el('div', { class: 'stack guardian-tasks' }, today.groups.map((g) => el('div', { class: 'task-group' },
-    el('div', { class: 'row' },
-      el('b', { text: g.title }),
-      el('span', { class: 'muted', text: g.starts_at + '–' + g.ends_at
-        + (g.credited_minutes > 0 ? ' · +' + fmtMinutes(g.credited_minutes) + ' verdient' : ' · +' + fmtMinutes(g.earned_minutes)) })),
-    el('ul', { class: 'list' }, g.tasks.map((t) => el('li', {},
-      el('span', { class: 'label' },
-        el('span', { text: t.title }),
-        el('small', { text: TASK_STATE[t.state] + (t.note ? ' · ' + t.note : '') })),
-      t.state === 'CONFIRMED'
-        ? decideTask(child, t, 'undo', 'Rückgängig')
-        : decideTask(child, t, 'confirm', 'Bestätigen')))))));
+  state.openGroups = state.openGroups || new Set();
+  return el('div', { class: 'stack guardian-tasks' }, today.groups.map((g) => {
+    const done = g.tasks.filter((t) => t.state === 'CONFIRMED').length;
+    const reported = g.tasks.filter((t) => t.state === 'REPORTED').length;
+    const key = child.id + '/' + (g.id || g.title);
+    const earned = g.credited_minutes > 0;
+    const details = el('details', { class: 'task-group', 'data-group': g.id || g.title, open: state.openGroups.has(key) },
+      el('summary', {},
+        el('span', { class: 'grow' },
+          el('b', { text: g.title }),
+          el('small', { text: fmtWindow(g.starts_at, g.ends_at) + ' · ' + done + ' von ' + g.tasks.length + ' bestätigt'
+            + (reported ? ' · ' + reported + ' gemeldet' : '') })),
+        el('span', { class: 'chip ' + (earned ? 'gold' : ''), text: earned
+          ? '+' + fmtMinutes(g.credited_minutes) + ' verdient'
+          : '+' + fmtMinutes(g.earned_minutes) }),
+        icon('chevron-right', 'icon-sm')),
+      el('ul', { class: 'list' }, g.tasks.map((t) => el('li', {},
+        el('span', { class: 'label' },
+          el('span', { text: t.title }),
+          el('small', { text: TASK_STATE[t.state] + (t.note ? ' · ' + t.note : '') })),
+        t.state === 'CONFIRMED'
+          ? decideTask(child, t, 'undo', 'Rückgängig')
+          : decideTask(child, t, 'confirm', 'Bestätigen')))));
+    details.addEventListener('toggle', () => {
+      if (details.open) state.openGroups.add(key); else state.openGroups.delete(key);
+    });
+    return details;
+  }));
 }
 
 /* ---- Live (FR-27) ------------------------------------------------------------ */

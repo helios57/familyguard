@@ -296,7 +296,7 @@ async function saveRules() {
 const clonePlan = (groups) => groups.map((g) => ({ ...g, tasks: (g.tasks || []).map((t) => ({ ...t })) }));
 const newPlanTask = () => ({ title: '', note: '' });
 const newPlanGroup = () => ({
-  title: '', weekdays: 127, starts_at: '07:00', ends_at: '20:00', earned_minutes: 30, tasks: [newPlanTask()],
+  title: '', weekdays: 127, starts_at: '07:00', ends_at: '20:00', earned_minutes: 30, tasks: [newPlanTask()], _open: true,
 });
 
 /* The day buttons: Mo … So as seven toggles over a weekday bitmask, bit 0 = Monday. */
@@ -328,7 +328,9 @@ function planCard() {
     oninput: (e) => { obj[key] = parse ? parse(e.target.value) : e.target.value; changed(); },
   });
 
-  const group = (g, gi) => el('div', { class: 'plan-group stack' },
+  const group = (g, gi) => el('div', { class: 'plan-group' }, editorBox(g, g.title || 'Neue Gruppe',
+    [fmtDays(g.weekdays), fmtWindow(g.starts_at, g.ends_at), '+' + fmtMinutes(Number(g.earned_minutes) || 0),
+      g.tasks.length === 1 ? '1 Aufgabe' : g.tasks.length + ' Aufgaben'].join(' · '),
     el('div', {}, el('label', { text: 'Gruppe' }),
       field(g, 'title', { type: 'text', 'data-field': 'title', placeholder: 'z. B. Morgen', 'aria-label': 'Name der Gruppe' })),
     dayToggles(() => g.weekdays, (v) => { g.weekdays = v; changed(); }),
@@ -353,7 +355,7 @@ function planCard() {
       el('button', {
         class: 'btn btn-quiet btn-danger', type: 'button', text: 'Gruppe entfernen', 'data-plan': 'remove-group',
         onclick: () => restructure(() => draft.groups.splice(gi, 1)),
-      })));
+      }))));
 
   return el('div', { class: 'card plan-card' },
     el('div', { class: 'card-head' },
@@ -493,7 +495,7 @@ async function saveAlarm() {
 
 /* ---- the agenda (FR-24.6) ---------------------------------------------------- */
 
-const newAgendaEntry = () => ({ kind: 'RECURRING', title: '', place: '', optional: false, weekdays: 31, day: '', starts_at: '08:00', ends_at: '12:00' });
+const newAgendaEntry = () => ({ kind: 'RECURRING', title: '', place: '', optional: false, weekdays: 31, day: '', starts_at: '08:00', ends_at: '12:00', _open: true });
 
 /* The agenda editor: repeating entries (school, training) and entries on one date, saved as one
    document like the plan, and below it the week as the server expands it — which is what the phone
@@ -519,7 +521,9 @@ function agendaCard(data) {
     const when = e.kind === 'SINGLE'
       ? field(e, 'day', { type: 'date', 'aria-label': 'Datum' })
       : dayToggles(() => e.weekdays, (v) => { e.weekdays = v; changed(); });
-    return el('div', { class: 'agenda-entry plan-group stack' },
+    return el('div', { class: 'agenda-entry plan-group' }, editorBox(e, e.title || 'Neuer Eintrag',
+      [e.kind === 'SINGLE' ? (e.day ? fmtDayDe(e.day) : 'ein Datum') : fmtDays(e.weekdays), fmtWindow(e.starts_at, e.ends_at),
+        e.place, e.optional ? 'freiwillig' : ''].filter(Boolean).join(' · '),
       el('div', { class: 'field-row' },
         field(e, 'title', { type: 'text', placeholder: 'z. B. Schule', 'aria-label': 'Titel' }),
         field(e, 'place', { type: 'text', placeholder: 'Ort (optional)', 'aria-label': 'Ort' })),
@@ -537,7 +541,7 @@ function agendaCard(data) {
         el('button', {
           class: 'btn btn-quiet btn-danger', type: 'button', text: 'Entfernen', 'data-agenda': 'remove',
           onclick: () => restructure(() => draft.entries.splice(i, 1)),
-        })));
+        }))));
   };
   const week = el('div', { class: 'agenda-week' }, data.week.map((d) => el('div', { class: 'agenda-day' },
     el('b', { text: fmtDayDe(d.day) + (d.holiday ? ' · ' + d.holiday : '') }),

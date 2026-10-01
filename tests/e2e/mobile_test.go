@@ -888,7 +888,12 @@ func TestConsoleRendersOnAPhone(t *testing.T) {
 // children so the switcher is a real row, a phone that has reported apps and usage, blocked
 // domains, a second parent, and — deliberately — the longest plausible values for the fields that
 // are drawn as a single line. A layout guard against short strings measures the guard.
-func seedAFamilyWorthLookingAt(t *testing.T, h *harness) {
+// seededFamily is what seedAFamilyWorthLookingAt made, for a caller that adds to it (the tour).
+type seededFamily struct {
+	parentToken, childID, deviceID, deviceToken string
+}
+
+func seedAFamilyWorthLookingAt(t *testing.T, h *harness) seededFamily {
 	t.Helper()
 
 	parent := h.signIn(primaryParent)
@@ -977,6 +982,7 @@ func seedAFamilyWorthLookingAt(t *testing.T, h *harness) {
 	if len(devices.Devices) != 2 {
 		t.Fatalf("the seed left %d devices, expected 2 (one enrolled, one spare)", len(devices.Devices))
 	}
+	return seededFamily{parentToken: parent.Token, childID: child.ID, deviceID: device.ID, deviceToken: enrolled.DeviceToken}
 }
 
 // enrolledPhoneName is the device seedAFamilyWorthLookingAt enrolls. Named because two subtests

@@ -1,7 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The alarm over the lock screen (FR-23.4). Read by somebody who has just woken up: the time,
+  large; the day, so a Saturday alarm is not mistaken for a school day; then one big button that
+  stops it and a quieter one that snoozes. The buttons are Material tags rather than <Button>,
+  because this activity is a plain Activity and its inflater does not swap <Button> for the themed
+  one — it drew the grey pre-Material button in 0.6.33.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="?attr/colorSurface"
     android:gravity="center"
     android:orientation="vertical"
     android:padding="32dp">
@@ -10,28 +18,47 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="@string/alarm_title"
-        android:textSize="24sp" />
+        android:textAppearance="?attr/textAppearanceTitleLarge"
+        android:textColor="?attr/colorOnSurfaceVariant" />
 
     <TextView
         android:id="@+id/alarm_time"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="48dp"
-        android:textSize="72sp"
+        android:textAppearance="?attr/textAppearanceDisplayLarge"
+        android:textColor="?attr/colorOnSurface"
+        android:textSize="88sp"
         android:textStyle="bold" />
 
-    <Button
+    <TextView
+        android:id="@+id/alarm_day"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textAppearance="?attr/textAppearanceTitleMedium"
+        android:textColor="?attr/colorOnSurfaceVariant" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="48dp"
+        android:text="@string/alarm_text"
+        android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/alarm_stop"
         android:layout_width="match_parent"
-        android:layout_height="72dp"
+        android:layout_height="80dp"
         android:layout_marginBottom="16dp"
         android:text="@string/alarm_stop"
-        android:textSize="22sp" />
+        android:textSize="24sp"
+        android:textStyle="bold" />
 
-    <Button
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/alarm_snooze"
+        style="@style/Widget.Material3.Button.OutlinedButton"
         android:layout_width="match_parent"
-        android:layout_height="72dp"
+        android:layout_height="64dp"
         android:text="@string/alarm_snooze"
-        android:textSize="22sp" />
+        android:textSize="20sp" />
 </LinearLayout>

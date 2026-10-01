@@ -54,7 +54,7 @@ func TestTheConsoleShowsWhatFamilyGuardSpends(t *testing.T) {
 			none = c.Text
 		}
 	}
-	for _, want := range []string{f.device.Name, "pro Stunde ohne Ladegerät", "FamilyGuard braucht", "s Rechenzeit pro Stunde", "Aufwecker pro Stunde",
+	for _, want := range []string{f.device.Name, "noch zu kurz ohne Ladegerät gemessen", "FamilyGuard braucht", "s Rechenzeit pro Stunde", "Aufwecker pro Stunde",
 		"Ruht (Bildschirm aus) 75 % der Zeit", "Werbefilter nur DNS 50 % seiner Zeit"} {
 		if !strings.Contains(reported, want) {
 			t.Errorf("the reporting phone's energy card lacks %q: %q", want, reported)

@@ -41,6 +41,9 @@ enum class StatusAction {
 
     /** Alarms and reminders, for the exact wake-up a bedtime starts on. */
     ALLOW_EXACT_ALARMS,
+
+    /** Usage access, without which screen time is never measured and no daily limit is reached. */
+    ALLOW_USAGE_ACCESS,
 }
 
 /**
@@ -54,6 +57,8 @@ data class StatusLine(
     val value: String,
     val level: StatusLevel,
     val action: StatusAction? = null,
+    /** Which fact this is, whatever the language: one of [StatusLabels]. [label] is what is shown. */
+    val key: String = label,
 )
 
 /**
@@ -65,11 +70,11 @@ data class StatusLine(
  */
 data class DeviceStatus(val lines: List<StatusLine>) {
 
-    /** The line with this label, or an error naming the labels that do exist. */
-    fun line(label: String): StatusLine =
-        lines.firstOrNull { it.label == label }
+    /** The line for this fact (one of [StatusLabels]), or an error naming the facts that do exist. */
+    fun line(key: String): StatusLine =
+        lines.firstOrNull { it.key == key }
             ?: throw NoSuchElementException(
-                "no status line labelled \"$label\"; the screen has ${lines.map { it.label }}"
+                "no status line for \"$key\"; the screen has ${lines.map { it.key }}"
             )
 
     /** True if anything is wrong *or* unmeasurable. Both put the summary banner on the screen. */
@@ -127,9 +132,19 @@ data class StatusFacts(
     /** Recovery attempts made on this phone that the server has not been told about yet. */
     val unreportedRecoveryAttempts: Int,
     val nowMillis: Long,
+    /**
+     * Whether this app holds usage access, or null when it could not be read. Only consulted when
+     * screen time is not measured: it decides whether the line can offer the switch, and says so in
+     * the family's language rather than quoting the reader's technical reason.
+     */
+    val usageAccess: Boolean? = null,
 )
 
-/** The labels, in one place, so the tests and the screen cannot drift apart. */
+/**
+ * The facts, in one place, so the tests and the screen cannot drift apart. They are KEYS: what the
+ * screen shows is [StatusWords]' label for each, in the phone's language. The English labels happen
+ * to be these same words, which is what keeps the older assertions readable.
+ */
 object StatusLabels {
     const val ENROLLMENT = "Enrollment"
     const val DEVICE_OWNER = "Management"
@@ -149,19 +164,21 @@ object StatusLabels {
  * touches the device is in `AndroidDeviceStatus.kt`, and the split is what lets the eleven cases
  * below be asserted in milliseconds instead of on a handset.
  */
-fun deviceStatus(facts: StatusFacts): DeviceStatus {
+fun deviceStatus(facts: StatusFacts, words: StatusWords = StatusWords.ENGLISH): DeviceStatus {
     val lines = mutableListOf<StatusLine>()
+    fun line(key: String, value: String, level: StatusLevel, action: StatusAction? = null) =
+        StatusLine(words.label(key), value, level, action, key)
 
     lines += if (facts.deviceId == null) {
-        StatusLine(
+        line(
             StatusLabels.ENROLLMENT,
-            "not set up yet — scan the QR code from the family settings",
+            words["enroll_none"],
             StatusLevel.ATTENTION,
         )
     } else {
-        StatusLine(
+        line(
             StatusLabels.ENROLLMENT,
-            "set up as ${facts.deviceId}" + (facts.serverHost?.let { " with $it" } ?: ""),
+            facts.serverHost?.let { words["enroll_as_with", facts.deviceId, it] } ?: words["enroll_as", facts.deviceId],
             StatusLevel.OK,
         )
     }
@@ -169,19 +186,19 @@ fun deviceStatus(facts: StatusFacts): DeviceStatus {
     lines += when (facts.deviceOwner) {
         // Not a rephrasing of `false`. "We asked and the answer was no" and "we could not ask" are
         // different problems with different fixes, and one of them is a bug in this app.
-        null -> StatusLine(
+        null -> line(
             StatusLabels.DEVICE_OWNER,
-            "could not be determined on this phone",
+            words["owner_unknown"],
             StatusLevel.NOT_MEASURED,
         )
 
-        false -> StatusLine(
+        false -> line(
             StatusLabels.DEVICE_OWNER,
-            "this app is not this phone's device owner, so no rule can be applied",
+            words["owner_no"],
             StatusLevel.ATTENTION,
         )
 
-        true -> StatusLine(StatusLabels.DEVICE_OWNER, "this app manages this phone", StatusLevel.OK)
+        true -> line(StatusLabels.DEVICE_OWNER, words["owner_yes"], StatusLevel.OK)
     }
 
     // The two capabilities that decide whether anything this app schedules actually happens on
@@ -195,78 +212,74 @@ fun deviceStatus(facts: StatusFacts): DeviceStatus {
     // reason to withhold the way to set it -- the screen that cannot answer the question is exactly
     // the one where a parent needs the switch, and the settings screen answers it for them.
     lines += when (facts.powerExempt) {
-        null -> StatusLine(
+        null -> line(
             StatusLabels.BACKGROUND,
-            "could not be read on this phone",
+            words["background_unknown"],
             StatusLevel.NOT_MEASURED,
             StatusAction.ALLOW_BACKGROUND,
         )
 
-        false -> StatusLine(
+        false -> line(
             StatusLabels.BACKGROUND,
-            "restricted, so every wake-up this app books is delayed — up to eight minutes on this " +
-                "phone. Tap the button and choose Allow. On a Samsung, also check Device care → " +
-                "Battery for a sleeping-apps list this app cannot read.",
+            words["background_restricted"],
             StatusLevel.ATTENTION,
             StatusAction.ALLOW_BACKGROUND,
         )
 
-        true -> StatusLine(StatusLabels.BACKGROUND, "allowed", StatusLevel.OK)
+        true -> line(StatusLabels.BACKGROUND, words["allowed"], StatusLevel.OK)
     }
 
     lines += when (facts.exactAlarms) {
-        null -> StatusLine(
+        null -> line(
             StatusLabels.EXACT_ALARMS,
-            "could not be read on this phone",
+            words["alarms_unknown"],
             StatusLevel.NOT_MEASURED,
             StatusAction.ALLOW_EXACT_ALARMS,
         )
 
-        false -> StatusLine(
+        false -> line(
             StatusLabels.EXACT_ALARMS,
-            "not allowed, so wake-ups are approximate and a bedtime can start late",
+            words["alarms_restricted"],
             StatusLevel.ATTENTION,
             StatusAction.ALLOW_EXACT_ALARMS,
         )
 
-        true -> StatusLine(StatusLabels.EXACT_ALARMS, "allowed", StatusLevel.OK)
+        true -> line(StatusLabels.EXACT_ALARMS, words["allowed"], StatusLevel.OK)
     }
 
     lines += if (facts.releasedSinceMillis != null) {
-        StatusLine(
+        line(
             StatusLabels.RULES,
-            "off since ${ago(facts.nowMillis - facts.releasedSinceMillis)} — a recovery code was " +
-                "used. They come back when this phone next reaches the family settings.",
+            words["rules_off", ago(facts.nowMillis - facts.releasedSinceMillis, words)],
             StatusLevel.ATTENTION,
         )
     } else {
-        StatusLine(StatusLabels.RULES, "on", StatusLevel.OK)
+        line(StatusLabels.RULES, words["rules_on"], StatusLevel.OK)
     }
 
     lines += when {
         facts.appliedPolicyVersion == 0L && facts.cachedPolicyVersion == null ->
-            StatusLine(StatusLabels.POLICY, "no settings have reached this phone yet", StatusLevel.ATTENTION)
+            line(StatusLabels.POLICY, words["policy_none"], StatusLevel.ATTENTION)
 
         // The gap that the console cannot see on its own: the server sent v9, this phone is still
         // enforcing v7, and every rule added in between is simply not happening.
         facts.cachedPolicyVersion != null && facts.cachedPolicyVersion > facts.appliedPolicyVersion ->
-            StatusLine(
+            line(
                 StatusLabels.POLICY,
-                "version ${facts.cachedPolicyVersion} was sent, but this phone is still applying " +
-                    "version ${facts.appliedPolicyVersion}",
+                words["policy_behind", facts.cachedPolicyVersion, facts.appliedPolicyVersion],
                 StatusLevel.ATTENTION,
             )
 
-        else -> StatusLine(StatusLabels.POLICY, "version ${facts.appliedPolicyVersion}", StatusLevel.OK)
+        else -> line(StatusLabels.POLICY, words["policy_ok", facts.appliedPolicyVersion], StatusLevel.OK)
     }
 
     lines += if (facts.lastServerContactMillis <= 0) {
-        StatusLine(StatusLabels.LAST_CONTACT, "never", StatusLevel.ATTENTION)
+        line(StatusLabels.LAST_CONTACT, words["contact_never"], StatusLevel.ATTENTION)
     } else {
         val age = facts.nowMillis - facts.lastServerContactMillis
-        StatusLine(
+        line(
             StatusLabels.LAST_CONTACT,
-            ago(age),
+            ago(age, words),
             // A phone enforcing a week-old policy is still enforcing, so this is not a failure —
             // but it is the first thing to look at when a change the parent made has not happened.
             if (age >= STALE_CONTACT_MILLIS) StatusLevel.ATTENTION else StatusLevel.OK,
@@ -277,22 +290,27 @@ fun deviceStatus(facts: StatusFacts): DeviceStatus {
         // The line this whole file exists for. Without it a phone that cannot see usage reports
         // zero minutes, the daily limit is never reached, and the console shows a child who spent
         // the day off their phone — which a parent has no way to tell from the real thing.
-        StatusLine(StatusLabels.SCREEN_TIME, facts.screenTimeUnavailableReason, StatusLevel.NOT_MEASURED)
+        //
+        // Without usage access the line says so in plain words and offers the switch; any other cause
+        // is the reader's own reason, which names what it found.
+        if (facts.usageAccess == false) {
+            line(StatusLabels.SCREEN_TIME, words["screen_no_access"], StatusLevel.NOT_MEASURED, StatusAction.ALLOW_USAGE_ACCESS)
+        } else {
+            line(StatusLabels.SCREEN_TIME, words["screen_not_measured", facts.screenTimeUnavailableReason], StatusLevel.NOT_MEASURED)
+        }
     } else {
         val minutes = TimeUnit.MILLISECONDS.toMinutes(facts.screenTimeTodayMillis).toInt()
-        StatusLine(
+        line(
             StatusLabels.SCREEN_TIME,
-            if (facts.quotaMinutes > 0) "$minutes of ${facts.quotaMinutes} minutes" else "$minutes minutes",
+            if (facts.quotaMinutes > 0) words["screen_of", minutes, facts.quotaMinutes] else words["screen_only", minutes],
             StatusLevel.OK,
         )
     }
 
     if (facts.unreportedRecoveryAttempts > 0) {
-        lines += StatusLine(
+        lines += line(
             StatusLabels.UNREPORTED,
-            "${facts.unreportedRecoveryAttempts} recovery " +
-                (if (facts.unreportedRecoveryAttempts == 1) "attempt" else "attempts") +
-                " this phone has not been able to report yet",
+            words[if (facts.unreportedRecoveryAttempts == 1) "unreported_one" else "unreported_other", facts.unreportedRecoveryAttempts],
             StatusLevel.ATTENTION,
         )
     }
@@ -311,14 +329,13 @@ private const val STALE_CONTACT_MILLIS = 24L * 60 * 60 * 1000
  * problem, while rounding 90 minutes down to "1 hour ago" understates nothing that matters. A
  * negative age — a clock that moved — reads as "just now" rather than as a time in the future.
  */
-internal fun ago(millis: Long): String {
+internal fun ago(millis: Long, words: StatusWords = StatusWords.ENGLISH): String {
     val seconds = millis / 1000
+    fun counted(count: Long, unit: String) = words[if (count == 1L) "ago_${unit}_one" else "ago_${unit}_other", count]
     return when {
-        seconds < 60 -> "just now"
-        seconds < 3600 -> plural(seconds / 60, "minute") + " ago"
-        seconds < 86_400 -> plural(seconds / 3600, "hour") + " ago"
-        else -> plural(seconds / 86_400, "day") + " ago"
+        seconds < 60 -> words["ago_now"]
+        seconds < 3600 -> counted(seconds / 60, "minute")
+        seconds < 86_400 -> counted(seconds / 3600, "hour")
+        else -> counted(seconds / 86_400, "day")
     }
 }
-
-private fun plural(count: Long, unit: String): String = "$count $unit" + if (count == 1L) "" else "s"

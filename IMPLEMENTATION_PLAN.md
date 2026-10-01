@@ -4016,7 +4016,7 @@ proven.
 | FR-13 / FR-13.1 console | 4.x | e2e `TestConsoleIsServedAndMobileReady`, `TestBrowserSignInJourney`; `TestConsoleServesEveryRoute`, `TestConsoleDeclaresTheMobileViewport`, `TestConsoleReferencesOnlyMountedAssets`, `TestConsoleHasNoInlineScriptOrStyle`, `TestConsoleRevalidatesWithETag`, `TestConsoleDoesNotSwallowUnknownPaths` |
 | FR-13.2 mobile-first | 4.4, 6.5, 49 | e2e `TestConsoleRendersOnAPhone` — the signed-out screen, all seven views and sub-pages (Übersicht, Regeln › Zeit, Schutz, Agenda, Apps, Aktivität, Familie), the bottom bar, the phone sheet's confirmation and the provisioning sheet measured in a real browser at 360x800 in German (`LANGUAGE=de_CH`): no horizontal page scroll, no sideways-scrolling list, every touch target >= 44 px, no card wider than the viewport, 16 px inputs, the sign-in button above the fold, the header still at the top after scrolling to the end, the first card below it rather than behind it, permanent chrome under 15% of the screen, **the bottom bar pinned (measured at the top of a long page, where an unpinned bar would not be at the bottom), holding all five destinations, covering neither the last card nor the toast**, the sheet closing on Escape, the QR legible. Driven against a **seeded** family, because an empty console lays out perfectly and the overflow this catches comes from a long device name or a package id. `tests/e2e/calibrate-mobile.sh` is the executable calibration record: fifteen breaks, each required to go red *naming its own rule*, then green on restore — and it found a real defect in its subject the first time it ran (the pinned-navigation check measured the bar only at the end of a long page, where a `position: static` bar also sits at the bottom). Source-level companions: `TestConsoleDeclaresTheMobileViewport` — a missing viewport meta makes the whole mobile suite vacuous at 980 px. **"Navigation reachable one-handed" is met again since 0.6.33**: the bottom bar replaced the top drawer (2026-09-03 → 2026-09-30, both at the owner's request; CONCEPT §3.4). `TestTheConsoleHasOneNavigationAtEveryWidth` drives a real browser across the 900 px breakpoint in both directions and asserts one navigation element — a sidebar on a laptop, the bottom bar on a phone — with every destination on screen and no dialog nobody opened |
 | FR-13.3 installable, no desktop-only input | 4.4, 6.7 | e2e `TestTheConsoleInstallsToAPhone` — Chrome's own verdict over CDP (`Page.getAppManifest`, `Page.getInstallabilityErrors`, `Page.getManifestIcons`), opened by a fail-closed negative control on `about:blank` so that an empty error list cannot mean "this browser computes nothing". `TestConsoleNeedsNoDesktopOnlyInput` covers the second half — no `:hover`, `contextmenu`, `dblclick`, `accesskey` or mouse-only pointer event in any served asset — with a byte-count floor so an empty 200 cannot read as clean. **Calibrated 8/8** (four each, including one harness break per side); the manifest-route checks that used to stand alone here read back our own bytes and are not a statement about installing anything. Not proven: behaviour on a real cellular connection, and installation on any engine other than Chrome |
-| FR-13.4 phone states its own condition | 5.9 | `DeviceStatusTest` — 25 cases over the pure composer, including the three the console cannot see: a policy received but never applied, a device out of contact, and a phone that cannot measure usage at all. The last is the one this row exists for: `NOT_MEASURED` is a third level, carried through `ForegroundReader.spans()` returning `null` rather than an empty list, and asserted to render as prominently as a fault rather than as a zero. `SynchronizerTest` (4 tests) pins the contact stamp to receipt and nowhere else, so the line cannot report a week-old phone as freshly synced. Three independent guards keep the device token off a screen anyone holding the phone can read — the composer's output, a source scan (`ManifestAndPlatformCallsTest` *the status block never reads the device token*), and the rendered view tree (`StatusScreenTest`). Instrumented `UsageAccessTest` revokes the real `GET_USAGE_STATS` appop, **reads the mode back from the system**, and asserts the screen says so — the appop cannot be granted by `setPermissionGrantState` and a revoked one makes `queryEvents` return nothing rather than throw, which is the silent zero this whole requirement is about. **Calibrated 38/38** (32 JVM, 6 on-device) — see the record above |
+| FR-13.4 phone states its own condition | 5.9, 50 | `StatusWordsTest` (5, Phase 50) holds the block's words in English and German to the resources and asserts a German phone's block holds no English. `DeviceStatusTest` — 25 cases over the pure composer, including the three the console cannot see: a policy received but never applied, a device out of contact, and a phone that cannot measure usage at all. The last is the one this row exists for: `NOT_MEASURED` is a third level, carried through `ForegroundReader.spans()` returning `null` rather than an empty list, and asserted to render as prominently as a fault rather than as a zero. `SynchronizerTest` (4 tests) pins the contact stamp to receipt and nowhere else, so the line cannot report a week-old phone as freshly synced. Three independent guards keep the device token off a screen anyone holding the phone can read — the composer's output, a source scan (`ManifestAndPlatformCallsTest` *the status block never reads the device token*), and the rendered view tree (`StatusScreenTest`). Instrumented `UsageAccessTest` revokes the real `GET_USAGE_STATS` appop, **reads the mode back from the system**, and asserts the screen says so — the appop cannot be granted by `setPermissionGrantState` and a revoked one makes `queryEvents` return nothing rather than throw, which is the silent zero this whole requirement is about. **Calibrated 38/38** (32 JVM, 6 on-device) — see the record above |
 | FR-13.5 one language, German | 49 | Every browser test reads the German console; the test browser runs with `LANGUAGE=de_CH` so a time field is 24-hour as on the family's phones. Source tests hold the German remedies (`TestBothPowerSwitchesAreShownWhenBothAreOff`: «Akku → Nicht eingeschränkt», «Wecker und Erinnerungen», «öffne dort FamilyGuard», «Einstellungen öffnen» — the phone's own button, now German in `values-de`). Android lint (CI since 0.6.33) fails on a string missing from `values-de`. Not proven: that every sentence reads naturally to a Swiss reader — that is the owner's read |
 | FR-13.6 the common jobs in one or two taps | 49 | e2e `TestAGuardianSeesTheGuardianViewAndCanGiveTime` (+15 on the card, −15/+30/+60 in its sheet), `TestAGuardianPausesAndTakesTimeAway` (Pausieren armed then done), `TestTheConsoleShowsTheApprovalQueueAndCategorisesFromIt` (Erlauben on the queue row, at most two requests per answer, every answer in the rule sheet, «Keine Regel» back to the queue), `TestTheAdminSetsTheAlarmInTheConsole` (day chips, one time, per-day, the save bar), `TestASaveThatAnswersAfterATabSwitchLeavesTheNewTabIntact` (leaving while a save is in flight) — each driven by clicking the rendered page |
 | FR-3.6 the phone says it cannot measure | 15.4 | e2e `TestAPhoneThatCannotMeasureScreenTimeSaysSo` — three-valued on the heartbeat, a later omitting heartbeat does not clear a recorded `false`, and the **list** endpoint carries the field as well as the single-device one, which is where a console warning would otherwise be invisible. **16.5 added the other half**: the phone now notices the grant at the moment it happens, via `AppOpsManager.startWatchingMode` on `OPSTR_GET_USAGE_STATS`, instead of only on the next sync — which on an unlinked phone was never, and is what the owner actually hit. The deep link, its highlight extras and the watcher itself have no automated coverage at all: an intent is resolved at run time against a Settings this project does not own, and `AppOpsManager` is not reachable from a JVM test |
@@ -8654,3 +8654,83 @@ server first, `/dpc.apk` read back byte-identical, the five view scripts served 
 Android lint step and it passed. Both phones took the update by push — the Android 16 phone in 3 s,
 the Android 13 phone in 49 s — and report 0.6.33 with no update error; they now show their own
 screens in German. Not measured: the family's read of the new console.
+
+## Phase 50 — the second look: console and phone, read from pictures (0.6.34, FR-13.4, FR-13.5, FR-13.6)
+
+The owner, 2026-10-01: *"Do another full und and ui improvement round (also for the app on the
+phone) and enhance it"*. Driven, like Phase 49, by pictures first: the console tour
+(`tests/e2e/tour_test.go`, now with a believable day — a plan with one group earned and one task
+reported, an agenda, an alarm week, sittings, two energy heartbeats, Live, a location — and dark mode
+by media emulation) and, new, **a tour of the phone app** (`tests/e2e/emulator_tour_test.go`, driven
+by `tests/android/tour.sh` on the API 33 image: the FamilyGuard screen top to bottom in German, the
+notification shade, a paused app, the alarm ringing). Both write pictures and assert nothing.
+
+**What the pictures showed, and what changed.**
+- *Console.* A child over the limit and running on earned time read **"Frei" beside a full red bar**
+  — now the state *Bonuszeit* in gold, "Tageslimit aufgebraucht — läuft mit Bonuszeit", with the bar
+  gold. The day's task lists made each child card a page long — each group is now one closed line
+  ("Morgen · ganzer Tag · 2 von 2 bestätigt", the earned minutes as a chip) that opens to its tasks,
+  and stays open across redraws. "00:00–23:59" reads *ganzer Tag*. The Bonuszeit line repeated its
+  own number ("15 min · 15 min davon bis Mi") — it says *gültig bis* when all of it expires together.
+  The timeline drew grey blocks across its axis: a global `.empty` rule meant for empty cards padded
+  the chart's empty bars, pushing them out of their columns. Energy quoted a battery rate from three
+  minutes off the charger (“−40 % pro Stunde”) — under 15 unplugged minutes it now says the
+  measurement is too short. Aktivität named the phone three times. Button labels broke mid-word
+  ("Entfer-nen"): labels no longer wrap except inside the button grids, and a full-width button wraps
+  at spaces like a sentence. Plan groups and agenda entries are one line each in Regeln
+  ("Schule · Mo–Fr · 08:00–12:00 · Schulhaus") until opened; a new one opens by itself. A page that is
+  slow to load shows *Lädt …* after 200 ms instead of leaving the previous page under the new tab;
+  a background refresh of the page on screen never does.
+- *Phone.* **The status block was English on the family's German phones** — "Enrollment",
+  "restricted, so every wake-up…", "Screen time today". Phase 49's "the phone's screens are German"
+  was wrong for it: those rows were never string resources, they were sentences in
+  `DeviceStatus.kt`, so the translation pass could not see them. The composer now takes a
+  `StatusWords` (pure, so the 34 JVM cases still run in milliseconds) built from `status_w_*`
+  resources in `values` and `values-de`. Without usage access the screen-time row now says so in plain
+  words and **offers the switch** (new `StatusAction.ALLOW_USAGE_ACCESS`), instead of quoting the
+  reader's technical reason. The "Fertig" buttons and the alarm's Stopp/Schlummern were the grey
+  pre-Material button: a `Button(this)` built in code, and a `<Button>` in a plain `Activity`, both
+  skip the theme's Material inflater. Task rows are inflated (`plan_task_row.xml`, tonal Fertig,
+  "✓ bestätigt" in gold); the alarm uses Material tags, a filled Stopp, an outlined Schlummern, and the
+  day under the time ("Donnerstag, 1. Oktober", from the platform's own pattern for the locale). The
+  day has a bar under its summary, as the console draws it. Everything below the child's part is
+  headed *Für Eltern*, and re-linking is one line (*Dieses Handy neu verbinden*) that opens its fields —
+  by itself when the server has refused the phone.
+
+### 50.1 — tests and calibration
+
+New: `StatusWordsTest` (5) — `StatusWords.ENGLISH` equals `values/strings.xml` word for word,
+`values-de` carries every key with the same placeholders, the resource map names every key, a German
+phone's block contains no English, and the usage-access switch is offered exactly when that is what is
+missing. e2e `TestASlowPageSaysItIsLoading`; `TestTheAdminBuildsADailyPlanInTheConsole` asserts the
+saved group is one closed line with the right summary; `TestAGuardianConfirmsTasksAndSeesBonuszeit`
+asserts the groups are drawn closed with their progress and the card's state over the limit with
+Bonuszeit left; `TestTheConsoleDrawsWhatRanWhen` asserts each bar is inside its own column.
+
+| # | the one value | measured |
+|---|---|---|
+| W1 | a German status word set back to English (`noch nie` → `never`) | **RED** *"never" on a German screen* |
+| W2 | a key dropped from `values-de` | **RED** *the German resources carry every word* |
+| W3 | a key dropped from the resource map | **RED** *the phone reads every word from a resource* |
+| C1 | the Bonuszeit state's condition made false | **RED** *over the limit with Bonuszeit left, the card's state reads "Frei"* — the tour's defect, exactly |
+| C2 | a saved plan group drawn open | **RED** *not one closed line* |
+| C3 | the day's task groups drawn open | **RED** *not drawn closed with their progress* |
+| C4 | the loading state delayed past the load | **RED** *the loading state on a slow page* |
+| C5 | the loading state on every refresh, not only a new page | **GREEN — not counted**: the test awaited the `refresh()` promise, so the window it watched was over before it looked. The refresh is now started, not awaited, and the page sampled every 100 ms; retaken as C5b: **RED** *a background refresh … replaced it with a loading state* |
+| C6 | `.empty` global again | **RED** *the bar for "00 · 0 s" is drawn outside its own column* |
+| C7 | the 15-minute floor for a battery rate set to 0 | **RED** — the card read *Akku −3227.9 % pro Stunde ohne Ladegerät* |
+| C8 | full-width buttons back to `nowrap` | **RED** *"Ein neuer Einrichtungscode widerruft das" scrolls sideways (415 px of content in 360 px)* — this was first a real defect of this round, found by the full suite, and fixed |
+| C9 | an every-day group summarised as "Mo–So" | **RED** *not one closed line* |
+| M1–M15 | `calibrate-mobile.sh` after this round's CSS | **15/15 RED**, each naming its own rule; green on restore |
+
+Suites: full e2e **PASS**; Kotlin unit **972/972**; Android lint clean; backend `go test ./...`
+green; on a wiped Android 16 emulator `tests/android/instrumented.sh` **PASS** (provisioned and after a
+real reboot) and `StatusScreenTest` **4/4** on the new layout — rows labelled and non-empty, no
+token on screen, controls ≥ 48 dp, nothing wider than the screen. **27 probes counted (W1–W3, C1–C9 with C5b, M1–M15), 27 red; one
+green recorded and not counted. Cumulative: 389 probes.** Not measured: the phone screens on the
+family's phones (the next update brings them), and the alarm screen on an Android 10/11 phone.
+
+Found by measuring rather than reading, and worth keeping: `getBoundingClientRect` on an element
+inside a **closed `<details>`** still reports a size in current Chrome, because the closed body is
+skipped with `content-visibility` rather than taken out of layout — a visibility check written that
+way passes on a hidden field. `checkVisibility()` answers the question.
