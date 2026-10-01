@@ -9035,3 +9035,14 @@ an HTML error page summarised. Phone (1016 JVM tests, was 981): `SyncLockTest`, 
 Devices: `tests/android/alarm.sh` (rang 2 s after its minute, offline and in forced Doze, with the new
 receivers), `remote-adb.sh` and `instrumented.sh` (24 testcases provisioned, 1 after a real reboot),
 all on the API 37 emulator.
+
+### 53.2 — live
+
+Deployed 2026-10-02 as **0.6.37** (image `sha256:109f4fb2…40e5`, APK `1246dbb7…a8da`, versionCode 46;
+argocd `ab48201` then `5a9f5ab`). CI and Release green on `a0bad12`. One ready pod on that digest,
+`/readyz` 200, `/dpc.apk` byte-identical to the signed artifact (signer `b62cda94…`, matching the
+node's `familyguard.der`), `/fgctl` offering 0.6.37 with six artifacts, and the new startup scan in the
+pod's log (`app catalog scanned at startup`, 0 registered — the directory is empty). The operator's
+fgctl updated itself 0.6.36 → 0.6.37 through the self-update path this phase calibrated. **Not yet
+measured: the two phones**, both asleep at deploy time (screen off, 0.6.36 / 45); they update on
+their next wake.
