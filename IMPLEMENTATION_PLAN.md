@@ -9111,3 +9111,15 @@ browser, and a past day that keeps what counted on it after the rule changes. Ph
 | K1 | the phone's label checks "not counted" first | **RED** *expected ALWAYS_FREE but was NOT_COUNTED* |
 
 **17 probes, 16 red, 1 green and explained. Cumulative: 487.**
+
+### 54.2 — live
+
+Deployed 2026-10-03 as **0.6.38** (image `sha256:169d936e…53e6`, APK `eaf3d6cb…d7cc`, versionCode 47,
+signer `b62cda94…` as before). CI and Release green on `ec2af26`. One ready pod on that digest,
+`/readyz` 200, `/dpc.apk` byte-identical to the signed artifact, migration 0027 applied
+(`usage_samples.counted` present). **On the family phone that reported the bug, read back from the
+live server minutes after the rollout:** the always-free game's 74 minutes and the messenger's are
+in the phone's `uncounted_packages` and out of the count — the day reads 68 used (the governed video
+app alone) where the old rule gave about 144, nothing suspended. That phone was still on 0.6.37,
+which is the point of sending the list: its own count leaves the same apps out from its next sync.
+**Not yet measured:** both phones taking the 0.6.38 update (the label only).
