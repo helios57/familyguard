@@ -39,11 +39,32 @@ data class TodayReport(
         /** This app's own daily allowance, 0 when it has none. */
         val ownLimitMinutes: Int,
         val rule: Rule,
-        /** False for the home screen, System UI and FamilyGuard itself (FR-3.8). */
+        /**
+         * False for the home screen, System UI and FamilyGuard itself (FR-3.8), and for an app the
+         * daily limit never pauses (FR-5.8).
+         */
         val counted: Boolean,
         /** Why it cannot be used right now, or null when it can. */
         val blocked: Block?,
-    )
+    ) {
+        /**
+         * What the child is told about the app. An always-free app is named as one — its label says
+         * it does not count — rather than as "not counted", which since 0.6.38 it also is: the
+         * child should learn WHY a game does not spend the limit, not only that it does not.
+         */
+        val label: Label
+            get() = when {
+                rule == Rule.ALWAYS_FREE -> Label.ALWAYS_FREE
+                rule == Rule.FREE_PREINSTALLED -> Label.FREE_PREINSTALLED
+                !counted -> Label.NOT_COUNTED
+                rule == Rule.BONUS -> Label.BONUS
+                rule == Rule.BLOCKED_BY_PARENT -> Label.BLOCKED_BY_PARENT
+                rule == Rule.OWN_LIMIT -> Label.OWN_LIMIT
+                else -> Label.COUNTS
+            }
+    }
+
+    enum class Label { ALWAYS_FREE, FREE_PREINSTALLED, NOT_COUNTED, BONUS, BLOCKED_BY_PARENT, OWN_LIMIT, COUNTS }
 
     /** [FREE_PREINSTALLED] is a preinstalled app nobody decided about (FR-5.10). */
     enum class Rule { ALWAYS_FREE, FREE_PREINSTALLED, BONUS, OWN_LIMIT, COUNTS, BLOCKED_BY_PARENT }

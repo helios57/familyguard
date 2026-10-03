@@ -568,15 +568,52 @@ func TestResolveLeavesOutWhatIsNotUseAndCarriesTodaysBonus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"com.android.systemui", "com.sec.android.app.launcher", "io.github.helios57.familyguard"}
-	if fmt.Sprint(f.uncountedAsked) != fmt.Sprint(want) {
-		t.Errorf("the store was asked to leave out %v, want %v", f.uncountedAsked, want)
+	for _, p := range []string{"com.android.systemui", "com.sec.android.app.launcher", "io.github.helios57.familyguard"} {
+		if !slices.Contains(f.uncountedAsked, p) {
+			t.Errorf("the store was not asked to leave out %s: %v", p, f.uncountedAsked)
+		}
 	}
-	if fmt.Sprint(in.UncountedPackages) != fmt.Sprint(want) {
-		t.Errorf("the phone was handed %v as not counted, want %v — its offline count would disagree", in.UncountedPackages, want)
+	if fmt.Sprint(in.UncountedPackages) != fmt.Sprint(f.uncountedAsked) {
+		t.Errorf("the phone was handed %v as not counted, the store left out %v — its offline count would disagree",
+			in.UncountedPackages, f.uncountedAsked)
 	}
 	if in.Settings.BonusMinutes != 30 || in.Settings.BonusDay != f.usageDay {
 		t.Errorf("bonus %d for %q, want 30 for the day the usage was read for (%q)",
 			in.Settings.BonusMinutes, in.Settings.BonusDay, f.usageDay)
 	}
 }
+
+// TestAnAlwaysFreeAppDoesNotSpendTheLimit: the minutes the resolver reads leave out every app the
+// daily limit never pauses, and keep every app it does. Measured 2026-10-03 on a family phone: an
+// ALLOW game's 74 minutes spent a 30-minute limit, and the governed apps paused for it.
+func TestAnAlwaysFreeAppDoesNotSpendTheLimit(t *testing.T) {
+	f := baseSource()
+	f.policy.AllowChildInstalls = false
+	f.policy.DailyLimitMinutes = 30
+	f.rules = []store.AppRule{
+		{PackageName: "com.supercell.brawlstars", Action: store.ActionAllow},
+		{PackageName: "org.jellyfin.mobile", Action: store.ActionLimit},
+		{PackageName: "com.example.bonus", Action: store.ActionBonus},
+	}
+	f.apps = []store.InstalledApp{
+		{PackageName: "com.supercell.brawlstars", Launchable: ptr(true)},
+		{PackageName: "org.jellyfin.mobile", Launchable: ptr(true)},
+		{PackageName: "com.example.bonus", Launchable: ptr(true)},
+		{PackageName: "com.example.unruled", Launchable: ptr(true)},
+	}
+	_, in := resolve(t, f, time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC))
+	if !slices.Contains(f.uncountedAsked, "com.supercell.brawlstars") {
+		t.Errorf("an always-free app's minutes are read as use against the daily limit: left out only %v", f.uncountedAsked)
+	}
+	for _, p := range []string{"org.jellyfin.mobile", "com.example.bonus", "com.example.unruled"} {
+		if slices.Contains(f.uncountedAsked, p) {
+			t.Errorf("%s is paused by the daily limit and must spend it, but its minutes are left out", p)
+		}
+	}
+	// Exempt from the count is not exempt from a pause: the whitelist would be.
+	if slices.Contains(in.CriticalPackages, "com.supercell.brawlstars") {
+		t.Error("the always-free app joined the whitelist, which a parent's pause cannot reach")
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

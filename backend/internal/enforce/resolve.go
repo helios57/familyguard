@@ -165,12 +165,7 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 	if err != nil {
 		return nil, nil, fmt.Errorf("home packages: %w", err)
 	}
-	uncounted := store.SortedUnique(home, policy.PlatformUncountedPackages, r.ownPackages)
-	// FR-22: a minute the phone paid from earned time is not also a budget minute.
-	used, earnedToday, err := r.src.UsageSplitForDay(ctx, deviceID, day, uncounted)
-	if err != nil {
-		return nil, nil, fmt.Errorf("usage: %w", err)
-	}
+	notUse := store.SortedUnique(home, policy.PlatformUncountedPackages, r.ownPackages)
 	balance, err := r.Balance(ctx, dev.ChildID, day)
 	if err != nil {
 		return nil, nil, err
@@ -241,12 +236,9 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 			BlockedDomains:         domains,
 			ManagedApps:            r.managedApps(managed),
 		},
-		Installed:               installedApps(apps),
-		UsedMinutesToday:        used,
-		EarnedSpentMinutesToday: earnedToday,
-		UsedMinutesByPackage:    usedByPackage,
-		UncountedPackages:       uncounted,
-		ParentLock:              dev.Locked,
+		Installed:            installedApps(apps),
+		UsedMinutesByPackage: usedByPackage,
+		ParentLock:           dev.Locked,
 		// The device's own resolved packages (its actual dialer, launcher and IMEs) *plus* the
 		// family's always-usable list, unioned here rather than left to the engine.
 		//
@@ -265,8 +257,23 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 		// nothing to pause. That covers the home screen the phone reports NOW — enrolment recorded
 		// the launcher it had then, and a switched launcher would otherwise be listed as paused at
 		// bedtime — and System UI, which the console listed as paused by the daily limit.
-		CriticalPackages: store.SortedUnique(dev.CriticalPackages, policy.AlwaysUsablePackages, uncounted),
+		CriticalPackages: store.SortedUnique(dev.CriticalPackages, policy.AlwaysUsablePackages, notUse),
 		Now:              now.In(loc).Format(time.RFC3339),
+	}
+
+	// What the day's count leaves out: what is not use (FR-3.8), and what the daily limit never
+	// pauses, whose minutes therefore cannot spend it (FR-5.8). Read from the rules just assembled,
+	// so the count and the suspension come from one decision. Not added to CriticalPackages: an
+	// always-free app still pauses for a parent's pause, which the whitelist would survive.
+	exempt, err := policy.LimitExemptPackages(in)
+	if err != nil {
+		return nil, &in, err
+	}
+	in.UncountedPackages = store.SortedUnique(notUse, exempt)
+	// FR-22: a minute the phone paid from earned time is not also a budget minute.
+	in.UsedMinutesToday, in.EarnedSpentMinutesToday, err = r.src.UsageSplitForDay(ctx, deviceID, day, in.UncountedPackages)
+	if err != nil {
+		return nil, nil, fmt.Errorf("usage: %w", err)
 	}
 
 	out, err := policy.Compute(in)

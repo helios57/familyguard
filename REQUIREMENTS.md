@@ -237,7 +237,8 @@ Applied at provisioning and re-applied on every boot:
   the only alternative was to leave it suspended. Measured on family hardware that day: WhatsApp,
   Threema, Signal and Audible all sat suspended awaiting approval for exactly this reason, and
   turning bedtime off changed nothing because bedtime was never what held them. The four:
-  - **always free** (ALLOW) — exempt from bedtime and from the daily limit;
+  - **always free** (ALLOW) — exempt from bedtime and from the daily limit, and its time does not
+    count toward the limit (since 0.6.38, see below);
   - **daily limit** (LIMIT, no allowance) — approved, and governed like every other app: it counts
     against the daily limit and it pauses at bedtime;
   - **individual limit** (LIMIT with an allowance) — as above, plus a daily allowance of its own,
@@ -246,6 +247,17 @@ Applied at provisioning and re-applied on every boot:
   No rule at all remains a fifth state, "undecided", and is what keeps an app in FR-5.4's queue.
   A per-app allowance binds at the next evaluation rather than to the second, and it never sets a
   suspend reason: the phone is not in a quota state, one app is.
+  **An app the daily limit never pauses does not spend it either.** That is every always-free app,
+  the preinstalled apps free by default (FR-5.10), the FR-5.5 and FR-5.9 packages, and anything
+  the child cannot open (FR-3.12); the list is read off the engine's own answer for a reached limit,
+  so it cannot drift from what the limit pauses. Until 0.6.38 every app's minutes counted, which
+  made "always free" mean "usable after the limit, and spending it before": measured 2026-10-03 on
+  a family phone, 74 minutes of an always-free game spent a 30-minute limit and paused the apps it
+  governs before the child opened one. The server sends the list to the phone with the uncounted
+  packages, so its offline count leaves out the same apps. The console shows that time as its own
+  line ("Immer freie Apps … zählt nicht zum Tageslimit"), and a past day reads what counted on it,
+  recorded with the day's usage; a day recorded before 0.6.38 reads as it was enforced, with
+  everything counted.
 - FR-5.9 **Some apps are never suspended, whatever any rule says.** FR-5.5 covers the packages the
   *phone* needs to keep working. This covers the ones the *family* decided reaching each other does
   not depend on a schedule: the messengers in use (WhatsApp, Threema, Signal) and Audible. They

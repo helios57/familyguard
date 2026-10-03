@@ -61,6 +61,20 @@ func (s *Store) UsageSplitForDay(ctx context.Context, deviceID uuid.UUID, day st
 	return int(max(total-gold, 0) / 60000), int(gold / 60000), nil
 }
 
+// MarkCounted records, on every row of a device's day, whether it counts toward the daily limit:
+// everything but the packages in uncounted (FR-3.8, FR-5.8). Called while the day is current, so a
+// later chart of it reads what applied then.
+func (s *Store) MarkCounted(ctx context.Context, deviceID uuid.UUID, day string, uncounted []string) error {
+	if uncounted == nil {
+		uncounted = []string{}
+	}
+	_, err := s.pool.Exec(ctx,
+		`UPDATE usage_samples SET counted = NOT (package_name = ANY($3))
+		  WHERE device_id = $1 AND day = $2::date AND counted IS DISTINCT FROM NOT (package_name = ANY($3))`,
+		deviceID, day, uncounted)
+	return err
+}
+
 // UsageForDay returns the per-package totals a device reported for one day.
 func (s *Store) UsageForDay(ctx context.Context, deviceID uuid.UUID, day string) ([]UsageSample, error) {
 	// LEFT JOIN, never an inner one: a package the child has since uninstalled still has the
@@ -68,7 +82,7 @@ func (s *Store) UsageForDay(ctx context.Context, deviceID uuid.UUID, day string)
 	// the number the same table reports as screen time.
 	rows, err := s.pool.Query(ctx,
 		`SELECT u.device_id, u.day::text, u.package_name, u.foreground_ms, u.earned_ms,
-		        COALESCE(i.label, ''), COALESCE(i.system_app, false)
+		        COALESCE(i.label, ''), COALESCE(i.system_app, false), u.counted
 		   FROM usage_samples u
 		   LEFT JOIN installed_apps i
 		          ON i.device_id = u.device_id AND i.package_name = u.package_name
@@ -81,7 +95,7 @@ func (s *Store) UsageForDay(ctx context.Context, deviceID uuid.UUID, day string)
 	out := []UsageSample{}
 	for rows.Next() {
 		var u UsageSample
-		if err := rows.Scan(&u.DeviceID, &u.Day, &u.PackageName, &u.ForegroundMs, &u.EarnedMs, &u.Label, &u.SystemApp); err != nil {
+		if err := rows.Scan(&u.DeviceID, &u.Day, &u.PackageName, &u.ForegroundMs, &u.EarnedMs, &u.Label, &u.SystemApp, &u.RecordedCounted); err != nil {
 			return nil, err
 		}
 		out = append(out, u)

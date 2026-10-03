@@ -4001,7 +4001,7 @@ proven.
 | FR-5 apps | 5.4, 5.5, 3.3 | `RestrictionPlannerTest`, `AppSuspensionManagerTest`, `StateApplierTest`; `TestAppRulesSplitByAction`, `TestCriticalPackagesAreNeverSuspended`, `TestUninstalledAppsAreNotSuspended`, `TestHiddenPackagesAreAlsoSuspended`, `TestSystemAppsStayEnabledByRequest`; e2e `TestPolicyEnforcementJourney`; and its two preconditions, which fail silently rather than loudly — `ManifestAndPlatformCallsTest` *the permissions the shipped app asks for are exactly the ones it needs* (`QUERY_ALL_PACKAGES`, without which every blocked package reads "not installed") and *the install watcher is registered at runtime, not declared in the manifest* (without which a newly installed app is unrestrained until the next poll) |
 | FR-5.6 developer options / adb | 16.3 | e2e `TestDeveloperOptionsCanBeAllowedPerChild` — the switch on withholds `no_debugging_features` and **nothing else**, asserted against the whole restriction set rather than one membership test, with the switch-off case as the positive control so the test cannot pass on an engine that never applies the restriction at all. Two shared vectors (with and without a resolver) replay it on both engines. **Not proven:** that adb actually comes back on a phone — no device has run with the switch on
 | FR-5.7 uninstalling apps | 23 | e2e `TestUninstallingCanBeAllowedPerChild` — the switch on withholds `no_uninstall_apps` and nothing else, with the switch-off case as the positive control, plus the discriminating pair: free-installation **off** while uninstalling is **on**, so an engine that had conflated the two switches is red. Two shared vectors replay it on both engines. `UninstallSwitchAndTheBootFloorTest` pins the part the vectors structurally cannot reach — the pre-sync floor keeps the restriction whatever the switch says, and the next authoritative sync clears it again. **Calibrated four ways:** the Go engine ignoring the switch (2 vectors red), `resolve.go` dropping the field so the PATCH sticks and the phone is told otherwise (e2e red), the Kotlin engine ignoring it (3 red), and each restored to green. **Not proven:** that `adb uninstall` actually succeeds on a phone with the switch on — no device has run with it yet
-| FR-5.8 four answers for an app | 27 | e2e `TestAnAppHasFourAnswers` — all five states on one device: the four answers each end FR-5.4's wait, an unanswered app stays in it, ALLOW survives bedtime while LIMIT does not, and an app's own allowance stops that app while the shared quota still has 210 minutes in it. `TestTheConsoleShowsTheApprovalQueueAndCategorisesFromIt` drives the same four from a real browser. Four shared vectors replay the arithmetic on both engines; three `SynchronizerTest` cases pin the phone's half (the device's own measurement spends the allowance, is never added to what it already reported, and never zeroes a package it did not measure). **Calibrated:** the LIMIT branch removed from the engine (queue never empties), `limit_minutes` zeroed on the way to the engine (allowance never binds), the per-package usage SQL divided wrong (same), the console's own button sending 0 (browser red) — each restored byte-identical. **Not proven:** nothing has spent an allowance on hardware |
+| FR-5.8 four answers for an app | 27, 54 | e2e `TestAnAlwaysFreeAppDoesNotSpendTheDailyLimit` (Phase 54: an app the limit never pauses does not spend it — server, phone input, Aktivität in a browser, a past day; `TestOnlyWhatTheLimitPausesCountsAgainstIt`, `TestWhatCountsDoesNotDependOnTheMoment`, 17 probes); e2e `TestAnAppHasFourAnswers` — all five states on one device: the four answers each end FR-5.4's wait, an unanswered app stays in it, ALLOW survives bedtime while LIMIT does not, and an app's own allowance stops that app while the shared quota still has 210 minutes in it. `TestTheConsoleShowsTheApprovalQueueAndCategorisesFromIt` drives the same four from a real browser. Four shared vectors replay the arithmetic on both engines; three `SynchronizerTest` cases pin the phone's half (the device's own measurement spends the allowance, is never added to what it already reported, and never zeroes a package it did not measure). **Calibrated:** the LIMIT branch removed from the engine (queue never empties), `limit_minutes` zeroed on the way to the engine (allowance never binds), the per-package usage SQL divided wrong (same), the console's own button sending 0 (browser red) — each restored byte-identical. **Not proven:** nothing has spent an allowance on hardware |
 | FR-5.9 always-usable apps | 27 | e2e `TestAlwaysUsableAppsSurviveEveryPolicyPath` — bedtime, an exhausted quota, the family blocklist, a per-child BLOCK and the approval hold all live at once, with an ordinary app suspended in the same answer as the positive control, and the set is asserted in the policy **input** as well so the phone recomputing offline still has it. **Calibrated:** emptying the list reddens it; removing the union from `resolve.go` alone reddens only the input half, and removing it from the engine alone reddens **nothing** — the server is defended twice over, which is recorded here because that green is a fact about the code, not about the test. **Not proven:** that WhatsApp/Threema/Audible actually open on the family phone — that needs 0.6.11 deployed and the apps tapped |
 | FR-6 filtering | 5.5, 16.6 | `ChromePolicyManagerTest`, `DnsPolicyManagerTest`; `TestNormalizeDomainMatchesTheStore`; e2e `TestNoFilteringResolverIsConfiguredByDefault`. FR-6.1 was **rewritten** in 16.6: there is no filtering resolver by default, and `disallow_config_private_dns` is applied only when a parent has named one. Both halves of that coupling are asserted, which matters because either alone passes on a broken engine — "no resolver by default" is also true of an engine that has lost the lock entirely, and the lock's presence is also true of one that pins a resolver nobody asked for. `TestPolicyEnforcementJourney` carries the default-state snapshot and used to assert the opposite; it is the test the sweep caught. **Not proven:** what a phone does with an empty private-DNS host — OPPORTUNISTIC is the documented behaviour and no device has been read back |
 | FR-6.6 … FR-6.9 in-app ad filtering | 25 | **217 JVM tests** over `filter/` and `policy/AlwaysOnVpnManager` — the rule parser and the 181k-rule index, the packet layer, `TcpFlow`, the ClientHello and `Host:` readers, the DNS path, the router, `TunnelPlan`, `TunnelWatchdog`, `FilterListStore`. Plus the layer a fixture structurally cannot reach: `tests/run_all.sh android-realtun` runs the same code against a **real TUN device, a real `curl` and a real TLS server**, both arms with a rules-removed calibration ([25.6](#256--the-tests-that-are-not-fixtures)). **Calibrated 39/39** across four batches ([25.7](#257--calibration-39-probes-39-red)). **Not proven:** anything on a handset — no phone has run the tunnel, so battery, throughput and OEM VPN supervision are unmeasured |
@@ -9046,3 +9046,68 @@ pod's log (`app catalog scanned at startup`, 0 registered — the directory is e
 fgctl updated itself 0.6.36 → 0.6.37 through the self-update path this phase calibrated. **Not yet
 measured: the two phones**, both asleep at deploy time (screen off, 0.6.36 / 45); they update on
 their next wake.
+
+## Phase 54 — an app the limit never pauses does not spend it (0.6.38, FR-5.8)
+
+The owner, 2026-10-03: *"There is a bug in the time management, games not using the daily limit
+should not count towards the limit check the phone of [one child] today for an example"*. Read back from
+the server that day: a 30-minute limit, **Brawl Stars set to always free (ALLOW) at 74 minutes**,
+Jellyfin (LIMIT) at 30, and the day's count at 108 — the game's minutes were in it. Both engines
+counted every app except the home screen, System UI and FamilyGuard (FR-3.8): the phone's offline
+count leaves out what the server's `uncounted_packages` names, and the server's count left out the
+same three. "Always free" therefore meant *usable after the limit, and spending it before*. The
+phone's own earned-time attribution said so outright — an exempt app's minutes were added to the
+day's `counted` before the exemption was consulted. It was a design, not a slip, and the owner has
+overruled it.
+
+**The rule now:** a minute counts toward the daily limit only on an app the limit would pause.
+`policy.LimitExemptPackages` reads that list off `Compute` itself — what it suspends for a reached
+limit with no bedtime, pause, earned time or spent allowance — so the count and the suspension come
+from one decision and cannot drift. That covers always-free apps, preinstalled-free apps (FR-5.10),
+the FR-5.5/FR-5.9 packages (WhatsApp, Threema, Signal, Audible) and anything the child cannot open.
+It depends on rules and inventory only, never on the hour or what is left. The resolver unions it
+into `uncounted_packages`; it is deliberately *not* added to the whitelist (`CriticalPackages`),
+because an always-free app still pauses for a parent's pause.
+
+**No phone update was needed for the count**: the phone already leaves out every package the server
+names, so 0.6.37 phones count correctly from their next sync. The phone update in 0.6.38 is the
+label only: an always-free row says *"Immer frei, zählt nicht zum Tageslimit"* rather than the bare
+*"Zählt nicht"* the server's new list would otherwise give it.
+
+**The console:** today reads the resolver; a past day reads `usage_samples.counted` (migration
+0027), set on every row of today's usage at each report from the same resolution, so a rule changed
+since cannot rewrite a day. A row from before 0.6.38 is NULL and reads by the old rule, which is how
+that day was enforced. The always-free time is its own line, *"Immer freie Apps: … zählt nicht zum
+Tageslimit"*, apart from *"Startbildschirm und System"*.
+
+### 54.1 — tests and calibration
+
+New: `TestOnlyWhatTheLimitPausesCountsAgainstIt` and `TestWhatCountsDoesNotDependOnTheMoment` (every
+shared vector, eight mutations of the moment), `TestAnAlwaysFreeAppDoesNotSpendTheLimit` (resolver),
+e2e `TestAnAlwaysFreeAppDoesNotSpendTheDailyLimit` — the family's numbers: 74 free, 20 governed, 5
+of WhatsApp is 20 of 30 on the server and in the phone's input, the governed app alone reaches the
+limit while the free one stays usable, the same app under LIMIT does count (104), Aktivität in a real
+browser, and a past day that keeps what counted on it after the rule changes. Phone:
+`TodayReportTest` *an always-free game the server leaves out of the count is named as always free*.
+
+| # | the one value | measured |
+|---|---|---|
+| U1 | the resolver's uncounted list without the exempt apps | **RED** *an always-free app's minutes are read as use against the daily limit* |
+| U2 | nothing removed from the candidates | **RED** *org.jellyfin.mobile is paused by the daily limit … yet it is exempt* |
+| U3 | the counterfactual keeps the pause | **RED** *what counts changed with the moment* |
+| U4 | the counterfactual's limit not reached | **RED** the governed apps exempt |
+| U5 | the counterfactual keeps bedtime | **green — and correct to be**: bedtime and a reached limit pause exactly the same set, so the line changes no output today; it is kept for the day they differ |
+| U6 | the counterfactual keeps watch-only | **RED** *what counts changed with the moment* |
+| U7 | ALLOW rules not candidates | **RED** *com.example.allowed.notinstalled … must not count* |
+| U8 | the counterfactual keeps earned time | **RED** *what counts changed with the moment* |
+| E1 | every row marked counted | **RED** *yesterday … reads counted=109 exempt=0* |
+| E2 | the report marks with an empty list | **RED** the same |
+| E3 | exempt and not-use swapped | **RED** *counted=20 exempt=0 uncounted=79*, and the browser line never appears |
+| E4 | the recorded flag ignored | **RED** *yesterday … counted=109* |
+| E5 | the console line reads the wrong field | **RED** *Immer freie Apps: 0 min* (browser) |
+| E6 | the console row label off | **RED** *Nicht gezählt (Startbildschirm / System)* (browser) |
+| E7 | today's counted flag from an empty list | **RED** *counted=99 exempt=0* |
+| E8 | the pre-0.6.38 fallback changed | **RED** *counted=35 exempt=74, want 109 and 0* |
+| K1 | the phone's label checks "not counted" first | **RED** *expected ALWAYS_FREE but was NOT_COUNTED* |
+
+**17 probes, 16 red, 1 green and explained. Cumulative: 487.**

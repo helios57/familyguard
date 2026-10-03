@@ -426,11 +426,12 @@ type Input struct {
 	// failure direction for a map that can be absent.
 	UsedMinutesByPackage map[string]int `json:"used_minutes_by_package"`
 
-	// UncountedPackages are foreground time that is not USE (FR-3.8): the home screen this device
-	// reports, System UI, and this system's own app. UsedMinutesToday already excludes them — the
-	// server subtracts them before the engine runs — so the engine never reads this. It travels in
-	// the Input for the phone, which recounts the day from its own measurement when it is offline
-	// and has to leave out exactly the same packages or its number and the server's disagree.
+	// UncountedPackages are foreground time that does not count toward the daily limit: what is not
+	// USE (FR-3.8) — the home screen this device reports, System UI, this system's own app — and
+	// what the limit never pauses (FR-5.8, LimitExemptPackages). UsedMinutesToday already excludes
+	// them — the server subtracts them before the engine runs — so the engine never reads this. It
+	// travels in the Input for the phone, which recounts the day from its own measurement when it is
+	// offline and has to leave out exactly the same packages or its number and the server's disagree.
 	UncountedPackages []string `json:"uncounted_packages"`
 	// EarnedSpentMinutesToday is the earned time this device has spent today (FR-22). The device
 	// attributes each measured window when it measures it — a minute is earned time when it was a
@@ -805,6 +806,50 @@ func Compute(in Input) (DesiredState, error) {
 	out.FreeByDefault = free.sorted()
 	out.NextChangeAt = nextChangeAt(in.Settings, local, loc)
 	return out, nil
+}
+
+// LimitExemptPackages is what the daily limit never pauses, and so what its minutes must not be
+// spent on: a minute counts toward the limit only on an app the limit would pause. The parent's
+// "always free" (ALLOW), the preinstalled apps that are free by default (FR-5.10), the critical
+// and always-usable packages (FR-5.5, FR-5.9), and anything the child cannot open (FR-3.12).
+//
+// Until 0.6.38 every app's minutes counted, which made "always free" mean "usable after the limit,
+// and spending it before": measured 2026-10-03, 74 minutes of an allowed game spent a 30-minute
+// limit before the child opened one app the limit governs.
+//
+// Read off Compute itself rather than restated: the answer is what Compute suspends for a reached
+// limit with nothing else going on — no bedtime, no pause, no earned time, no per-app allowance
+// spent — so the list cannot drift from what the limit actually does. It depends on the rules and
+// the inventory only, never on the hour or on how much is left, so the same minute never counts at
+// 15:00 and not at 22:00.
+func LimitExemptPackages(in Input) ([]string, error) {
+	probe := in
+	probe.Settings.TrackingOnly = false
+	probe.Settings.Paused = false
+	probe.Settings.BedtimeEnabled = false
+	probe.Settings.DailyLimitMinutes = 1
+	probe.Settings.BonusMinutes = 0
+	probe.Settings.EarnedAvailableMinutes = 0
+	probe.UsedMinutesToday = 1
+	probe.EarnedSpentMinutesToday = 0
+	probe.UsedMinutesByPackage = nil
+	probe.ParentLock = false
+	out, err := Compute(probe)
+	if err != nil {
+		return nil, err
+	}
+	candidates := newSet(DefaultCriticalPackages)
+	candidates.addAll(AlwaysUsablePackages)
+	candidates.addAll(in.CriticalPackages)
+	candidates.addAll(in.Settings.AllowedPackages)
+	for _, app := range in.Installed {
+		candidates.add(app.Package)
+	}
+	candidates.remove("")
+	for _, p := range out.SuspendedPackages {
+		candidates.remove(p)
+	}
+	return candidates.sorted(), nil
 }
 
 // nextChangeAt is the earliest future instant at which Compute would return something different:

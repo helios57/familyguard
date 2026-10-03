@@ -166,9 +166,10 @@ function dayActivityCard(dev, timeline) {
 }
 
 /**
- * The day against its limit (FR-3.9). Counted minutes only: the home screen, System UI and
- * FamilyGuard itself are a separate, uncounted line — on 2026-09-23 a phone left on its charger with
- * the screen on spent its whole daily limit on the home screen.
+ * The day against its limit (FR-3.9). Counted minutes only: apps the limit never pauses (FR-5.8),
+ * and the home screen, System UI and FamilyGuard itself, are separate, uncounted lines — on
+ * 2026-09-23 a phone left on its charger with the screen on spent its whole daily limit on the home
+ * screen.
  */
 function screenTimeSummary(dev, screen) {
   const used = screen.counted_minutes || 0;
@@ -194,6 +195,10 @@ function screenTimeSummary(dev, screen) {
       earned > 0 ? el('p', { class: 'earned', 'data-screen': 'earned', text: '+ ' + fmtMinutes(earned) + ' mit Bonuszeit' }) : null));
   } else {
     parts.push(el('p', { class: 'muted', text: 'Gezählte Bildschirmzeit: ' + fmtMinutes(used) + ' (kein Tageslimit).' }));
+  }
+  // Apps the limit never pauses do not spend it either (FR-5.8): their time is said, not counted.
+  if (screen.exempt_minutes > 0) {
+    parts.push(el('p', { class: 'muted', 'data-screen': 'exempt', text: 'Immer freie Apps: ' + fmtMinutes(screen.exempt_minutes) + ', zählt nicht zum Tageslimit.' }));
   }
   if (screen.uncounted_minutes > 0) {
     parts.push(el('p', { class: 'muted', text: 'Startbildschirm und System: ' + fmtMinutes(screen.uncounted_minutes) + ', nicht gezählt.' }));
@@ -248,7 +253,9 @@ function appUsageTable(apps, screen) {
 
 /** What governs an app, and why it is paused if it is (FR-3.10). */
 function appStatusText(a, screen) {
-  const rule = a.counted === false ? 'Nicht gezählt (Startbildschirm / System)'
+  const rule = a.exempt ? (a.rule === 'ALLOW' ? 'Immer frei' : a.free_by_default ? 'Immer frei (vorinstalliert)' : 'Immer nutzbar')
+      + ', zählt nicht zum Tageslimit'
+    : a.counted === false ? 'Nicht gezählt (Startbildschirm / System)'
     : a.rule === 'ALLOW' ? 'Immer frei'
       : !a.rule && a.free_by_default ? 'Immer frei (vorinstalliert)'
         : a.rule === 'BLOCK' ? 'Von dir gesperrt'

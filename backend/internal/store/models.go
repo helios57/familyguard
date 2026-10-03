@@ -391,6 +391,10 @@ type UsageSample struct {
 	// which is the state this field was added to end.
 	Label     string `json:"label"`
 	SystemApp bool   `json:"system_app"`
+	// RecordedCounted is whether the row counted toward the daily limit, as decided while its day
+	// was current (migration 0027); nil for a row recorded before that. Not sent as is: the console
+	// reads the decision the handler derives from it.
+	RecordedCounted *bool `json:"-"`
 }
 
 type Command struct {

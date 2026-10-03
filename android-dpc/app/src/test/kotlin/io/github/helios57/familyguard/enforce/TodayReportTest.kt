@@ -58,6 +58,26 @@ class TodayReportTest {
     }
 
     @Test
+    fun `an always-free game the server leaves out of the count is named as always free, not as uncounted`() {
+        // Since 0.6.38 the server's uncounted list carries the apps the limit never pauses (FR-5.8).
+        val game = "com.supercell.brawlstars"
+        val input = input(
+            allowed = listOf(game),
+            installed = listOf(App(game), App("com.example.video")),
+            used = 20,
+            byPackage = mapOf(game to 74, "com.example.video" to 20, launcher to 3),
+        )
+        val r = TodayReport.of(input, EnforcementEngine.compute(input), input.usedMinutesByPackage, setOf(launcher, game))
+
+        val line = r.apps.single { it.packageName == game }
+        assertFalse(line.counted)
+        assertEquals("the child is told why the game does not count", TodayReport.Label.ALWAYS_FREE, line.label)
+        assertEquals(TodayReport.Label.NOT_COUNTED, r.apps.single { it.packageName == launcher }.label)
+        assertEquals(TodayReport.Label.COUNTS, r.apps.single { it.packageName == "com.example.video" }.label)
+        assertEquals("only the governed 20 minutes are on the phone's count", 20, r.usedMinutes)
+    }
+
+    @Test
     fun `a preinstalled camera stays free when the limit is spent, a preinstalled browser does not`() {
         val camera = "com.sec.android.app.camera"
         val chrome = "com.android.chrome"

@@ -808,14 +808,14 @@ class RecoveryActivity : AppCompatActivity() {
         }
     }
 
-    private fun ruleText(app: TodayReport.AppLine): String = when {
-        !app.counted -> getString(R.string.rule_not_counted)
-        app.rule == TodayReport.Rule.ALWAYS_FREE -> getString(R.string.rule_always_free)
-        app.rule == TodayReport.Rule.FREE_PREINSTALLED -> getString(R.string.rule_free_preinstalled)
-        app.rule == TodayReport.Rule.BONUS -> getString(R.string.rule_bonus)
-        app.rule == TodayReport.Rule.BLOCKED_BY_PARENT -> getString(R.string.rule_blocked)
-        app.rule == TodayReport.Rule.OWN_LIMIT -> getString(R.string.rule_own_limit, app.ownLimitMinutes)
-        else -> getString(R.string.rule_counts)
+    private fun ruleText(app: TodayReport.AppLine): String = when (app.label) {
+        TodayReport.Label.ALWAYS_FREE -> getString(R.string.rule_always_free)
+        TodayReport.Label.FREE_PREINSTALLED -> getString(R.string.rule_free_preinstalled)
+        TodayReport.Label.NOT_COUNTED -> getString(R.string.rule_not_counted)
+        TodayReport.Label.BONUS -> getString(R.string.rule_bonus)
+        TodayReport.Label.BLOCKED_BY_PARENT -> getString(R.string.rule_blocked)
+        TodayReport.Label.OWN_LIMIT -> getString(R.string.rule_own_limit, app.ownLimitMinutes)
+        TodayReport.Label.COUNTS -> getString(R.string.rule_counts)
     }
 
     private fun blockText(block: TodayReport.Block): String? = when (block) {

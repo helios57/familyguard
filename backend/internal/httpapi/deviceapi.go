@@ -614,6 +614,17 @@ func (s *Server) deviceUsageReport(c *gin.Context) {
 			s.fail(c, err)
 			return
 		}
+		// FR-5.8: which of today's rows count is recorded with them, from the resolution the phone
+		// obeys, so tomorrow's chart of today says what counted today rather than what counts then.
+		_, in, err := s.resolver.Resolve(c.Request.Context(), dev.ID, s.now())
+		if err != nil {
+			s.fail(c, err)
+			return
+		}
+		if err := s.store.MarkCounted(c.Request.Context(), dev.ID, day, in.UncountedPackages); err != nil {
+			s.fail(c, err)
+			return
+		}
 	}
 	s.hub.PublishParents(Event{Type: "usage", DeviceID: dev.ID.String(), ChildID: dev.ChildID.String()})
 	// `sessions` is the number STORED, not the number sent, and the difference is the point: the

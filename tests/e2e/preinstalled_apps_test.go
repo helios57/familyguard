@@ -33,16 +33,18 @@ func TestPreinstalledAppsAreFreeByDefault(t *testing.T) {
 			{"package_name": "com.samsung.android.emergency", "system_app": true, "launchable": false},
 		},
 	}).expect(http.StatusOK)
-	// 65 minutes of use, the camera's included: free means never paused, not uncounted — the
-	// same as a parent's "Always free".
+	// 70 minutes of use, 10 of them the camera's. Free means never paused, and since 0.6.38 also
+	// not counted — the same as a parent's "Always free" (FR-5.8): an app the limit never pauses
+	// does not spend it. Before, this test asserted the opposite and the camera spent the limit.
 	h.call(http.MethodPost, "/device/usage", f.deviceToken(), map[string]any{
 		"day": today,
 		"samples": map[string]int64{
-			pkgGame: 50 * 60_000, pkgCamera: 10 * 60_000, pkgChrome: 5 * 60_000,
+			pkgGame: 55 * 60_000, pkgCamera: 10 * 60_000, pkgChrome: 5 * 60_000,
 		},
 	}).expect(http.StatusOK)
 
 	type desired struct {
+		UsedMinutes   int      `json:"used_minutes"`
 		SuspendReason string   `json:"suspend_reason"`
 		Suspended     []string `json:"suspended_packages"`
 		Hidden        []string `json:"hidden_packages"`
@@ -58,8 +60,9 @@ func TestPreinstalledAppsAreFreeByDefault(t *testing.T) {
 	}
 
 	d := read()
-	if d.SuspendReason != "QUOTA" {
-		t.Fatalf("65 of 60 minutes should pause the phone; reason=%q", d.SuspendReason)
+	if d.UsedMinutes != 60 || d.SuspendReason != "QUOTA" {
+		t.Fatalf("55 game and 5 Chrome minutes are 60 of 60, the camera's 10 not among them; "+
+			"used=%d reason=%q", d.UsedMinutes, d.SuspendReason)
 	}
 	for _, pkg := range []string{pkgGame, pkgChrome} {
 		if !slices.Contains(d.Suspended, pkg) {

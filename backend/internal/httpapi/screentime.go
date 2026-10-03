@@ -124,8 +124,13 @@ func (s *Server) grantBonus(c *gin.Context) {
 // appRow is one line of the Activity table: the day's measurement, and what governs the app.
 type appRow struct {
 	store.UsageSample
-	// Counted is false for the home screen, System UI and this system's own app (FR-3.8).
+	// Counted is false for the home screen, System UI and this system's own app (FR-3.8), and for
+	// an app the daily limit never pauses (FR-5.8).
 	Counted bool `json:"counted"`
+	// Exempt says which of the two an uncounted row is: true for an app the daily limit never
+	// pauses — always free, preinstalled-free, always usable — whose time is use, just not use the
+	// limit governs.
+	Exempt bool `json:"exempt"`
 	// LimitMinutes is this app's own allowance on that day, 0 when it has none.
 	LimitMinutes int `json:"limit_minutes"`
 	// Rule is the parent's rule for the app now: ALLOW, LIMIT, BLOCK, or "" for none.
@@ -146,6 +151,9 @@ type screenTime struct {
 	CountedMinutes   int `json:"counted_minutes"`
 	EarnedMinutes    int `json:"earned_minutes"`
 	UncountedMinutes int `json:"uncounted_minutes"`
+	// ExemptMinutes is the time on apps the daily limit never pauses (FR-5.8): shown, not counted,
+	// and not part of UncountedMinutes, which is the time that was not use at all.
+	ExemptMinutes int `json:"exempt_minutes"`
 	// DailyLimitMinutes and BonusMinutes are what applied on the day; LimitRecorded is false for a
 	// day before anything recorded them, which the console says rather than guessing.
 	DailyLimitMinutes int  `json:"daily_limit_minutes"`
@@ -177,7 +185,19 @@ func (s *Server) describeDay(ctx context.Context, dev *store.Device, pol *store.
 	}
 	st.IsToday = day == today
 
-	var uncounted []string
+	home, err := s.store.HomePackages(ctx, dev.ID)
+	if err != nil {
+		return nil, st, err
+	}
+	notUse := store.SortedUnique(home, policy.PlatformUncountedPackages, []string{s.cfg.DPCPackage()})
+	// counted answers for one row. Today it is the resolver's answer; another day, what was recorded
+	// while that day was current, and for a row from before that was recorded, the rule then.
+	counted := func(sample store.UsageSample) bool {
+		if sample.RecordedCounted != nil {
+			return *sample.RecordedCounted
+		}
+		return !slices.Contains(notUse, sample.PackageName)
+	}
 	limits := map[string]int{}
 	var desired *policy.DesiredState
 	if st.IsToday {
@@ -186,18 +206,13 @@ func (s *Server) describeDay(ctx context.Context, dev *store.Device, pol *store.
 			return nil, st, err
 		}
 		desired = ds
-		uncounted = in.UncountedPackages
+		counted = func(sample store.UsageSample) bool { return !slices.Contains(in.UncountedPackages, sample.PackageName) }
 		limits = ownLimits(rules)
 		st.DailyLimitMinutes = pol.DailyLimitMinutes
 		st.BonusMinutes = ds.BonusMinutes
 		st.LimitRecorded = true
 		st.SuspendReason = ds.SuspendReason
 	} else {
-		home, err := s.store.HomePackages(ctx, dev.ID)
-		if err != nil {
-			return nil, st, err
-		}
-		uncounted = store.SortedUnique(home, policy.PlatformUncountedPackages, []string{s.cfg.DPCPackage()})
 		recorded, err := s.store.GetDayLimits(ctx, dev.ChildID, day)
 		switch {
 		case errors.Is(err, store.ErrNotFound):
@@ -212,18 +227,22 @@ func (s *Server) describeDay(ctx context.Context, dev *store.Device, pol *store.
 	}
 
 	rows := make([]appRow, 0, len(samples))
-	var countedMs, uncountedMs, earnedMs int64
+	var countedMs, uncountedMs, exemptMs, earnedMs int64
 	for _, sample := range samples {
 		row := appRow{
 			UsageSample:  sample,
-			Counted:      !slices.Contains(uncounted, sample.PackageName),
+			Counted:      counted(sample),
 			LimitMinutes: limits[sample.PackageName],
 			Rule:         ruleOf[sample.PackageName],
 		}
-		if row.Counted {
+		row.Exempt = !row.Counted && !slices.Contains(notUse, sample.PackageName)
+		switch {
+		case row.Counted:
 			countedMs += sample.ForegroundMs - min(sample.EarnedMs, sample.ForegroundMs)
 			earnedMs += min(sample.EarnedMs, sample.ForegroundMs)
-		} else {
+		case row.Exempt:
+			exemptMs += sample.ForegroundMs
+		default:
 			uncountedMs += sample.ForegroundMs
 		}
 		if desired != nil {
@@ -235,6 +254,7 @@ func (s *Server) describeDay(ctx context.Context, dev *store.Device, pol *store.
 	st.CountedMinutes = int(countedMs / 60000)
 	st.EarnedMinutes = int(earnedMs / 60000)
 	st.UncountedMinutes = int(uncountedMs / 60000)
+	st.ExemptMinutes = int(exemptMs / 60000)
 	return rows, st, nil
 }
 
