@@ -81,7 +81,9 @@ command -v curl >/dev/null 2>&1 || notmeasured "curl is not installed"
 for img in "$PG_IMAGE" "$BUILD_IMAGE" "$BASE_IMAGE"; do
 	docker image inspect "$img" >/dev/null 2>&1 && continue
 	echo "pulling $img…"
-	docker pull -q "$img" >/dev/null 2>&1 ||
+	# Docker's own reason reaches the log (stderr): "not pullable" alone cannot tell a rate limit
+	# from a wrong tag.
+	"$ROOT/tests/pull-image.sh" "$img" >/dev/null ||
 		notmeasured "image $img is neither present locally nor pullable"
 done
 
