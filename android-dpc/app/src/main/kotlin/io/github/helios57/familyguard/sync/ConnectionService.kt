@@ -177,6 +177,10 @@ class ConnectionService : Service() {
     @Volatile
     private var live: Synchronizer? = null
 
+    /** What the last sync applied, in its appliers' words; sent with a re-syncing command's ack. */
+    @Volatile
+    private var lastApplied: String? = null
+
     /**
      * The recovery attempts waiting to be reported (FR-12.5), or null before the loop is up.
      *
@@ -985,6 +989,7 @@ class ConnectionService : Service() {
                 val line = "$why: applied v${result.state.policyVersion} from ${result.source} — " +
                     "${result.outcome}, pending=${result.pendingCommands}"
                 if (result.outcome.ok) Log.i(TAG, line) else Log.e(TAG, line)
+                lastApplied = result.outcome.toString().take(APPLIED_REPORT_CHARS)
                 applied(result.state, why)
                 // Only on SERVER: a policy that came from the cache means the fetch failed, and
                 // reporting over a link that has just refused a request produces a log full of
@@ -1553,6 +1558,7 @@ class ConnectionService : Service() {
                     }
                 }
             },
+            applied = { lastApplied },
             update = { selfUpdater(api, policy).update() },
             debug = { params -> remoteDebug.open(params) },
         ).asMap()
@@ -2052,6 +2058,9 @@ class ConnectionService : Service() {
          * child's spent quota.
          */
         private const val INVENTORY_FILE = "family-guard-inventory"
+
+        /** The sync report rides in a command acknowledgement; this bounds what one can carry. */
+        private const val APPLIED_REPORT_CHARS = 4000
         private const val KEY_INVENTORY_DIGEST = "digest"
 
         /**

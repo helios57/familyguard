@@ -161,19 +161,34 @@ class DpmAppGateway(
      */
     override fun removedSystemApps(): Set<String> {
         val present = applications(0).mapTo(HashSet()) { it.packageName }
-        return applications(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong()).asSequence()
-            .filter { it.flags and ApplicationInfo.FLAG_SYSTEM != 0 }
+        val absent = applications(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong())
+            .filter { it.flags and ApplicationInfo.FLAG_SYSTEM != 0 && it.packageName !in present }
             .map { it.packageName }
-            .filter { it !in present }
-            .filter { !runCatching { dpm.isApplicationHidden(admin, it) }.getOrDefault(true) }
-            .filter { hasLauncherEntry(it) }
-            .toSet()
+            .sorted()
+        val hidden = absent.filter { runCatching { dpm.isApplicationHidden(admin, it) }.getOrDefault(true) }
+        val removed = absent.filter { it !in hidden && hasLauncherEntry(it) }.toSet()
+        // Counts, and the names of the absent ones a launcher entry did not qualify, capped: the
+        // report has to say why a phone found nothing without becoming a package dump.
+        val unlaunchable = absent.filter { it !in hidden && it !in removed }
+        lastDiagnosis = "installed=${present.size} system-not-installed=${absent.size} hidden=${hidden.size} " +
+            "launchable=${removed.size} no-launcher=${unlaunchable.take(DIAGNOSIS_NAMES)}" +
+            if (unlaunchable.size > DIAGNOSIS_NAMES) "+${unlaunchable.size - DIAGNOSIS_NAMES}" else ""
+        return removed
     }
+
+    @Volatile
+    private var lastDiagnosis = ""
+
+    override fun removedDiagnosis(): String = lastDiagnosis
 
     override fun restoreSystemApp(pkg: String): Boolean {
         dpm.enableSystemApp(admin, pkg)
         // `enableSystemApp` returns nothing, so the answer is the platform's own record afterwards.
         return pkg in applications(0).map { it.packageName }
+    }
+
+    private companion object {
+        const val DIAGNOSIS_NAMES = 25
     }
 
     private fun hasLauncherEntry(pkg: String): Boolean {

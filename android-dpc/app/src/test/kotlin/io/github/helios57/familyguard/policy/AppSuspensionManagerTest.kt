@@ -39,7 +39,16 @@ private class FakeAppGateway(
     val suspendCalls = mutableListOf<Pair<List<String>, Boolean>>()
     val restoreCalls = mutableListOf<String>()
 
-    override fun removedSystemApps(): Set<String> = isRemoved.toSet()
+    var removedThrows = false
+
+    override fun removedSystemApps(): Set<String> {
+        if (removedThrows) throw SecurityException("the platform threw")
+        return isRemoved.toSet()
+    }
+
+    var diagnosis = ""
+
+    override fun removedDiagnosis(): String = diagnosis
 
     override fun restoreSystemApp(pkg: String): Boolean {
         restoreCalls += pkg
@@ -315,7 +324,33 @@ class AppSuspensionManagerTest {
         assertTrue(outcome.toString(), outcome.ok)
         assertEquals(listOf(clock), outcome.restored)
         assertTrue(clock in gateway.installed())
-        assertTrue(outcome.toString().contains("restored=1"))
+        // Named, not counted: the sync report is the only remote evidence of what came back.
+        assertTrue(outcome.toString(), outcome.toString().contains("restored=[$clock]"))
+    }
+
+    /**
+     * When nothing qualifies, the report still says what the search saw — a phone that found no
+     * removed app and one that never looked would otherwise read the same.
+     */
+    @Test
+    fun `the search for removed system apps is described in the outcome`() {
+        val gateway = FakeAppGateway(installed = setOf(OWN)).apply { diagnosis = "system-not-installed=3 hidden=1 launchable=0" }
+
+        val outcome = manager(gateway).apply(emptyList(), emptyList())
+
+        assertTrue(outcome.toString(), outcome.ok)
+        assertTrue(outcome.toString(), outcome.toString().contains("removed-system-apps(system-not-installed=3 hidden=1 launchable=0)"))
+    }
+
+    /** The restore is an extra: a search that throws must not cost the phone its bedtime. */
+    @Test
+    fun `a failed search for removed apps still suspends what the policy asks`() {
+        val gateway = FakeAppGateway(installed = setOf("com.game", OWN)).apply { removedThrows = true }
+
+        val outcome = manager(gateway).apply(listOf("com.game"), emptyList())
+
+        assertEquals(setOf("com.game"), gateway.suspended())
+        assertTrue(outcome.toString(), outcome.toString().contains("the search failed: the platform threw"))
     }
 
     /** A blocked app stays away: putting it back only to hide it would show it to the child first. */

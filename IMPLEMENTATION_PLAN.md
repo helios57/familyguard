@@ -9181,3 +9181,20 @@ to 2026-10-05, both fail with CI's exact messages; relative, both pass, and the 
 they are preloads), and what Samsung's own provisioning did and why. Read back after the phone takes
 0.6.39: the Clock in its inventory, launchable, and in `free_by_default`.
 
+### 55.1 — live, and not yet working on the phone it was for (0.6.40)
+
+0.6.39 deployed 2026-10-09 (image `sha256:0e806fda…c045`, APK `8a1b6115…24b4`, versionCode 48). CI first
+hit Docker Hub's anonymous pull limit on GitHub's shared runners for 40 minutes, and the publish job
+could not get a Docker Hub token for BuildKit: `tests/pull-image.sh` and the release's buildx setup now
+go through `mirror.gcr.io` (same digests, checked), and the next CI run used that path while Docker Hub
+was still refusing. **The phone took 0.6.39 in seconds and acknowledged a SYNC_POLICY cleanly, and its
+next inventory (00:09) still had none of the six apps.** Whatever the restore found or did existed only
+in its logcat: "could not restore" is deliberately not a problem, so the acknowledgement said nothing.
+
+0.6.40 makes that remote. A re-syncing command's acknowledgement carries `applied` — what the sync's
+appliers report — and the app applier names what it restored and describes its search
+(`removed-system-apps(installed=… system-not-installed=… hidden=… launchable=… no-launcher=[…])`).
+A search that throws is reported there and no longer aborts the apply. Probes: `applied` dropped from
+the ack, the description dropped, the search's exception uncaught, restored apps counted instead of
+named — **4 red**. The device test asserts the description on API 37 (PASS). **Cumulative: 497.**
+

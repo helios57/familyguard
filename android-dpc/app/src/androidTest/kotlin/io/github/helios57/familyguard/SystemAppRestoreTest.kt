@@ -79,6 +79,8 @@ class SystemAppRestoreTest {
         val outcome = apps.apply(desiredSuspended = emptyList(), desiredHidden = listOf(calendar))
 
         assertTrue("$clock was not restored: $outcome", clock in outcome.restored)
+        // The sync report's account of the search: both removed apps seen and launchable.
+        assertTrue("the search is not described: $outcome", Regex("launchable=([2-9]|\\d{2,})").containsMatchIn(outcome.removedDiagnosis))
         assertNotNull(
             "$clock is restored and has no launcher entry for the child",
             context.packageManager.getLaunchIntentForPackage(clock),

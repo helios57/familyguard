@@ -52,6 +52,12 @@ interface AppGateway : AppRestraint {
 
     /** Installs a removed system app for this user again. @return false when the platform declined. */
     fun restoreSystemApp(pkg: String): Boolean
+
+    /**
+     * What the last [removedSystemApps] saw on its way to the answer, for the sync report only —
+     * the one remote evidence of why a phone found nothing to restore. Empty when not described.
+     */
+    fun removedDiagnosis(): String = ""
 }
 
 /**
@@ -85,6 +91,8 @@ data class AppOutcome(
      * so it would fire on every sync.
      */
     val notRestored: Map<String, String> = emptyMap(),
+    /** What the search for removed system apps saw ([AppGateway.removedDiagnosis]), or why it failed. */
+    val removedDiagnosis: String = "",
 ) {
     val ok: Boolean get() = failures.isEmpty() && missing.isEmpty() && stillRestrained.isEmpty()
 
@@ -93,13 +101,14 @@ data class AppOutcome(
         append(" released=").append(released.size)
         append(" hidden=").append(hidden.size)
         append(" revealed=").append(revealed.size)
-        if (restored.isNotEmpty()) append(" restored=").append(restored.size)
+        if (restored.isNotEmpty()) append(" restored=").append(restored)
         if (absent.isNotEmpty()) append(" not-installed=").append(absent.size)
         if (failures.isNotEmpty()) append(" FAILED=").append(failures)
         if (missing.isNotEmpty()) append(" NOT-IN-EFFECT=").append(missing)
         if (stillRestrained.isNotEmpty()) append(" CRITICAL-RESTRAINED=").append(stillRestrained)
         if (keptByAndroid.isNotEmpty()) append(" KEPT-BY-ANDROID=").append(keptByAndroid)
         if (notRestored.isNotEmpty()) append(" NOT-RESTORED=").append(notRestored)
+        if (removedDiagnosis.isNotEmpty()) append(" removed-system-apps(").append(removedDiagnosis).append(")")
     }
 }
 
@@ -247,7 +256,7 @@ class AppSuspensionManager(
     fun apply(desiredSuspended: Collection<String>, desiredHidden: Collection<String>): AppOutcome {
         // Before the installed read, so a restored app is governed in this same pass: it comes back
         // under today's rules rather than free until the next sync.
-        val (restored, notRestored) = restoreRemoved(desiredHidden)
+        val restore = restoreRemoved(desiredHidden)
         val installed = gateway.installed()
         val failures = LinkedHashMap<String, String>()
 
@@ -321,8 +330,9 @@ class AppSuspensionManager(
                 .filter { it in effectiveSuspended || it in effectiveHidden }
                 .sorted(),
             keptByAndroid = keptByAndroid.toList(),
-            restored = restored,
-            notRestored = notRestored,
+            restored = restore.restored,
+            notRestored = restore.notRestored,
+            removedDiagnosis = restore.diagnosis,
         )
     }
 
@@ -330,9 +340,17 @@ class AppSuspensionManager(
      * Puts back what setup removed (FR-1.9), and reads back what the platform actually did: a
      * restore it accepted and did not carry out is named, not counted as done.
      */
-    private fun restoreRemoved(desiredHidden: Collection<String>): Pair<List<String>, Map<String, String>> {
-        val wanted = AppSuspensionPlanner.restore(gateway.removedSystemApps(), desiredHidden)
-        if (wanted.isEmpty()) return emptyList<String>() to emptyMap()
+    private fun restoreRemoved(desiredHidden: Collection<String>): Restore {
+        // Caught: the restore is an extra, and a search that throws must not cost the phone the
+        // suspensions that follow it in this same apply.
+        val removed = try {
+            gateway.removedSystemApps()
+        } catch (e: RuntimeException) {
+            return Restore(diagnosis = "the search failed: " + (e.message ?: e.javaClass.simpleName))
+        }
+        val diagnosis = gateway.removedDiagnosis()
+        val wanted = AppSuspensionPlanner.restore(removed, desiredHidden)
+        if (wanted.isEmpty()) return Restore(diagnosis = diagnosis)
         val notRestored = LinkedHashMap<String, String>()
         restoreWindow {
             for (pkg in wanted) {
@@ -347,8 +365,14 @@ class AppSuspensionManager(
         for (pkg in wanted) {
             if (pkg in stillRemoved && pkg !in notRestored) notRestored[pkg] = "accepted, and still not installed"
         }
-        return wanted.filter { it !in notRestored } to notRestored
+        return Restore(wanted.filter { it !in notRestored }, notRestored, diagnosis)
     }
+
+    private data class Restore(
+        val restored: List<String> = emptyList(),
+        val notRestored: Map<String, String> = emptyMap(),
+        val diagnosis: String = "",
+    )
 
     /**
      * One call for the whole batch, because `setPackagesSuspended` is atomic per call in the sense

@@ -82,6 +82,7 @@ private class Harness(
     permitted: Boolean = true,
     private val resyncProblem: String? = null,
     private val reportFails: Boolean = false,
+    private val applied: String? = null,
 ) {
     val lockGateway = StubLockGateway(secure, locked)
     val sirenDevice = StubSirenDevice()
@@ -101,6 +102,7 @@ private class Harness(
             resyncs++
             resyncProblem
         },
+        applied = { applied },
         now = { NOW },
     ).asMap()
 
@@ -279,6 +281,21 @@ class CommandHandlersTest {
                 (outcome as CommandOutcome.Failed).reason,
             )
         }
+    }
+
+    /**
+     * What the sync did reaches the server with the acknowledgement. On 2026-10-09 a phone took
+     * 0.6.39, acknowledged SYNC_POLICY as "policy re-fetched and applied", and still lacked the Clock
+     * the release was for — and what its restore had found or done existed only in its own logcat.
+     */
+    @Test
+    fun `a sync command carries what the sync applied`() {
+        val done = Harness(applied = "apps: restored=[com.sec.android.app.clockpackage]")
+            .run(CommandHandlers.SYNC_POLICY) as CommandOutcome.Done
+
+        assertEquals("policy re-fetched and applied", done.result["state"])
+        assertEquals("apps: restored=[com.sec.android.app.clockpackage]", done.result["applied"])
+        assertTrue("absent when nothing was recorded", "applied" !in (Harness().run(CommandHandlers.SYNC_POLICY) as CommandOutcome.Done).result)
     }
 
     @Test

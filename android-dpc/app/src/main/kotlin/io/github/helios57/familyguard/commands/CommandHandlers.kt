@@ -37,6 +37,12 @@ class CommandHandlers(
      */
     private val resync: () -> String?,
     /**
+     * What the last sync applied, in its appliers' own words, or null. Sent with the acknowledgement
+     * of a re-syncing command: on 2026-10-09 a phone acknowledged "policy re-fetched and applied"
+     * and still lacked the app the release was for, and what it had found existed only in logcat.
+     */
+    private val applied: () -> String? = { null },
+    /**
      * Downloads and stages the DPC the server hosts (FR-15.2). Null on a device with no updater
      * wired, which answers `UPDATE_APP` as unimplemented rather than as silently done.
      */
@@ -122,7 +128,7 @@ class CommandHandlers(
 
     private fun resyncing(summary: String) = CommandHandler {
         val problem = resync()
-        if (problem == null) CommandOutcome.Done(result("state" to summary))
+        if (problem == null) CommandOutcome.Done(result("state" to summary, "applied" to applied()))
         else CommandOutcome.Failed(problem)
     }
 
