@@ -34,9 +34,11 @@ func TestACalendarIsReadIntoTheWeek(t *testing.T) {
 	var body atomic.Value
 	var failing atomic.Bool
 	today := strings.ReplaceAll(zurichDay(0), "-", "")
+	monday := comingMonday()
+	mon, wed, thu, fri := isoDay(monday, 0), icsDay(monday, 2), icsDay(monday, 3), icsDay(monday, 4)
 	body.Store(icsBody(
-		icsEvent("a", "Elterngespräch", "DTSTART;TZID=Europe/Zurich:20261007T140000", "DTEND;TZID=Europe/Zurich:20261007T143000"),
-		icsEvent("b", "Schulreise", "DTSTART;VALUE=DATE:20261008", "DTEND;VALUE=DATE:20261009"),
+		icsEvent("a", "Elterngespräch", "DTSTART;TZID=Europe/Zurich:"+wed+"T140000", "DTEND;TZID=Europe/Zurich:"+wed+"T143000"),
+		icsEvent("b", "Schulreise", "DTSTART;VALUE=DATE:"+thu, "DTEND;VALUE=DATE:"+fri),
 		icsEvent("c", "Heute-Termin", "DTSTART;TZID=Europe/Zurich:"+today+"T120000", "DTEND;TZID=Europe/Zurich:"+today+"T123000"),
 	))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +72,7 @@ func TestACalendarIsReadIntoTheWeek(t *testing.T) {
 		t.Fatalf("setting the calendar answered %+v; want it read at once, with three events", set)
 	}
 
-	week := h.agendaDays(f.parent.Token, f.child.ID, "2026-10-05", 7)
+	week := h.agendaDays(f.parent.Token, f.child.ID, mon, 7)
 	if got := titles(week[2].Items); !slices.Equal(got, []string{"Schule", "Elterngespräch"}) {
 		t.Errorf("Wednesday holds %v; want school and the calendar's 14:00 event", got)
 	}
@@ -83,7 +85,7 @@ func TestACalendarIsReadIntoTheWeek(t *testing.T) {
 			} `json:"items"`
 		} `json:"days"`
 	}
-	h.call(http.MethodGet, c+"/agenda/days?from=2026-10-05&days=7", f.parent.Token, nil).expect(http.StatusOK).decode(&raw)
+	h.call(http.MethodGet, c+"/agenda/days?from="+mon+"&days=7", f.parent.Token, nil).expect(http.StatusOK).decode(&raw)
 	thursday := raw.Days[3].Items
 	if len(thursday) != 2 || thursday[0].Title != "Schulreise" || !thursday[0].AllDay || thursday[0].Source != "calendar" || thursday[1].Source != "agenda" {
 		t.Errorf("Thursday holds %+v; want the all-day calendar event first, then school", thursday)
@@ -97,11 +99,11 @@ func TestACalendarIsReadIntoTheWeek(t *testing.T) {
 	}
 
 	// The calendar changes; once the kept copy is stale a read fetches it again.
-	body.Store(icsBody(icsEvent("a", "Elternabend", "DTSTART;TZID=Europe/Zurich:20261007T190000", "DTEND;TZID=Europe/Zurich:20261007T200000")))
+	body.Store(icsBody(icsEvent("a", "Elternabend", "DTSTART;TZID=Europe/Zurich:"+wed+"T190000", "DTEND;TZID=Europe/Zurich:"+wed+"T200000")))
 	time.Sleep(1100 * time.Millisecond)
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		week = h.agendaDays(f.parent.Token, f.child.ID, "2026-10-05", 7)
+		week = h.agendaDays(f.parent.Token, f.child.ID, mon, 7)
 		if slices.Equal(titles(week[2].Items), []string{"Schule", "Elternabend"}) {
 			break
 		}
@@ -116,7 +118,7 @@ func TestACalendarIsReadIntoTheWeek(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 	deadline = time.Now().Add(10 * time.Second)
 	for {
-		h.agendaDays(f.parent.Token, f.child.ID, "2026-10-05", 7)
+		h.agendaDays(f.parent.Token, f.child.ID, mon, 7)
 		var cal calendarDTO
 		h.call(http.MethodGet, c+"/calendar", f.parent.Token, nil).expect(http.StatusOK).decode(&cal)
 		if cal.Error != "" {
@@ -130,7 +132,7 @@ func TestACalendarIsReadIntoTheWeek(t *testing.T) {
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
-	if got := titles(h.agendaDays(f.parent.Token, f.child.ID, "2026-10-05", 7)[2].Items); !slices.Equal(got, []string{"Schule", "Elternabend"}) {
+	if got := titles(h.agendaDays(f.parent.Token, f.child.ID, mon, 7)[2].Items); !slices.Equal(got, []string{"Schule", "Elternabend"}) {
 		t.Errorf("a failed read lost the last good copy: Wednesday %v", got)
 	}
 	failing.Store(false)
@@ -146,7 +148,7 @@ func TestACalendarIsReadIntoTheWeek(t *testing.T) {
 
 	// Removed: the week is the agenda alone again.
 	h.call(http.MethodDelete, c+"/calendar", f.parent.Token, nil).expect(http.StatusNoContent)
-	if got := titles(h.agendaDays(f.parent.Token, f.child.ID, "2026-10-05", 7)[2].Items); !slices.Equal(got, []string{"Schule"}) {
+	if got := titles(h.agendaDays(f.parent.Token, f.child.ID, mon, 7)[2].Items); !slices.Equal(got, []string{"Schule"}) {
 		t.Errorf("after removing the calendar Wednesday holds %v", got)
 	}
 

@@ -8,7 +8,29 @@ import (
 	"net/http"
 	"slices"
 	"testing"
+	"time"
 )
+
+// comingMonday is the Monday of next week in Zurich, at noon. A test's week is placed there rather
+// than on a date written into the test, because two things the server sends are about what is still
+// ahead — the phone's alarm carries only the holidays that have not ended, and a calendar is counted
+// from yesterday on — so a pinned date passes until the day it falls behind and is red from then on
+// with nothing in the product changed. Measured 2026-10-09: two tests pinned to the week of
+// 2026-10-05 went red on the Friday of that week.
+func comingMonday() time.Time {
+	zurich, _ := time.LoadLocation("Europe/Zurich")
+	now := time.Now().In(zurich)
+	noon := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, zurich)
+	ahead := (8 - int(noon.Weekday())) % 7
+	if ahead == 0 {
+		ahead = 7
+	}
+	return noon.AddDate(0, 0, ahead)
+}
+
+// isoDay and icsDay are the day n days after monday, as the API and as an iCalendar file write it.
+func isoDay(monday time.Time, n int) string { return monday.AddDate(0, 0, n).Format("2006-01-02") }
+func icsDay(monday time.Time, n int) string { return monday.AddDate(0, 0, n).Format("20060102") }
 
 type agendaEntryDTO struct {
 	ID       string `json:"id,omitempty"`
@@ -82,12 +104,14 @@ func TestTheAgendaIsAWeekOfEntriesAndHolidaysSuspendTheRepeatingOnes(t *testing.
 	f := enrolledFixture(t, h)
 	h.patchPolicy(f.parent.Token, f.child.ID, map[string]any{"timezone": "Europe/Zurich"})
 	c := "/children/" + f.child.ID
+	monday := comingMonday()
+	mon, tue, wed, thu, sun := isoDay(monday, 0), isoDay(monday, 1), isoDay(monday, 2), isoDay(monday, 3), isoDay(monday, 6)
 
 	school := agendaEntryDTO{Kind: "RECURRING", Title: "Schule", Place: "Schulhaus", Weekdays: 31, StartsAt: "08:00", EndsAt: "12:00"}
 	training := agendaEntryDTO{Kind: "RECURRING", Title: "Training", Weekdays: 4, StartsAt: "17:00", EndsAt: "18:30", Optional: true}
-	dentist := agendaEntryDTO{Kind: "SINGLE", Title: "Zahnarzt", Day: "2026-10-07", StartsAt: "14:00", EndsAt: "14:30"}
+	dentist := agendaEntryDTO{Kind: "SINGLE", Title: "Zahnarzt", Day: wed, StartsAt: "14:00", EndsAt: "14:30"}
 	saved := h.putAgenda(f.parent.Token, f.child.ID, []agendaEntryDTO{school, training, dentist})
-	if len(saved) != 3 || saved[0].ID == "" || saved[1].Optional != true || saved[2].Day != "2026-10-07" {
+	if len(saved) != 3 || saved[0].ID == "" || saved[1].Optional != true || saved[2].Day != wed {
 		t.Fatalf("the saved agenda is %+v", saved)
 	}
 	// Edited with its id: the same entry.
@@ -109,9 +133,9 @@ func TestTheAgendaIsAWeekOfEntriesAndHolidaysSuspendTheRepeatingOnes(t *testing.
 		}
 	}
 
-	// ---- the week, expanded: 2026-10-05 is a Monday ----
-	week := h.agendaDays(f.parent.Token, f.child.ID, "2026-10-05", 7)
-	if len(week) != 7 || week[0].Day != "2026-10-05" || week[6].Day != "2026-10-11" {
+	// ---- the week, expanded ----
+	week := h.agendaDays(f.parent.Token, f.child.ID, mon, 7)
+	if len(week) != 7 || week[0].Day != mon || week[6].Day != sun {
 		t.Fatalf("the week is %+v", week)
 	}
 	if got := titles(week[0].Items); !slices.Equal(got, []string{"Primarschule"}) {
@@ -133,12 +157,12 @@ func TestTheAgendaIsAWeekOfEntriesAndHolidaysSuspendTheRepeatingOnes(t *testing.
 		Holidays []holidayDTO `json:"holidays"`
 	}
 	h.call(http.MethodPut, "/family/holidays", f.parent.Token, map[string]any{"holidays": []holidayDTO{
-		{Title: "Herbstferien", StartsOn: "2026-10-06", EndsOn: "2026-10-08"},
+		{Title: "Herbstferien", StartsOn: tue, EndsOn: thu},
 	}}).expect(http.StatusOK).decode(&hol)
 	if len(hol.Holidays) != 1 || hol.Holidays[0].ID == "" {
 		t.Fatalf("the saved holidays are %+v", hol.Holidays)
 	}
-	week = h.agendaDays(f.parent.Token, f.child.ID, "2026-10-05", 7)
+	week = h.agendaDays(f.parent.Token, f.child.ID, mon, 7)
 	if week[1].Holiday != "Herbstferien" || len(week[1].Items) != 0 {
 		t.Errorf("Tuesday in the holiday reads holiday=%q items=%v", week[1].Holiday, titles(week[1].Items))
 	}
@@ -149,15 +173,15 @@ func TestTheAgendaIsAWeekOfEntriesAndHolidaysSuspendTheRepeatingOnes(t *testing.
 		t.Errorf("the days around the holiday changed: %+v / %+v", week[0], week[4])
 	}
 	for name, bad := range map[string]holidayDTO{
-		"ends before it starts": {Title: "x", StartsOn: "2026-10-08", EndsOn: "2026-10-06"},
-		"no title":              {Title: "", StartsOn: "2026-10-06", EndsOn: "2026-10-06"},
+		"ends before it starts": {Title: "x", StartsOn: thu, EndsOn: tue},
+		"no title":              {Title: "", StartsOn: tue, EndsOn: tue},
 		"longer than 120 days":  {Title: "x", StartsOn: "2026-01-01", EndsOn: "2026-12-31"},
 	} {
 		if r := h.call(http.MethodPut, "/family/holidays", f.parent.Token, map[string]any{"holidays": []holidayDTO{bad}}); r.Status != http.StatusBadRequest {
 			t.Errorf("%s: PUT holidays answered %d, want 400", name, r.Status)
 		}
 	}
-	if r := h.call(http.MethodGet, c+"/agenda/days?from=2026-10-05&days=32", f.parent.Token, nil); r.Status != http.StatusBadRequest {
+	if r := h.call(http.MethodGet, c+"/agenda/days?from="+mon+"&days=32", f.parent.Token, nil); r.Status != http.StatusBadRequest {
 		t.Errorf("32 days answered %d, want 400 (at most 31)", r.Status)
 	}
 
@@ -188,7 +212,7 @@ func TestTheAgendaIsAWeekOfEntriesAndHolidaysSuspendTheRepeatingOnes(t *testing.
 		Holidays     []holidayDTO `json:"holidays"`
 	}
 	if err := json.Unmarshal(raw["alarm"], &phoneAlarm); err != nil || !phoneAlarm.SkipHolidays ||
-		len(phoneAlarm.Holidays) != 1 || phoneAlarm.Holidays[0].StartsOn != "2026-10-06" {
+		len(phoneAlarm.Holidays) != 1 || phoneAlarm.Holidays[0].StartsOn != tue {
 		t.Errorf("the phone's alarm block is %s; want skip_holidays and the coming holiday", raw["alarm"])
 	}
 

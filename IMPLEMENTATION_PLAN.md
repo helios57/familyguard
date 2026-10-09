@@ -9170,6 +9170,13 @@ entry, the hidden Calendar `installed=false`, the restriction back in effect.
 
 **6 probes, 6 red. Cumulative: 493.**
 
+**Two e2e tests were time bombs, found by this release's CI.** `TestACalendarIsReadIntoTheWeek` and
+`TestTheAgendaIsAWeekOfEntriesAndHolidaysSuspendTheRepeatingOnes` pinned their week to 2026-10-05. The
+calendar's event count runs from yesterday, and the phone's alarm carries only holidays that have not
+ended, so both went red on 2026-10-09 with nothing in the product changed (*Events:2 … want three*;
+*holidays:[]*). Their week is now next week, computed from today (`comingMonday`). Calibrated: put back
+to 2026-10-05, both fail with CI's exact messages; relative, both pass, and the full e2e layer passes.
+
 **Not proven:** that the Samsung phone's image carries these packages and lets them back (it should:
 they are preloads), and what Samsung's own provisioning did and why. Read back after the phone takes
 0.6.39: the Clock in its inventory, launchable, and in `free_by_default`.
