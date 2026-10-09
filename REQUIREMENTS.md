@@ -80,15 +80,20 @@ RBAC roles: `PRIMARY_ADMIN`, `ADMIN`, `GUARDIAN` — what each may do is FR-20.
   cut off stays cut off; and it replaces the credential and the recovery material as one unit, so
   the recovery code the console shows afterwards is the one that works.
 - FR-1.9 **A system app setup removed anyway comes back.** `LEAVE_ALL_SYSTEM_APPS_ENABLED` (FR-1.2)
-  is a request, and a Samsung on Android 16 removed several preinstalled apps for the child's user
-  regardless — the Clock among them, so the child could set neither an alarm nor a timer, and
-  nothing on the phone or in the console said why. On every sync the DPC installs each system app
+  is a request, and a setup that ignores it leaves the child without apps the phone came with, with
+  nothing on the phone or in the console saying why. On every sync the DPC installs each system app
   that has a launcher entry, is on the phone's image and is not installed for this user, **unless
   the policy hides it**: a blocked app stays away rather than being shown to the child first.
   `no_install_apps` binds this call too and refuses it silently, so it runs inside the same narrow
   restriction window as a managed install. A restore the platform declines is named in the sync
   report and is not a failure — it would otherwise fire on every sync. A restored app is then
-  governed like any preinstalled app (FR-5.10).
+  governed like any preinstalled app (FR-5.10). The sync report describes the search (how many
+  system apps are not installed for the user, how many of those this DPC hides, how many have a
+  launcher entry), so a phone that found nothing to restore says why. **This cannot bring back an
+  app the phone's image does not carry**: the family Samsung (Android 16) that had no Clock reported
+  7 system apps not installed for the child, all 7 hidden by the family's blocklist, and no Clock —
+  on that phone the Clock was never a system app to restore. An app like that is given to the child
+  as a managed app (FR-16).
 
 ### FR-2 Device Owner hardening
 Applied at provisioning and re-applied on every boot:

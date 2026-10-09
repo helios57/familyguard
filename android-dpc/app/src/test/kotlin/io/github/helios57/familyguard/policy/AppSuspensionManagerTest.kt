@@ -310,9 +310,8 @@ class AppSuspensionManagerTest {
         AppSuspensionManager(gateway, PROTECTED, ownPackage = OWN)
 
     /**
-     * FR-1.2 asks setup to leave every system app installed, and a Samsung on Android 16 removed the
-     * Clock anyway: on one family phone it was missing from the very first inventory, so the child
-     * could not set an alarm or a timer, and nothing anywhere said why. The sync puts it back.
+     * FR-1.2 asks setup to leave every system app installed; a system app a setup removed for the
+     * child's user anyway is put back by the sync (FR-1.9).
      */
     @Test
     fun `a system app setup removed is put back`() {

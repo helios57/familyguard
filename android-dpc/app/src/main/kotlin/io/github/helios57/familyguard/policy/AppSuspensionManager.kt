@@ -44,9 +44,10 @@ interface AppGateway : AppRestraint {
      * System apps on this phone's image that are not installed for this user, that a child could
      * open, and that this DPC has not hidden: what setup took away.
      *
-     * FR-1.2 asks setup to leave every system app installed (`LEAVE_ALL_SYSTEM_APPS_ENABLED`), and a
-     * Samsung on Android 16 removed some anyway — the Clock among them, so the child had no alarm and
-     * no timer, and nothing on the phone or in the console said why. Disjoint from [installed].
+     * FR-1.2 asks setup to leave every system app installed (`LEAVE_ALL_SYSTEM_APPS_ENABLED`); this
+     * is the repair for a setup that removed one anyway. It cannot reach an app the phone's image does
+     * not carry: the family Samsung that had no Clock reported none here (FR-1.9). Disjoint from
+     * [installed].
      */
     fun removedSystemApps(): Set<String>
 

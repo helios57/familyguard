@@ -4,8 +4,8 @@
 #
 #   0  measured and passed     1  measured and failed     2  NOT MEASURED
 #
-# A Samsung on Android 16 left its Clock uninstalled for the child's user despite
-# LEAVE_ALL_SYSTEM_APPS_ENABLED, so the child had no alarm and no timer. Nothing in the product can
+# The repair for a setup that removes a system app for the child's user despite
+# LEAVE_ALL_SYSTEM_APPS_ENABLED (FR-1.9). Nothing in the product can
 # remove a system app for a user, so this script makes that state with root — `pm uninstall --user 0`
 # leaves the same platform record setup leaves (on the image, installed=false for user 0) — then
 # runs SystemAppRestoreTest and reads the result back from the package manager itself, not from the

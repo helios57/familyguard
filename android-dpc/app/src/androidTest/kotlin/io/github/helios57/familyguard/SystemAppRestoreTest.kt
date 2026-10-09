@@ -20,8 +20,8 @@ import org.junit.runner.RunWith
  * FR-1.9 on a device: a system app setup removed for this user comes back on the next sync, and one
  * the policy hides stays away.
  *
- * The family phone this is about is a Samsung on Android 16 that was missing its Clock from the
- * first inventory it ever filed, so the child could set neither an alarm nor a timer. Nothing in the
+ * Written for a family Samsung that had no Clock from its first inventory; that phone turned out not
+ * to carry the Clock at all (FR-1.9), so this measures the repair, not that phone. Nothing in the
  * product can remove a system app for a user, so the state is made by
  * `tests/android/system-apps.sh` with root (`pm uninstall --user 0`), which leaves exactly the
  * platform record setup leaves: the package on the image, `installed=false` for user 0. That is why

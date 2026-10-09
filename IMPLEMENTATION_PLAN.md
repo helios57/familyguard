@@ -3993,7 +3993,7 @@ proven.
 | Requirement | Implemented in | Proven by |
 |---|---|---|
 | FR-1 enrollment / QR | 3.2, 3.4, 5.2, 5.3 | e2e `TestDeviceLifecycleJourney`, `TestEnrollmentCredentialsAreSingleUse`, `TestTheQRPointsAtAnAPKThisServerServes`; `TestQRHoldsTheRealPayload`, `TestPayloadCarriesTheExtrasAndroidActuallyReads`, `TestExtraNamesAreExactlyAndroidsSpelling`, `TestChecksumIsComputedFromRealBytes`, `TestAPKIsServedWithTheChecksumTheQRWouldCarry`; `EnrollerTest` |
-| FR-1.9 a system app setup removed comes back | 55 | `tests/android/system-apps.sh` → `SystemAppRestoreTest` on a device-owned API 37 and API 33 emulator: the Clock removed for user 0 with root (the record setup leaves) is installed again by one apply under `no_install_apps`, a removed app the policy hides stays removed, both read back from `dumpsys package`; five `AppSuspensionManagerTest` cases (put back, a hidden one left, governed in the same apply, a refusal named and not a failure, one restriction window per batch). **Calibrated:** four unit probes red; on the device, the restriction window removed (**RED**: *the platform declined* — `no_install_apps` refuses `enableSystemApp` silently) and the platform call skipped (**RED**). **Not proven:** that the Samsung's Clock is on its image and not merely absent (read on the phone after 0.6.39) |
+| FR-1.9 a system app setup removed comes back | 55 | `tests/android/system-apps.sh` → `SystemAppRestoreTest` on a device-owned API 37 and API 33 emulator: the Clock removed for user 0 with root (the record setup leaves) is installed again by one apply under `no_install_apps`, a removed app the policy hides stays removed, both read back from `dumpsys package`; five `AppSuspensionManagerTest` cases (put back, a hidden one left, governed in the same apply, a refusal named and not a failure, one restriction window per batch). **Calibrated:** four unit probes red; on the device, the restriction window removed (**RED**: *the platform declined* — `no_install_apps` refuses `enableSystemApp` silently) and the platform call skipped (**RED**). **Read on the phone (55.2):** the family Samsung's Clock is not on its image, so there was nothing for this to restore there; the phone's sync report says so |
 | FR-1.7 / FR-1.8 replacing and re-linking a phone | 15.1, 15.2, 16.2 | e2e `TestANewSetupCodeDoesNotSilentlyRevokeAWorkingPhone` (the credential of a working phone survives a request that did not say it meant to replace it), `TestReplacingAPhoneOnPurposeRevokesTheOldOne` (the other half, without which the guard could be a permanent refusal), `TestAFirstSetupCodeNeedsNoAcknowledgement`, `TestARevokedPhoneCanReLinkWithoutAFactoryReset`; `TestConsoleRendersOnAPhone/replace_phone` for the confirmation as a parent meets it; `EnrollerTest`'s seven re-link cases and `LinkRefusedTest`'s seven. **Calibrated 5/5** ([15.5](#155--calibration)). **16.2 ungated the field**: it was offered only once `ConnectionService` had personally seen a 401, so a phone revoked while switched off held a dead credential and showed no control. It is now offered whenever the phone holds a credential at all, which is the honest precondition; only the explanatory wording still differs. **Not proven:** the re-link screen on a handset — nobody has typed a code into a phone yet, and the phone that needs to cannot get the build that has the screen without the sideload route in DEPLOYMENT.md |
 | FR-2 hardening | 5.2 | `HardeningManagerTest`, `EnforcementEngineHardeningTest`, `RestrictionKeysMatchThePlatformTest`; `TestNoRestrictionCanBlockCallingOrRecovery` |
 | FR-2.2 automatic network time | 5.11 | `ClockPolicyManagerTest` (8 cases over the pure manager) and `HardeningClockTest` (3) — the read-back that catches a device accepting `setAutoTimeEnabled` and staying off, an unreadable clock reported as a failure rather than assumed on, and the two facts about where it runs: a clock that will not be fixed makes the **whole baseline** not-ok even with every restriction in effect, and a sync reports `clock = null` rather than a success for something it never looked at. `ClockGatewayVersionSplitTest` reads `DpmClockGateway.kt` for the API 29/30 split, which no JVM test can execute and whose collapse is invisible — `setAutoTimeRequired` compiles everywhere and means *forbid changing it* on API 30+. **Calibrated 19/19.** Found by 5.10: the requirement was cited by nothing because nothing implemented it |
@@ -9134,8 +9134,8 @@ held `com.sec.android.app.clockpackage` — not in its first report, one second 
 other phone carries, six are missing from this one: Clock, Calendar, Finder, Game Launcher, AR Zone,
 Private Share. Nothing in FamilyGuard hides or removes them (not in `hidden_packages` or
 `suspended_packages`, no BLOCK rule), and the inventory reports what this DPC hides, so they are not
-installed for the child's user at all: setup removed them, `LEAVE_ALL_SYSTEM_APPS_ENABLED` in the QR
-notwithstanding. How the other phone was set up, and why this one lost them, is not established.
+installed for the child's user at all. The hypothesis was that setup had removed them,
+`LEAVE_ALL_SYSTEM_APPS_ENABLED` in the QR notwithstanding — **55.2 below disproves it for this phone.** How the other phone was set up, and why this one lost them, is not established.
 
 **The fix is on the phone.** Every apply first installs, with `DevicePolicyManager.enableSystemApp`,
 each system package that has a launcher entry, is known to the package manager and is not installed
@@ -9197,4 +9197,26 @@ appliers report — and the app applier names what it restored and describes its
 A search that throws is reported there and no longer aborts the apply. Probes: `applied` dropped from
 the ack, the description dropped, the search's exception uncaught, restored apps counted instead of
 named — **4 red**. The device test asserts the description on API 37 (PASS). **Cumulative: 497.**
+
+### 55.2 — the phone's answer: there is no Clock to restore
+
+0.6.40 deployed 2026-10-10 00:3x (image `sha256:e8b4401e…a6c0`, APK `bc7bae34…5fe2`, versionCode 49).
+The phone took it and acknowledged a SYNC_POLICY with
+`apps[… removed-system-apps(installed=513 system-not-installed=7 hidden=7 launchable=0 no-launcher=[])]`:
+the package manager knows seven system apps that are not installed for the child, **all seven are the
+ones this DPC hides** (the family blocklist), and the Clock is not among them. On this Samsung the Clock
+is not a system app the user lost; it is not on the phone at all, and no device-owner call can bring it
+back. The 55 hypothesis was wrong for the phone that motivated it; the repair stays, because it is what
+FR-1.2 asks for and it is measured on two emulators, and the report it now sends is what found this.
+
+**What the child got instead, the same night:** Fossify Clock 1.6.0 (`org.fossify.clock`, versionCode
+10, the newest on both GitHub and F-Droid, signer `affdb124…f292`), uploaded to the catalog and declared
+for that child as a managed app with an ALLOW rule — the MuPlay pattern. Installed by the DPC ten seconds
+after the sync (`label Uhr`, launchable, not suspended or hidden), uncounted, free at bedtime. New
+versions reach the phone only by a catalog upload with the same signer (FR-16.4).
+
+**Not established:** why the Samsung Clock is absent — whether this firmware installs it at setup from a
+preload partition that the device-owner flow skipped (Calendar, Finder, Game Launcher, AR Zone and
+Private Share are missing the same way). Installing Samsung's own Clock would need the Galaxy Store
+with child installs allowed for a moment, which is a parent's decision at the phone.
 
