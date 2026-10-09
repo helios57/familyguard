@@ -4,6 +4,7 @@ import android.app.KeyguardManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
@@ -59,6 +60,11 @@ class DeviceOwnerPolicy(
                     gateway = DpmAppGateway(dpm, admin, context.packageManager),
                     protectedPackages = protectedPackages,
                     ownPackage = context.packageName,
+                    // `no_install_apps` binds a device owner's restore too (measured on API 37, see
+                    // SystemAppRestoreTest), and it is in effect whenever child installs are off.
+                    restoreWindow = { body ->
+                        hardening.withoutRestrictions(listOf(EnforcementEngine.RESTRICTION_INSTALL_APPS), body)
+                    },
                 ),
                 chrome = ChromePolicyManager(DpmManagedConfigGateway(dpm, admin)),
                 dns = DnsPolicyManager(DpmDnsGateway(dpm, admin)),
@@ -143,6 +149,44 @@ class DpmAppGateway(
 
     override fun setHidden(pkg: String, hidden: Boolean): Boolean =
         dpm.setApplicationHidden(admin, pkg, hidden)
+
+    /**
+     * The wide read minus the narrow one, kept to system packages with a launcher entry that this
+     * DPC has not hidden. Hidden packages are excluded by asking rather than by assuming: hiding
+     * clears the same installed-for-this-user flag setup clears, and restoring a hidden app would
+     * un-hide it behind the policy's back.
+     *
+     * Launcher entries only, because that is what setup removes and what a child misses; a system
+     * package with no launcher entry that is absent for this user may be absent on purpose.
+     */
+    override fun removedSystemApps(): Set<String> {
+        val present = applications(0).mapTo(HashSet()) { it.packageName }
+        return applications(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong()).asSequence()
+            .filter { it.flags and ApplicationInfo.FLAG_SYSTEM != 0 }
+            .map { it.packageName }
+            .filter { it !in present }
+            .filter { !runCatching { dpm.isApplicationHidden(admin, it) }.getOrDefault(true) }
+            .filter { hasLauncherEntry(it) }
+            .toSet()
+    }
+
+    override fun restoreSystemApp(pkg: String): Boolean {
+        dpm.enableSystemApp(admin, pkg)
+        // `enableSystemApp` returns nothing, so the answer is the platform's own record afterwards.
+        return pkg in applications(0).map { it.packageName }
+    }
+
+    private fun hasLauncherEntry(pkg: String): Boolean {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setPackage(pkg)
+        val flags = (PackageManager.MATCH_UNINSTALLED_PACKAGES or PackageManager.MATCH_DISABLED_COMPONENTS).toLong()
+        val found = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packages.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(flags))
+        } else {
+            @Suppress("DEPRECATION")
+            packages.queryIntentActivities(intent, flags.toInt())
+        }
+        return found.isNotEmpty()
+    }
 }
 
 /** [ManagedConfigGateway] over `DevicePolicyManager`'s application-restrictions bundle. */

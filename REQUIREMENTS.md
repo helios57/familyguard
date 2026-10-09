@@ -79,6 +79,16 @@ RBAC roles: `PRIMARY_ADMIN`, `ADMIN`, `GUARDIAN` — what each may do is FR-20.
   to another control plane; it needs a code the server minted, so a phone a parent deliberately
   cut off stays cut off; and it replaces the credential and the recovery material as one unit, so
   the recovery code the console shows afterwards is the one that works.
+- FR-1.9 **A system app setup removed anyway comes back.** `LEAVE_ALL_SYSTEM_APPS_ENABLED` (FR-1.2)
+  is a request, and a Samsung on Android 16 removed several preinstalled apps for the child's user
+  regardless — the Clock among them, so the child could set neither an alarm nor a timer, and
+  nothing on the phone or in the console said why. On every sync the DPC installs each system app
+  that has a launcher entry, is on the phone's image and is not installed for this user, **unless
+  the policy hides it**: a blocked app stays away rather than being shown to the child first.
+  `no_install_apps` binds this call too and refuses it silently, so it runs inside the same narrow
+  restriction window as a managed install. A restore the platform declines is named in the sync
+  report and is not a failure — it would otherwise fire on every sync. A restored app is then
+  governed like any preinstalled app (FR-5.10).
 
 ### FR-2 Device Owner hardening
 Applied at provisioning and re-applied on every boot:

@@ -13,6 +13,9 @@ import org.junit.Test
  * no out loud.
  * @param invisible packages [installed] does not report, whatever else it knows about them. This is
  * package-visibility filtering, and it is the reason `installed()` cannot be trusted on its own.
+ * @param removed system apps on the image that are not installed for this user — what a setup
+ * that ignored LEAVE_ALL_SYSTEM_APPS_ENABLED leaves behind. [declineRestore] says no out loud;
+ * [ignoreRestore] says yes and leaves the app where it was.
  */
 private class FakeAppGateway(
     installed: Set<String>,
@@ -24,12 +27,27 @@ private class FakeAppGateway(
     private val throwOnSuspend: Set<String> = emptySet(),
     private val throwOnHide: Set<String> = emptySet(),
     private val invisible: Set<String> = emptySet(),
+    removed: Set<String> = emptySet(),
+    private val declineRestore: Set<String> = emptySet(),
+    private val ignoreRestore: Set<String> = emptySet(),
 ) : AppGateway {
     private val present = installed.toMutableSet()
     private val isSuspended = suspended.toMutableSet()
     private val isHidden = hidden.toMutableSet()
+    private val isRemoved = removed.toMutableSet()
 
     val suspendCalls = mutableListOf<Pair<List<String>, Boolean>>()
+    val restoreCalls = mutableListOf<String>()
+
+    override fun removedSystemApps(): Set<String> = isRemoved.toSet()
+
+    override fun restoreSystemApp(pkg: String): Boolean {
+        restoreCalls += pkg
+        if (pkg in declineRestore) return false
+        if (pkg in ignoreRestore) return true // accepted, silently not applied
+        if (isRemoved.remove(pkg)) present += pkg
+        return true
+    }
 
     override fun installed(): Set<String> = (present - invisible).toSet()
 
@@ -281,6 +299,92 @@ class AppSuspensionManagerTest {
 
     private fun manager(gateway: AppGateway) =
         AppSuspensionManager(gateway, PROTECTED, ownPackage = OWN)
+
+    /**
+     * FR-1.2 asks setup to leave every system app installed, and a Samsung on Android 16 removed the
+     * Clock anyway: on one family phone it was missing from the very first inventory, so the child
+     * could not set an alarm or a timer, and nothing anywhere said why. The sync puts it back.
+     */
+    @Test
+    fun `a system app setup removed is put back`() {
+        val clock = "com.sec.android.app.clockpackage"
+        val gateway = FakeAppGateway(installed = setOf(OWN), removed = setOf(clock))
+
+        val outcome = manager(gateway).apply(emptyList(), emptyList())
+
+        assertTrue(outcome.toString(), outcome.ok)
+        assertEquals(listOf(clock), outcome.restored)
+        assertTrue(clock in gateway.installed())
+        assertTrue(outcome.toString().contains("restored=1"))
+    }
+
+    /** A blocked app stays away: putting it back only to hide it would show it to the child first. */
+    @Test
+    fun `a removed app the policy hides is left removed`() {
+        val gateway = FakeAppGateway(installed = setOf(OWN), removed = setOf("com.samsung.android.arzone"))
+
+        val outcome = manager(gateway).apply(emptyList(), listOf("com.samsung.android.arzone"))
+
+        assertTrue(outcome.toString(), outcome.ok)
+        assertTrue(outcome.restored.isEmpty())
+        assertTrue(gateway.restoreCalls.isEmpty())
+    }
+
+    /**
+     * Restored first, governed in the same pass: the app comes back already under today's rules
+     * rather than free until the next sync.
+     */
+    @Test
+    fun `a restored app the policy suspends is suspended in the same apply`() {
+        val gateway = FakeAppGateway(installed = setOf(OWN), removed = setOf("com.samsung.android.game.gamehome"))
+
+        val outcome = manager(gateway).apply(listOf("com.samsung.android.game.gamehome"), emptyList())
+
+        assertTrue(outcome.toString(), outcome.ok)
+        assertEquals(listOf("com.samsung.android.game.gamehome"), outcome.restored)
+        assertEquals(setOf("com.samsung.android.game.gamehome"), gateway.suspended())
+        assertTrue("it was installed when the suspension was planned", outcome.absent.isEmpty())
+    }
+
+    /**
+     * Named, and not a failure: a platform that will not give an app back says so on every sync,
+     * and a failure that fires every sync is one nobody reads (the same reasoning as KEPT-BY-ANDROID).
+     * Both shapes are covered — a refusal and an acceptance that changed nothing.
+     */
+    @Test
+    fun `a system app the platform will not put back is named and is not a failure`() {
+        val gateway = FakeAppGateway(
+            installed = setOf(OWN),
+            removed = setOf("com.a", "com.b"),
+            declineRestore = setOf("com.a"),
+            ignoreRestore = setOf("com.b"),
+        )
+
+        val outcome = manager(gateway).apply(emptyList(), emptyList())
+
+        assertTrue(outcome.toString(), outcome.ok)
+        assertTrue(outcome.restored.isEmpty())
+        assertEquals(setOf("com.a", "com.b"), outcome.notRestored.keys)
+        assertTrue(outcome.toString().contains("NOT-RESTORED="))
+    }
+
+    /** The restriction window is opened only when there is something to put back. */
+    @Test
+    fun `the install window opens only around a restore`() {
+        var windows = 0
+        fun managerWithWindow(gateway: AppGateway) = AppSuspensionManager(
+            gateway, PROTECTED, ownPackage = OWN,
+            restoreWindow = { body -> windows++; body() },
+        )
+
+        managerWithWindow(FakeAppGateway(installed = setOf(OWN))).apply(emptyList(), emptyList())
+        assertEquals(0, windows)
+
+        val gateway = FakeAppGateway(installed = setOf(OWN), removed = setOf("com.clock", "com.calendar"))
+        managerWithWindow(gateway).apply(emptyList(), emptyList())
+        assertEquals("one window for the whole batch", 1, windows)
+        assertEquals(listOf("com.calendar", "com.clock"), gateway.restoreCalls)
+    }
 
     @Test
     fun `suspends and hides what the policy asks for`() {

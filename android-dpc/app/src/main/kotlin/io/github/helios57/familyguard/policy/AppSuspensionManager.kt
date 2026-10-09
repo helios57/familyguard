@@ -39,6 +39,19 @@ interface AppGateway : AppRestraint {
 
     /** @return false when the platform declined. */
     fun setHidden(pkg: String, hidden: Boolean): Boolean
+
+    /**
+     * System apps on this phone's image that are not installed for this user, that a child could
+     * open, and that this DPC has not hidden: what setup took away.
+     *
+     * FR-1.2 asks setup to leave every system app installed (`LEAVE_ALL_SYSTEM_APPS_ENABLED`), and a
+     * Samsung on Android 16 removed some anyway — the Clock among them, so the child had no alarm and
+     * no timer, and nothing on the phone or in the console said why. Disjoint from [installed].
+     */
+    fun removedSystemApps(): Set<String>
+
+    /** Installs a removed system app for this user again. @return false when the platform declined. */
+    fun restoreSystemApp(pkg: String): Boolean
 }
 
 /**
@@ -64,6 +77,14 @@ data class AppOutcome(
      * this app does changes it, and a failure that fires on every sync is one nobody reads.
      */
     val keptByAndroid: List<String> = emptyList(),
+    /** System apps setup had removed, installed for this user again by this apply (FR-1.9). */
+    val restored: List<String> = emptyList(),
+    /**
+     * Removed system apps the platform would not put back, with what it said. Named, and not a
+     * failure, for the reason [keptByAndroid] is not one: nothing this app does changes the answer,
+     * so it would fire on every sync.
+     */
+    val notRestored: Map<String, String> = emptyMap(),
 ) {
     val ok: Boolean get() = failures.isEmpty() && missing.isEmpty() && stillRestrained.isEmpty()
 
@@ -72,11 +93,13 @@ data class AppOutcome(
         append(" released=").append(released.size)
         append(" hidden=").append(hidden.size)
         append(" revealed=").append(revealed.size)
+        if (restored.isNotEmpty()) append(" restored=").append(restored.size)
         if (absent.isNotEmpty()) append(" not-installed=").append(absent.size)
         if (failures.isNotEmpty()) append(" FAILED=").append(failures)
         if (missing.isNotEmpty()) append(" NOT-IN-EFFECT=").append(missing)
         if (stillRestrained.isNotEmpty()) append(" CRITICAL-RESTRAINED=").append(stillRestrained)
         if (keptByAndroid.isNotEmpty()) append(" KEPT-BY-ANDROID=").append(keptByAndroid)
+        if (notRestored.isNotEmpty()) append(" NOT-RESTORED=").append(notRestored)
     }
 }
 
@@ -186,6 +209,15 @@ object AppSuspensionPlanner {
             absent = absent.toList(),
         )
     }
+
+    /**
+     * The removed system apps to put back: all of them, except what the policy hides. A blocked app
+     * stays away — restoring it only to hide it again would put it in front of the child first.
+     */
+    fun restore(removed: Collection<String>, desiredHidden: Collection<String>): List<String> {
+        val hidden = desiredHidden.toSet()
+        return removed.filter { it.isNotEmpty() && it !in hidden }.sorted()
+    }
 }
 
 /**
@@ -204,9 +236,18 @@ class AppSuspensionManager(
     val gateway: AppGateway,
     private val protectedPackages: Set<String>,
     private val ownPackage: String,
+    /**
+     * Wraps the restores. On a phone the parent keeps from installing apps, `no_install_apps` is in
+     * effect and binds the device owner too, so [DeviceOwnerPolicy] lifts it here for exactly as long
+     * as the restores take. Opened only when there is something to restore.
+     */
+    private val restoreWindow: (body: () -> Unit) -> Unit = { it() },
 ) {
 
     fun apply(desiredSuspended: Collection<String>, desiredHidden: Collection<String>): AppOutcome {
+        // Before the installed read, so a restored app is governed in this same pass: it comes back
+        // under today's rules rather than free until the next sync.
+        val (restored, notRestored) = restoreRemoved(desiredHidden)
         val installed = gateway.installed()
         val failures = LinkedHashMap<String, String>()
 
@@ -280,7 +321,33 @@ class AppSuspensionManager(
                 .filter { it in effectiveSuspended || it in effectiveHidden }
                 .sorted(),
             keptByAndroid = keptByAndroid.toList(),
+            restored = restored,
+            notRestored = notRestored,
         )
+    }
+
+    /**
+     * Puts back what setup removed (FR-1.9), and reads back what the platform actually did: a
+     * restore it accepted and did not carry out is named, not counted as done.
+     */
+    private fun restoreRemoved(desiredHidden: Collection<String>): Pair<List<String>, Map<String, String>> {
+        val wanted = AppSuspensionPlanner.restore(gateway.removedSystemApps(), desiredHidden)
+        if (wanted.isEmpty()) return emptyList<String>() to emptyMap()
+        val notRestored = LinkedHashMap<String, String>()
+        restoreWindow {
+            for (pkg in wanted) {
+                try {
+                    if (!gateway.restoreSystemApp(pkg)) notRestored[pkg] = "the platform declined"
+                } catch (e: RuntimeException) {
+                    notRestored[pkg] = e.message ?: e.javaClass.simpleName
+                }
+            }
+        }
+        val stillRemoved = gateway.removedSystemApps()
+        for (pkg in wanted) {
+            if (pkg in stillRemoved && pkg !in notRestored) notRestored[pkg] = "accepted, and still not installed"
+        }
+        return wanted.filter { it !in notRestored } to notRestored
     }
 
     /**

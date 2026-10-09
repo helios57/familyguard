@@ -3993,6 +3993,7 @@ proven.
 | Requirement | Implemented in | Proven by |
 |---|---|---|
 | FR-1 enrollment / QR | 3.2, 3.4, 5.2, 5.3 | e2e `TestDeviceLifecycleJourney`, `TestEnrollmentCredentialsAreSingleUse`, `TestTheQRPointsAtAnAPKThisServerServes`; `TestQRHoldsTheRealPayload`, `TestPayloadCarriesTheExtrasAndroidActuallyReads`, `TestExtraNamesAreExactlyAndroidsSpelling`, `TestChecksumIsComputedFromRealBytes`, `TestAPKIsServedWithTheChecksumTheQRWouldCarry`; `EnrollerTest` |
+| FR-1.9 a system app setup removed comes back | 55 | `tests/android/system-apps.sh` → `SystemAppRestoreTest` on a device-owned API 37 and API 33 emulator: the Clock removed for user 0 with root (the record setup leaves) is installed again by one apply under `no_install_apps`, a removed app the policy hides stays removed, both read back from `dumpsys package`; five `AppSuspensionManagerTest` cases (put back, a hidden one left, governed in the same apply, a refusal named and not a failure, one restriction window per batch). **Calibrated:** four unit probes red; on the device, the restriction window removed (**RED**: *the platform declined* — `no_install_apps` refuses `enableSystemApp` silently) and the platform call skipped (**RED**). **Not proven:** that the Samsung's Clock is on its image and not merely absent (read on the phone after 0.6.39) |
 | FR-1.7 / FR-1.8 replacing and re-linking a phone | 15.1, 15.2, 16.2 | e2e `TestANewSetupCodeDoesNotSilentlyRevokeAWorkingPhone` (the credential of a working phone survives a request that did not say it meant to replace it), `TestReplacingAPhoneOnPurposeRevokesTheOldOne` (the other half, without which the guard could be a permanent refusal), `TestAFirstSetupCodeNeedsNoAcknowledgement`, `TestARevokedPhoneCanReLinkWithoutAFactoryReset`; `TestConsoleRendersOnAPhone/replace_phone` for the confirmation as a parent meets it; `EnrollerTest`'s seven re-link cases and `LinkRefusedTest`'s seven. **Calibrated 5/5** ([15.5](#155--calibration)). **16.2 ungated the field**: it was offered only once `ConnectionService` had personally seen a 401, so a phone revoked while switched off held a dead credential and showed no control. It is now offered whenever the phone holds a credential at all, which is the honest precondition; only the explanatory wording still differs. **Not proven:** the re-link screen on a handset — nobody has typed a code into a phone yet, and the phone that needs to cannot get the build that has the screen without the sideload route in DEPLOYMENT.md |
 | FR-2 hardening | 5.2 | `HardeningManagerTest`, `EnforcementEngineHardeningTest`, `RestrictionKeysMatchThePlatformTest`; `TestNoRestrictionCanBlockCallingOrRecovery` |
 | FR-2.2 automatic network time | 5.11 | `ClockPolicyManagerTest` (8 cases over the pure manager) and `HardeningClockTest` (3) — the read-back that catches a device accepting `setAutoTimeEnabled` and staying off, an unreadable clock reported as a failure rather than assumed on, and the two facts about where it runs: a clock that will not be fixed makes the **whole baseline** not-ok even with every restriction in effect, and a sync reports `clock = null` rather than a success for something it never looked at. `ClockGatewayVersionSplitTest` reads `DpmClockGateway.kt` for the API 29/30 split, which no JVM test can execute and whose collapse is invisible — `setAutoTimeRequired` compiles everywhere and means *forbid changing it* on API 30+. **Calibrated 19/19.** Found by 5.10: the requirement was cited by nothing because nothing implemented it |
@@ -9123,3 +9124,53 @@ in the phone's `uncounted_packages` and out of the count — the day reads 68 us
 app alone) where the old rule gave about 144, nothing suspended. That phone was still on 0.6.37,
 which is the point of sending the list: its own count leaves the same apps out from its next sync.
 **Not yet measured:** both phones taking the 0.6.38 update (the label only).
+
+## Phase 55 — a system app setup removed comes back (0.6.39, FR-1.9)
+
+The owner, 2026-10-09: *"Bei [one child] geht die Uhr nicht resp ist nicht sichtbar um einen timer
+oder Wecker einzuschalten"*. Read back from the live database: that phone's inventory has **never**
+held `com.sec.android.app.clockpackage` — not in its first report, one second after enrollment
+(2026-09-06 00:55:28), nor since. The other family phone has it. Of the launchable system apps the
+other phone carries, six are missing from this one: Clock, Calendar, Finder, Game Launcher, AR Zone,
+Private Share. Nothing in FamilyGuard hides or removes them (not in `hidden_packages` or
+`suspended_packages`, no BLOCK rule), and the inventory reports what this DPC hides, so they are not
+installed for the child's user at all: setup removed them, `LEAVE_ALL_SYSTEM_APPS_ENABLED` in the QR
+notwithstanding. How the other phone was set up, and why this one lost them, is not established.
+
+**The fix is on the phone.** Every apply first installs, with `DevicePolicyManager.enableSystemApp`,
+each system package that has a launcher entry, is known to the package manager and is not installed
+for this user, unless the desired state hides it or this DPC hid it (hiding clears the same flag, and
+`enableSystemApp` would un-hide it). Then the installed read, so a restored app is governed in the same
+pass. A restored launchable system app is free by default (FR-5.10) unless it is one of the counted
+preinstalled apps — the Clock is free, which is what an alarm needs.
+
+**`no_install_apps` binds `enableSystemApp` and refuses it in silence** — no exception, the package
+simply stays uninstalled. Measured on API 37 by removing the window (probe D1 below). The restores
+therefore run inside `HardeningManager.withoutRestrictions` for `no_install_apps`, opened only when
+something is to be restored, one window per batch. `enableSystemApp` returns nothing, so the gateway
+reads the package manager back; a restore the platform declines, or accepts and does not carry out, is
+named (`NOT-RESTORED=`) and is not a failure, since nothing the phone does changes it and it would fire
+on every sync.
+
+**On a device.** Nothing in the product can remove a system app for a user, so
+`tests/android/system-apps.sh` does it with root on a Google APIs image (`pm uninstall --user 0`, which
+leaves the platform record setup leaves: `installed=false` for user 0, still on the image), puts
+`no_install_apps` in effect and runs `SystemAppRestoreTest`. The verdict is read back from
+`dumpsys package` outside the app. PASS on API 37 and API 33: DeskClock `installed=true` with a launcher
+entry, the hidden Calendar `installed=false`, the restriction back in effect.
+
+| # | the one value | measured |
+|---|---|---|
+| P1 | the hidden filter in the restore plan inverted | **RED** *a removed app the policy hides is left removed* |
+| P2 | the restore plan empty | **RED** four cases, e.g. *expected:<[com.sec.android.app.clockpackage]> but was:<[]>* |
+| P3 | the restore after the installed read | **RED** *a restored app the policy suspends is suspended in the same apply* |
+| P4 | the read-back after the restore skipped | **RED** *a system app the platform will not put back is named* |
+| D1 | device: the window lifts nothing | **RED** *deskclock was not restored: … NOT-RESTORED={…=the platform declined}*; dumpsys `installed=false` |
+| D2 | device: `enableSystemApp` never called | **RED** the same; dumpsys `installed=false` |
+
+**6 probes, 6 red. Cumulative: 493.**
+
+**Not proven:** that the Samsung phone's image carries these packages and lets them back (it should:
+they are preloads), and what Samsung's own provisioning did and why. Read back after the phone takes
+0.6.39: the Clock in its inventory, launchable, and in `free_by_default`.
+

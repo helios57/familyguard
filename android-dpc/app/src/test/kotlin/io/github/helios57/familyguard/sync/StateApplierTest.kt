@@ -201,6 +201,10 @@ private class RecordingAppGateway(
 
     override fun installed(): Set<String> = present
 
+    override fun removedSystemApps(): Set<String> = emptySet()
+
+    override fun restoreSystemApp(pkg: String): Boolean = false
+
     override fun suspended(): Set<String> = isSuspended.toSet()
 
     override fun hidden(): Set<String> = isHidden.toSet()
