@@ -532,7 +532,13 @@ time on a device that is already enrolled and already hardened.
   forbids what each other half needs. Play's Device and Network Abuse policy bans ad filtering
   outright, and Play refuses the `UPDATE_PACKAGES_WITHOUT_USER_ACTION` declaration that FR-15.6
   rests on — measured, with no declaration form and no appeal. So the self-hosted build carries the
-  ad filter and updates itself, and the Play build carries neither. The difference is a build flag
+  ad filter and updates itself, and the Play build carries neither. Play's other policies take three
+  more things out of the Play build: `USE_EXACT_ALARM` (granted only to apps whose core function is
+  an alarm clock or a calendar; the Play build falls back to `SCHEDULE_EXACT_ALARM` and then to an
+  inexact alarm), the remote adb relay (FR-19), and NFR-14's quiet notice — Play's monitoring-app
+  policy asks for a persistent notification the person holding the phone can see, so the Play
+  build's is at `IMPORTANCE_LOW` with a status-bar icon and shown on the lock screen. Both builds
+  declare `isMonitoringTool=child_monitoring`. The difference is a build flag
   (`-PplayBuild=true`), not a fork: one source tree, one signer, one set of tests, and the feature
   compiled out at its edges rather than branched around. A phone running the Play build reports
   *nothing* about the filter — never "off" — so FR-6.10's three-valued rule is what keeps the
@@ -975,6 +981,8 @@ for more time"*.
   the shade with it. A channel's importance is fixed when the channel is created, so lowering it
   means a new channel id and deleting the old one; a release that only edits the importance changes
   nothing on a phone that already has the app.
+  This is the self-hosted build's notice; the Google Play build's is visible, for the reason FR-15.8
+  gives.
 
 ---
 

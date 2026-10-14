@@ -727,7 +727,7 @@ Play takes an **AAB**, not an APK, and `apksigner` cannot sign one — an AAB is
 
 ```bash
 cd android-dpc
-./gradlew :app:bundleRelease          # app/build/outputs/bundle/release/app-release.aab, unsigned
+./gradlew :app:bundleRelease -PplayBuild=true   # app/build/outputs/bundle/release/app-release.aab, unsigned
 PW=$(cat ~/.familyguard/keystore-password)
 printf '%s
 ' "$PW" | jarsigner -keystore ~/.familyguard/familyguard-release.jks \
@@ -757,6 +757,23 @@ There is no help link on that error and no declaration form to fill in — it is
 check. So a Play artifact and the self-hosted artifact **cannot be the same binary**: Play's copy
 cannot carry FR-15.6's silent self-update, and does not need to, because Play does the updating.
 The self-hosted APK keeps the permission.
+
+**What `-PplayBuild=true` strips, and why** (FR-15.8). Never upload a bundle built without it.
+
+| Removed from the Play build | How | Why |
+|---|---|---|
+| `UPDATE_PACKAGES_WITHOUT_USER_ACTION` | manifest overlay `app/src/play/AndroidManifest.xml` (`tools:node="remove"`) | refused at upload, above |
+| self-update (`UPDATE_APP`, the FR-15.6 timer) | `BuildConfig.SELF_UPDATE_AVAILABLE` | Device and Network Abuse: an app may not update itself outside Play. The command answers *"self-update is not available in the Google Play build"* |
+| `USE_EXACT_ALARM` | overlay | granted only to alarm-clock and calendar apps. `SCHEDULE_EXACT_ALARM` stays; ungranted, alarms fall back to inexact ones that still pierce Doze |
+| the ad filter's `VpnService` (and `BIND_VPN_SERVICE` with it) | overlay, plus `AD_FILTER_AVAILABLE` | Play bans ad blocking; with the service gone no VpnService declaration is needed |
+| remote adb relay (FR-19) | `BuildConfig.REMOTE_DEBUG_AVAILABLE` | reads as remote control to a reviewer. `OPEN_DEBUG_STREAM` answers *"not available in the Google Play build"* |
+| the quiet running notice (NFR-14) | `BuildConfig.QUIET_RUNNING_NOTICE` | the monitoring-app policy wants a persistent notification the child can see: the Play build's is `IMPORTANCE_LOW`, status-bar icon, lock screen, on its own channel id |
+
+Both builds declare `<meta-data android:name="isMonitoringTool" android:value="child_monitoring"/>`,
+which the Stalkerware policy requires on every version code. `PlayBuildGatesTest` holds the manifest
+and the constants together; run the unit tests a second time with `-PplayBuild=true` to check the Play
+side. The privacy policy URL for the listing is
+`https://github.com/helios57/familyguard/blob/main/docs/PRIVACY.md`.
 
 ### 5. Upload to the internal test track
 
