@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FR-15.8: the Play build's manifest overlay. Merged over src/main only when the build is run with
+  `-PplayBuild=true` (see app/build.gradle.kts); the self-hosted build never reads this file.
+
+  Each entry removes something src/main declares and Play's policies refuse. The code behind each one
+  is gated by a BuildConfig constant as well, so nothing here is reached by the Play build at run time.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      Play rejects a bundle that declares this, with no declaration form (DEPLOYMENT.md, "Publishing to
+      Google Play", step 4). It exists for the silent self-update (FR-15.6), which the Play build does
+      not do: SELF_UPDATE_AVAILABLE is false there, and Play does the updating.
+    -->
+    <uses-permission
+        android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"
+        tools:node="remove" />
+
+    <!--
+      Play grants USE_EXACT_ALARM only to apps whose core function is an alarm clock or a calendar.
+      SCHEDULE_EXACT_ALARM stays; without it granted, every booking falls back to an inexact alarm
+      that still pierces Doze (AlarmManagerPlatform.schedule, AlarmClock.rebook).
+    -->
+    <uses-permission
+        android:name="android.permission.USE_EXACT_ALARM"
+        tools:node="remove" />
+
+    <application>
+        <!--
+          The ad filter's tunnel. AD_FILTER_AVAILABLE is false in the Play build, so it is never
+          started; removing the declaration takes BIND_VPN_SERVICE with it, and with it the question
+          of a VpnService declaration for a service that cannot run.
+        -->
+        <service
+            android:name=".filter.AdFilterVpnService"
+            tools:node="remove" />
+    </application>
+</manifest>

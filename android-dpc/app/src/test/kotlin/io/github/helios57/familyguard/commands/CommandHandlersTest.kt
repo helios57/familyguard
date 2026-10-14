@@ -4,6 +4,8 @@ import io.github.helios57.familyguard.net.DeviceCommand
 import io.github.helios57.familyguard.net.LocationRequest
 import io.github.helios57.familyguard.policy.LockGateway
 import io.github.helios57.familyguard.policy.LockManager
+import io.github.helios57.familyguard.update.ApkIdentity
+import io.github.helios57.familyguard.update.UpdateOutcome
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -83,7 +85,14 @@ private class Harness(
     private val resyncProblem: String? = null,
     private val reportFails: Boolean = false,
     private val applied: String? = null,
+    private val selfUpdateAvailable: Boolean = true,
+    private val remoteDebugAvailable: Boolean = true,
 ) {
+    var updates = 0
+        private set
+    var debugs = 0
+        private set
+
     val lockGateway = StubLockGateway(secure, locked)
     val sirenDevice = StubSirenDevice()
     val reported = mutableListOf<LocationRequest>()
@@ -103,6 +112,16 @@ private class Harness(
             resyncProblem
         },
         applied = { applied },
+        update = {
+            updates++
+            UpdateOutcome.AlreadyCurrent(ApkIdentity("io.github.helios57.familyguard", 49, "0.6.40", "aa"))
+        },
+        debug = {
+            debugs++
+            CommandOutcome.Done(mapOf("state" to "stream open"))
+        },
+        selfUpdateAvailable = selfUpdateAvailable,
+        remoteDebugAvailable = remoteDebugAvailable,
         now = { NOW },
     ).asMap()
 
@@ -111,6 +130,48 @@ private class Harness(
 }
 
 class CommandHandlersTest {
+
+    // ---- FR-15.8: the two commands the Play build does not carry ------------------------------
+    //
+    // Driven through the parameters, in both directions, so the gate is exercised on whichever
+    // build runs the suite. Which value the BuildConfig default takes in each build is asserted in
+    // PlayBuildGatesTest, against that build's merged manifest.
+
+    @Test
+    fun `a build without self-update answers UPDATE_APP as not available and never calls the updater`() {
+        val h = Harness(selfUpdateAvailable = false)
+        assertEquals(
+            CommandOutcome.Failed(CommandHandlers.NOT_IN_PLAY_BUILD_UPDATE),
+            h.run(CommandHandlers.UPDATE_APP),
+        )
+        assertEquals("the updater ran in a build that must not update itself", 0, h.updates)
+    }
+
+    @Test
+    fun `a build with self-update runs the updater for UPDATE_APP`() {
+        val h = Harness(selfUpdateAvailable = true)
+        val outcome = h.run(CommandHandlers.UPDATE_APP)
+        assertTrue("UPDATE_APP did not complete: $outcome", outcome is CommandOutcome.Done)
+        assertEquals(1, h.updates)
+    }
+
+    @Test
+    fun `a build without remote debugging answers OPEN_DEBUG_STREAM as not available and opens nothing`() {
+        val h = Harness(remoteDebugAvailable = false)
+        assertEquals(
+            CommandOutcome.Failed(CommandHandlers.NOT_IN_PLAY_BUILD_DEBUG),
+            h.run(CommandHandlers.OPEN_DEBUG_STREAM),
+        )
+        assertEquals("the relay was opened in a build that does not carry it", 0, h.debugs)
+    }
+
+    @Test
+    fun `a build with remote debugging opens the relay for OPEN_DEBUG_STREAM`() {
+        val h = Harness(remoteDebugAvailable = true)
+        val outcome = h.run(CommandHandlers.OPEN_DEBUG_STREAM)
+        assertTrue("OPEN_DEBUG_STREAM did not complete: $outcome", outcome is CommandOutcome.Done)
+        assertEquals(1, h.debugs)
+    }
 
     /**
      * The set of types the device implements is the set the server will queue.

@@ -64,8 +64,9 @@ object AlarmClock {
             manager.setAlarmClock(AlarmManager.AlarmClockInfo(at.toEpochMilli(), show), fire)
         }
         if (booked.isFailure) {
-            // Only without the exact-alarm permission, which USE_EXACT_ALARM grants at install on
-            // Android 13+. A wake-up the platform may delay beats none.
+            // Only without the exact-alarm permission: USE_EXACT_ALARM grants it at install on
+            // Android 13+, except in the Play build, which has only SCHEDULE_EXACT_ALARM (FR-15.8).
+            // A wake-up the platform may delay beats none.
             Log.w(TAG, "setAlarmClock refused (${booked.exceptionOrNull()}); booking an inexact wake-up")
             manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at.toEpochMilli(), fire)
         } else {

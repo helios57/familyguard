@@ -1,5 +1,6 @@
 package io.github.helios57.familyguard.commands
 
+import io.github.helios57.familyguard.BuildConfig
 import io.github.helios57.familyguard.net.LocationRequest
 import io.github.helios57.familyguard.policy.LockManager
 import io.github.helios57.familyguard.update.UpdateOutcome
@@ -53,6 +54,15 @@ class CommandHandlers(
      * away rather than a timeout, because the server forwards a failed acknowledgement.
      */
     private val debug: ((JsonObject) -> CommandOutcome)? = null,
+    /**
+     * Whether this build may replace itself (FR-15.8). False in the Play build, where Play does the
+     * updating: `UPDATE_APP` is then answered with [NOT_IN_PLAY_BUILD_UPDATE] and the updater is
+     * never called, wired or not. A parameter rather than a read of BuildConfig inside the handler so
+     * that a test on either build can drive both answers.
+     */
+    private val selfUpdateAvailable: Boolean = BuildConfig.SELF_UPDATE_AVAILABLE,
+    /** The same for the remote adb relay (FR-19, FR-15.8); see [selfUpdateAvailable]. */
+    private val remoteDebugAvailable: Boolean = BuildConfig.REMOTE_DEBUG_AVAILABLE,
     private val now: () -> Long = { System.currentTimeMillis() },
 ) {
 
@@ -100,11 +110,13 @@ class CommandHandlers(
         // returns, so the acknowledgement says whether a stream is open; the stream itself then
         // lives on its own threads for as long as adb holds it.
         OPEN_DEBUG_STREAM to CommandHandler { command ->
+            if (!remoteDebugAvailable) return@CommandHandler CommandOutcome.Failed(NOT_IN_PLAY_BUILD_DEBUG)
             debug?.invoke(command.params) ?: CommandOutcome.Failed("this device has no remote debugging wired")
         },
     )
 
     private fun updateApp(): CommandOutcome {
+        if (!selfUpdateAvailable) return CommandOutcome.Failed(NOT_IN_PLAY_BUILD_UPDATE)
         val run = update ?: return CommandOutcome.Failed("this device has no updater wired")
         return when (val outcome = run()) {
             is UpdateOutcome.Refused -> CommandOutcome.Failed(outcome.reason)
@@ -185,6 +197,16 @@ class CommandHandlers(
         const val SYNC_POLICY = "SYNC_POLICY"
         const val UPDATE_APP = "UPDATE_APP"
         const val OPEN_DEBUG_STREAM = "OPEN_DEBUG_STREAM"
+
+        /**
+         * The answers a Play build gives to the two commands it does not carry (FR-15.8). Failed
+         * rather than done, because nothing happened, and worded so a parent reading the console
+         * knows it is the build and not the phone: the remedy is the self-hosted APK, not a retry.
+         */
+        const val NOT_IN_PLAY_BUILD_UPDATE =
+            "self-update is not available in the Google Play build; Google Play updates this app"
+        const val NOT_IN_PLAY_BUILD_DEBUG =
+            "remote debugging is not available in the Google Play build"
 
         /**
          * UTC, seconds precision, spelled out — the same reasoning as `Synchronizer.RFC3339`.

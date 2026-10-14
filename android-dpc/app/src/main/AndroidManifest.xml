@@ -228,6 +228,16 @@
         android:theme="@style/Theme.FamilyGuard">
 
         <!--
+          Google Play's Stalkerware and monitoring policy requires this on every version of an app
+          that monitors a child, and it is true of both builds: a parent installs this on their
+          child's phone, openly, with a launcher entry and a running notice (FR-15.8). Play Protect
+          may show the phone a "monitoring app" notice because of it, which is the honest outcome.
+        -->
+        <meta-data
+            android:name="isMonitoringTool"
+            android:value="child_monitoring" />
+
+        <!--
           Exported, because the system's device-policy service is what sends these broadcasts, and
           it is a different process. `BIND_DEVICE_ADMIN` is what keeps that from meaning "any app on
           the phone": it is a signature-level permission held only by the platform, so an exported

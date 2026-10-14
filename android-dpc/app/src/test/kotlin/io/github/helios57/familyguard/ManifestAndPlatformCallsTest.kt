@@ -768,6 +768,15 @@ class ManifestAndPlatformCallsTest {
             "android.permission.WAKE_LOCK" to "firebase-messaging, handing a push over while asleep",
         )
 
+        // FR-15.8: the Play build's overlay (src/play/AndroidManifest.xml) removes these two from the
+        // merged manifest, and only from the merged one — src/main still authors them, which the
+        // second half below checks. PlayBuildGatesTest holds the overlay to that in both builds.
+        val playStripped = setOf(
+            "android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION",
+            "android.permission.USE_EXACT_ALARM",
+        )
+        val expected = if (BuildConfig.PLAY_BUILD) needed.keys - playStripped else needed.keys
+
         val shipped = usesPermissionsIn(merged)
         assertTrue(
             "the merged manifest declares no permissions at all, so this test is comparing " +
@@ -776,8 +785,8 @@ class ManifestAndPlatformCallsTest {
         )
         assertEquals(
             "the permissions the shipped app asks for are not the ones this test knows a reason " +
-                "for; added: ${shipped - needed.keys}, gone: ${needed.keys - shipped}",
-            needed.keys,
+                "for; added: ${shipped - expected}, gone: ${expected - shipped}",
+            expected,
             shipped,
         )
 

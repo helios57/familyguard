@@ -768,8 +768,16 @@ class ConnectionService : Service() {
         // Armed only once the first sync has succeeded, so a phone whose credential the server
         // refuses never downloads an APK it has no business installing. Not gated on the screen
         // being on, unlike the poll: an update is best taken from a phone nobody is holding.
-        checkUpdate = { why -> updateCheck(api, policy, why) }
-        bookUpdateCheck(schedule.arm())
+        //
+        // Never armed in the Play build (FR-15.8): Play does the updating, and an app that replaced
+        // itself from anywhere else is what Play's Device and Network Abuse policy forbids. With
+        // `checkUpdate` left null, neither the alarm nor a sync can reach the updater.
+        if (BuildConfig.SELF_UPDATE_AVAILABLE) {
+            checkUpdate = { why -> updateCheck(api, policy, why) }
+            bookUpdateCheck(schedule.arm())
+        } else {
+            updateAlarm.cancel()
+        }
         try {
             stream.run()
         } catch (_: StopConnection) {
@@ -1540,7 +1548,8 @@ class ConnectionService : Service() {
         synchronizer: Synchronizer,
         reports: Reporting,
     ): CommandQueue {
-        val remoteDebug = RemoteDebug(this, api)
+        // Not constructed at all in the Play build (FR-15.8); CommandHandlers answers the command.
+        val remoteDebug = if (BuildConfig.REMOTE_DEBUG_AVAILABLE) RemoteDebug(this, api) else null
         val handlers = CommandHandlers(
             lock = policy.lock,
             siren = siren,
@@ -1560,7 +1569,7 @@ class ConnectionService : Service() {
             },
             applied = { lastApplied },
             update = { selfUpdater(api, policy).update() },
-            debug = { params -> remoteDebug.open(params) },
+            debug = remoteDebug?.let { relay -> { params -> relay.open(params) } },
         ).asMap()
         return CommandQueue(
             fetch = { api.commands() },
@@ -1954,7 +1963,48 @@ class ConnectionService : Service() {
         return bare.takeIf { it.resolveActivity(packageManager) != null }
     }
 
-    private fun notification(): Notification {
+    private fun notification(): Notification =
+        if (BuildConfig.QUIET_RUNNING_NOTICE) quietNotification() else visibleNotification()
+
+    /**
+     * The Play build's running notice (FR-15.8): the same text and the same tap target as the quiet
+     * one, at IMPORTANCE_LOW — an icon in the status bar, still no sound and no heads-up — and shown
+     * on the lock screen. Play's monitoring-app policy asks for a persistent notification the person
+     * holding the phone can see while the app runs, and NFR-14's minimum is not that.
+     *
+     * Its own channel id, for the reason [CHANNEL] gives: an importance is fixed when a channel is
+     * created, so the quiet channel could never be raised in place. The quiet one is deleted, so a
+     * phone that once ran the self-hosted build does not keep a second, silent entry.
+     */
+    private fun visibleNotification(): Notification {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager?.deleteNotificationChannel(CHANNEL_LEGACY)
+        manager?.deleteNotificationChannel(CHANNEL)
+        manager?.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_VISIBLE,
+                getString(R.string.connection_channel),
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                setShowBadge(false)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+        )
+        return NotificationCompat.Builder(this, CHANNEL_VISIBLE)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setSilent(true)
+            .setShowWhen(false)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(getString(R.string.connection_running))
+            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setOngoing(true)
+            // See quietNotification: a shortcut to the escape hatch (FR-12), immutable.
+            .setContentIntent(recoveryShortcut())
+            .build()
+    }
+
+    private fun quietNotification(): Notification {
         val manager = getSystemService(NotificationManager::class.java)
         // NFR-14. IMPORTANCE_MIN, which is the quietest a foreground service is permitted to be: no icon in
         // the status bar, no sound, no heads-up, and one collapsed line at the bottom of the shade.
@@ -2002,16 +2052,18 @@ class ConnectionService : Service() {
             // no extras at all, and an immutable intent is what keeps that true of any caller who
             // gets hold of this. `getActivity` and not `getBroadcast`: this must open a screen a
             // person interacts with, never perform an action from a tap.
-            .setContentIntent(
-                PendingIntent.getActivity(
-                    this,
-                    0,
-                    Intent(this, RecoveryActivity::class.java),
-                    PendingIntent.FLAG_IMMUTABLE,
-                )
-            )
+            .setContentIntent(recoveryShortcut())
             .build()
     }
+
+    /** The running notice's tap target, one PendingIntent for both notices. See quietNotification. */
+    private fun recoveryShortcut(): PendingIntent =
+        PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, RecoveryActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
 
     /** Ends [EventStream.run] from inside the wake handler; see [connect]. */
     private class StopConnection : RuntimeException()
@@ -2027,6 +2079,13 @@ class ConnectionService : Service() {
          * another new id and another delete of the one before it.
          */
         private const val CHANNEL = "family-guard-connection-quiet"
+
+        /**
+         * The Play build's running notice, at IMPORTANCE_LOW (FR-15.8). A third id rather than a
+         * change to [CHANNEL], because a change to [CHANNEL]'s importance would change nothing on a
+         * phone that already has it.
+         */
+        private const val CHANNEL_VISIBLE = "family-guard-connection-visible"
 
         /** The pre-2026-09-06 channel, deleted on sight. See [CHANNEL]. */
         private const val CHANNEL_LEGACY = "family-guard-connection"

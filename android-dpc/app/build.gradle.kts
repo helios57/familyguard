@@ -67,6 +67,19 @@ android {
 
         // Read by AdFilterVpnService before it does anything else. See `playBuild`, above.
         buildConfigField("boolean", "AD_FILTER_AVAILABLE", (!playBuild).toString())
+        // The rest of FR-15.8's difference, one constant per thing Play's policies refuse, so each
+        // call site reads as the feature it gates rather than as "which store is this":
+        //   - the self-update (FR-15.2, FR-15.6) — Play updates a Play install, and its Device and
+        //     Network Abuse policy forbids an app replacing itself from anywhere else;
+        //   - the remote adb relay (FR-19) — a remote shell on the phone, which a reviewer reads as
+        //     remote control however it is gated;
+        //   - the quiet running notice (NFR-14) — Play's monitoring-app policy asks for a persistent
+        //     notification the person holding the phone can see, so the Play build's is visible.
+        // PLAY_BUILD itself is for the tests, which have to know which manifest they are reading.
+        buildConfigField("boolean", "PLAY_BUILD", playBuild.toString())
+        buildConfigField("boolean", "SELF_UPDATE_AVAILABLE", (!playBuild).toString())
+        buildConfigField("boolean", "REMOTE_DEBUG_AVAILABLE", (!playBuild).toString())
+        buildConfigField("boolean", "QUIET_RUNNING_NOTICE", (!playBuild).toString())
     }
 
     buildFeatures {
@@ -131,6 +144,25 @@ kotlin {
         // contract under us, and that is exactly the class of change that shows up as a real phone
         // behaving differently from the emulator. It fails the build instead of scrolling past.
         allWarningsAsErrors.set(true)
+    }
+}
+
+// FR-15.8, the manifest half. The Play build's merged manifest loses three entries Play refuses:
+// UPDATE_PACKAGES_WITHOUT_USER_ACTION (rejected at upload, measured — DEPLOYMENT.md), USE_EXACT_ALARM
+// (granted by Play only to apps whose core function is an alarm clock or a calendar), and the ad
+// filter's VpnService, which the Play build never starts. `src/play/AndroidManifest.xml` removes them
+// with `tools:node="remove"`, added to every variant only when `-PplayBuild=true`, so the task names
+// stay what CI and the release workflow call and the default build's manifest is untouched.
+//
+// Added on every variant rather than on `release` alone: the unit tests run against `debug`, and
+// `testDebugUnitTest -PplayBuild=true` has to read the manifest that ships to Play, not the other one.
+// The exact-alarm code already falls back to SCHEDULE_EXACT_ALARM and then to an inexact alarm, at
+// run time (AlarmManagerPlatform.exactAllowed, AlarmClock.rebook).
+if (playBuild) {
+    androidComponents {
+        onVariants { variant ->
+            variant.sources.manifests.addStaticManifestFile("src/play/AndroidManifest.xml")
+        }
     }
 }
 
