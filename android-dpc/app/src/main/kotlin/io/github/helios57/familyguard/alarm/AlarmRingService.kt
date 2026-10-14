@@ -163,7 +163,7 @@ class AlarmRingService : Service() {
         return NotificationCompat.Builder(this, CHANNEL)
             .setContentTitle(getString(R.string.alarm_title))
             .setContentText(getString(R.string.alarm_text))
-            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+            .setSmallIcon(R.drawable.ic_stat_familyguard)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)

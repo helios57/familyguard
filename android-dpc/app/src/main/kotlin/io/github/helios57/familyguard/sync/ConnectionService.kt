@@ -1816,7 +1816,7 @@ class ConnectionService : Service() {
         manager.notify(
             LIMITS_NOTIFICATION_ID,
             NotificationCompat.Builder(this, LIMITS_CHANNEL)
-                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setSmallIcon(R.drawable.ic_stat_familyguard)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
@@ -1845,7 +1845,7 @@ class ConnectionService : Service() {
             .setContentTitle(getString(R.string.usage_access_title))
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_stat_familyguard)
         val settings = usageAccessIntent()
         if (settings != null) {
             builder.setContentIntent(
@@ -1899,7 +1899,7 @@ class ConnectionService : Service() {
                 .setContentTitle(getString(R.string.unlinked_title))
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setSmallIcon(R.drawable.ic_stat_familyguard)
                 .setOngoing(true)
                 // The same screen the launcher entry opens, and for the same reason it is a
                 // launcher entry at all: this notification exists only while the service has just
@@ -1997,7 +1997,7 @@ class ConnectionService : Service() {
             .setShowWhen(false)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(getString(R.string.connection_running))
-            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setSmallIcon(R.drawable.ic_stat_familyguard)
             .setOngoing(true)
             // See quietNotification: a shortcut to the escape hatch (FR-12), immutable.
             .setContentIntent(recoveryShortcut())
@@ -2041,7 +2041,7 @@ class ConnectionService : Service() {
             .setShowWhen(false)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(getString(R.string.connection_running))
-            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setSmallIcon(R.drawable.ic_stat_familyguard)
             .setOngoing(true)
             // Tapping the disclosure opens the escape hatch (FR-12). The launcher entry is the
             // route that survives this service being dead, so this is a shortcut rather than the

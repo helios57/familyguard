@@ -248,7 +248,7 @@ class RemoteDebug(
         manager.notify(
             NOTIFICATION_ID,
             NotificationCompat.Builder(context, CHANNEL)
-                .setSmallIcon(android.R.drawable.stat_sys_warning)
+                .setSmallIcon(R.drawable.ic_stat_familyguard)
                 .setContentTitle(context.getString(R.string.debug_connected_title))
                 .setContentText(context.getString(R.string.debug_connected_text))
                 .setOngoing(true)

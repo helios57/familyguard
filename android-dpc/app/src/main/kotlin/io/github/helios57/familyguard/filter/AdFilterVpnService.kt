@@ -662,7 +662,7 @@ class AdFilterVpnService : VpnService() {
         return NotificationCompat.Builder(this, CHANNEL)
             // A platform drawable, as every other notification in this app uses: there is no
             // custom icon in this project, and R.drawable.ic_notification does not exist.
-            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setSmallIcon(R.drawable.ic_stat_familyguard)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
             .setOngoing(true)

@@ -37,7 +37,7 @@ object AnswerNotifier {
             context, 5, Intent(context, RecoveryActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_menu_recent_history)
+            .setSmallIcon(R.drawable.ic_stat_familyguard)
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(open)
