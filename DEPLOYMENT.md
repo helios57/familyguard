@@ -646,6 +646,18 @@ certificates, developer reputation or install volume, so there is no authority t
 > reason to assume the sideload story is handled. It is not. (Distinction drawn by the `muplay`
 > session, which is exposed to both.)
 
+> **Measured 2026-10-14, goal (2):** the self-hosted 0.6.41 APK (signed with the `B6:2C:DA:94…`
+> key, which the Play Console lists as *Bestätigt* under *Identitätsbestätigung für
+> Android-Entwickler*) was installed from the Files app on a Google Play emulator image (API 35).
+> Play Protect showed *"App scan recommended — Play Protect hasn't seen this app before"*; **Scan
+> app** uploaded it and answered *"This app looks safe"*. A **different, freshly wiped** emulator
+> (API 33, no Google account) then installed the identical file with no Play Protect dialog at all
+> (`VerifyApps … response=0`). So the verdict is per APK (per file hash), held by Google, not by the
+> handset. **Practice per release:** before putting a new `familyguard.apk` on the server, install
+> that exact file once on any Play-enabled emulator or spare phone and press **Scan app**; then the
+> fleet's unattended updates and fresh installs meet an APK Google already knows. A Play release is
+> not needed for this — the package and key only have to be registered (they are).
+
 ### 1. Create the app
 
 Play Console → **App erstellen**. Three things are permanent and cannot be changed afterwards:
