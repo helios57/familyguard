@@ -9220,3 +9220,56 @@ preload partition that the device-owner flow skipped (Calendar, Finder, Game Lau
 Private Share are missing the same way). Installing Samsung's own Clock would need the Galaxy Store
 with child installs allowed for a moment, which is a parent's decision at the phone.
 
+
+## Phase 56 — a build Google Play accepts (0.6.41, FR-15.8)
+
+Publishing to Play needs an artifact Play's policies accept, and the self-hosted APK is not one: it
+declares `UPDATE_PACKAGES_WITHOUT_USER_ACTION` (refused outright, DEPLOYMENT.md "Publishing to Google
+Play" step 4), `USE_EXACT_ALARM` (granted only to alarm-clock and calendar apps) and a `VpnService`, and
+it carries a self-updater and a remote adb relay that Play's Device and Network Abuse policy reads as an
+app replacing and controlling itself from elsewhere. So there are now two builds of one tree, and the
+self-hosted one is unchanged.
+
+**`-PplayBuild=true` selects the Play build.** It adds `app/src/play/AndroidManifest.xml` to every
+variant's manifests (`androidComponents`, `addStaticManifestFile`), which removes the two permissions and
+the ad filter's service (`BIND_VPN_SERVICE` goes with it), and it flips four BuildConfig constants that
+gate the code behind them: `PLAY_BUILD`, `SELF_UPDATE_AVAILABLE` (UPDATE_APP answers that self-update is
+not available, and the FR-15.6 timer is never armed), `REMOTE_DEBUG_AVAILABLE` (OPEN_DEBUG_STREAM answers
+the same, RemoteDebug is never constructed) and `QUIET_RUNNING_NOTICE`. Task names are unchanged:
+`:app:bundleRelease -PplayBuild=true`. Both builds declare `isMonitoringTool=child_monitoring`, which
+Play's monitoring-app policy requires on every version code. Exact alarms already fell back to
+`SCHEDULE_EXACT_ALARM` and then to inexact ones.
+
+**The connection notice is visible in the Play build.** Play's monitoring-app policy asks for a
+persistent notification the person holding the phone can see, so with `QUIET_RUNNING_NOTICE=false` the
+running notice moves to its own channel, `family-guard-connection-visible`, at `IMPORTANCE_LOW` and
+`VISIBILITY_PUBLIC`, and the quiet `IMPORTANCE_MIN` channel is deleted. The self-hosted build keeps the
+quiet one (NFR-14).
+
+**`docs/PRIVACY.md`** is the privacy policy the Play listing links to, checked against the code: what
+each build collects and sends, the other parties the phone reaches (the parent's Private DNS resolver,
+the filter-list host), and what deleting a phone or a child removes and when.
+
+**A launcher icon.** The app had none, so launchers showed the platform's generic one. It now has an
+adaptive icon with a monochrome layer for themed icons (`mipmap-anydpi`, minSdk 29 makes `-v26`
+obsolete) and density PNGs, and every notification's small icon is `ic_stat_familyguard` instead of a
+platform drawable.
+
+### 56.1 — tests and calibration
+
+`CommandHandlersTest` drives both gates in both directions; `PlayBuildGatesTest` checks that every
+constant follows `PLAY_BUILD`, the merged manifest against the build it belongs to, `isMonitoringTool`,
+and the two ConnectionService gates by source scan; the permission-set test expects the two stripped
+permissions absent in the Play build only. Probes, each red and then restored: the update gate removed,
+the debug gate removed, the overlay not registered under `playBuild` (2 tests), the overlay leaked into
+the default build (2 tests), `isMonitoringTool` renamed, `REMOTE_DEBUG_AVAILABLE` pinned true under
+`playBuild`, the update timer armed outside its gate, the visible notice at `IMPORTANCE_MIN`.
+**8 probes, 8 red. Cumulative: 505.**
+
+`testDebugUnitTest`: 1033 tests, both with and without `-PplayBuild=true`; 5 fail identically on an
+untouched checkout on the Windows build box (`RequirementCitationsTest` ×2, `FilterListStoreTest` ×3)
+and are not this change's. The AAB's manifest, read back with bundletool, lacks the three entries and
+carries the icon; the self-hosted APK's still has all three.
+
+**Not proven:** that Play's review accepts the bundle and the listing's declarations — that is
+established only by the upload.
