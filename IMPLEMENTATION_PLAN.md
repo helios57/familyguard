@@ -9342,7 +9342,7 @@ enough; that is measured with the reader account in production.
 
 **Measured on API 37 (familyguard37), because Google's APK carries a signer older phones never
 read:** the universal APK Play generates is signed v2 + v3.0 with the app-signing certificate *and* v3.2
-(minSdk 37) with a hybrid RSA + ML-DSA pair, with no rotation lineage. Installed on API 37,
+(read only from API 37 on) with a hybrid RSA + ML-DSA pair, with no rotation lineage. Installed on API 37,
 `dumpsys package` reports the current signer as the ML-DSA certificate (`36e8317e…`) and the app-signing
 certificate (`ad4a4061…`, the one Play's `certificateSha256Hash` names) only among the past signatures.
 That is harmless here, and the reason is worth keeping: the DPC never compares a download with the
