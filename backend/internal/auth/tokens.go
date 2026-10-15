@@ -1,7 +1,7 @@
-// Package auth issues and verifies the three credentials in the system: a parent's session token,
-// derived from a verified Google ID token; a device's bearer token, issued once at enrollment; and
-// an API key, which acts as a named parent so that a script or an MCP server can drive the same
-// surface a browser drives (FR-17).
+// Package auth issues and verifies the three credentials in the system: a parent's sign-in token,
+// issued after a verified Google ID token and resolved against its row on every request (FR-29); a
+// device's bearer token, issued once at enrollment; and an API key, which acts as a named parent so
+// that a script or an MCP server can drive the same surface a browser drives (FR-17).
 //
 // Every failure path in this package denies. There is no branch where a verification error, a
 // network failure or an unparseable token results in an authenticated caller.
@@ -16,11 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 	"unicode"
-
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 )
 
 // ErrInvalidToken is returned for every rejected credential. Callers map it to 401 without
@@ -193,98 +189,6 @@ func VerifyRecoveryCode(code string, salt []byte, iterations int, want []byte) b
 		return false
 	}
 	return subtle.ConstantTimeCompare(got, want) == 1
-}
-
-// SessionClaims is what a parent's session token carries. Role is included so the API can make an
-// authorization decision without a database round trip, and the parent id is the subject.
-type SessionClaims struct {
-	ParentID uuid.UUID
-	Email    string
-	Role     string
-	Expires  time.Time
-}
-
-// SessionIssuer mints and verifies parent session tokens.
-type SessionIssuer struct {
-	key []byte
-	ttl time.Duration
-}
-
-// NewSessionIssuer builds an issuer. The key length is validated in config; this constructor
-// refuses a short key as well, so a caller that bypasses config cannot weaken the MAC.
-func NewSessionIssuer(key []byte, ttl time.Duration) (*SessionIssuer, error) {
-	if len(key) < 32 {
-		return nil, errors.New("session signing key must be at least 32 bytes")
-	}
-	if ttl <= 0 {
-		return nil, errors.New("session ttl must be positive")
-	}
-	return &SessionIssuer{key: key, ttl: ttl}, nil
-}
-
-// Issue mints a session token for a parent.
-func (s *SessionIssuer) Issue(parentID uuid.UUID, email, role string, now time.Time) (string, time.Time, error) {
-	exp := now.Add(s.ttl)
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":   parentID.String(),
-		"email": email,
-		"role":  role,
-		"iat":   now.Unix(),
-		"exp":   exp.Unix(),
-	})
-	signed, err := tok.SignedString(s.key)
-	if err != nil {
-		return "", time.Time{}, err
-	}
-	return signed, exp, nil
-}
-
-// Verify checks a session token. WithValidMethods pins HS256: without it a token whose header says
-// "none" would be accepted, and a token signed with the RSA public key of the OIDC provider would
-// too.
-//
-// WithStrictDecoding is what makes "a token is one string" true. An HMAC-SHA256 signature is 32
-// bytes, which base64url spells in 43 characters — 258 bits of alphabet for 256 bits of signature,
-// so the last character carries two bits that nothing reads. Without strict decoding those two bits
-// are free: the same signature has four spellings, and changing the final character of a real token
-// produces a different string that still authenticates. Measured before this option was added, on
-// 400 freshly-minted tokens with the last character changed: 23 were accepted. That is not a forgery
-// — the attacker still cannot produce a signature — but it means the credential is malleable, and a
-// credential that is malleable cannot be compared, logged or revoked by its value. It also made the
-// e2e row that changes one character of a signature pass 94% of the time, which is how it was found.
-//
-// Expiry is required twice — by WithExpirationRequired during parsing and by the exp == nil check
-// below — and that is deliberate, not a leftover. Measured: removing either one alone leaves
-// TestSessionTokensAreForgeryResistant green, because the other still rejects a token minted with
-// no exp claim; only removing both lets one through. Nothing will go red if a future edit drops one
-// of them, so neither is safe to delete on the grounds that the other covers it.
-func (s *SessionIssuer) Verify(token string) (*SessionClaims, error) {
-	parsed, err := jwt.Parse(token, func(t *jwt.Token) (any, error) { return s.key, nil },
-		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
-		jwt.WithExpirationRequired(),
-		jwt.WithStrictDecoding())
-	if err != nil || !parsed.Valid {
-		return nil, ErrInvalidToken
-	}
-	claims, ok := parsed.Claims.(jwt.MapClaims)
-	if !ok {
-		return nil, ErrInvalidToken
-	}
-	sub, _ := claims["sub"].(string)
-	id, err := uuid.Parse(sub)
-	if err != nil {
-		return nil, ErrInvalidToken
-	}
-	exp, err := claims.GetExpirationTime()
-	if err != nil || exp == nil {
-		return nil, ErrInvalidToken
-	}
-	email, _ := claims["email"].(string)
-	role, _ := claims["role"].(string)
-	if role == "" {
-		return nil, ErrInvalidToken
-	}
-	return &SessionClaims{ParentID: id, Email: email, Role: role, Expires: exp.Time}, nil
 }
 
 // BearerToken extracts the credential from an Authorization header. A malformed header yields the

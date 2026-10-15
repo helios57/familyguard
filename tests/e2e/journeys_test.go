@@ -1487,8 +1487,8 @@ func TestStateSurvivesRestart(t *testing.T) {
 			beat.PendingCommands)
 	}
 
-	// The parent's session outlives the restart too — the signing key is configuration, not a
-	// per-process secret, which is what makes a rolling deployment invisible to a signed-in parent.
+	// The parent's sign-in outlives the restart too — it is a row, not process memory, which is what
+	// makes a rolling deployment invisible to a signed-in parent (FR-29).
 	after := h.desiredState(f.parent.Token, f.device.ID, at)
 	if string(mustJSON(t, after.Desired)) != string(mustJSON(t, before.Desired)) {
 		t.Fatalf("the desired state changed across a restart:\nbefore: %s\nafter:  %s",
@@ -1610,8 +1610,10 @@ func TestBrowserSignInJourney(t *testing.T) {
 	if result.Get("error") != "" {
 		t.Fatalf("the browser flow reported %q", result.Get("error"))
 	}
-	if exp := result.Get("expires"); exp == "" {
-		t.Fatal("the console is given a token with no expiry, so it cannot know when to sign in again")
+	// FR-29.2: the fragment carries the token and nothing else. An expiry beside it is what the
+	// console used to sign itself out on, a day after sign-in, however much it was being used.
+	if extra := len(result); extra != 1 {
+		t.Fatalf("the browser flow handed the console %v; expected the token alone", result)
 	}
 
 	// The token from the browser flow is a session like any other.

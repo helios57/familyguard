@@ -74,12 +74,17 @@ var guardianAllowlist = map[routeKey]bool{
 	{http.MethodPut, "/api/v1/push/subscription"}:                             true,
 	{http.MethodPost, "/api/v1/push/subscription/status"}:                     true,
 	{http.MethodDelete, "/api/v1/push/subscription"}:                          true,
-	{http.MethodGet, "/api/v1/devices"}:                                       true,
-	{http.MethodGet, "/api/v1/devices/:id/desired-state"}:                     true,
-	{http.MethodGet, "/api/v1/devices/:id/live"}:                              true,
-	{http.MethodPost, "/api/v1/devices/:id/live"}:                             true,
-	{http.MethodDelete, "/api/v1/devices/:id/live"}:                           true,
-	{http.MethodGet, "/api/v1/events"}:                                        true,
+	// FR-29: a guardian is signed in like anyone else, so they sign out, see where they are signed
+	// in and end their own sign-ins like anyone else. Whose they may end is decided per row.
+	{http.MethodGet, "/api/v1/sign-ins"}:                  true,
+	{http.MethodDelete, "/api/v1/sign-ins/current"}:       true,
+	{http.MethodDelete, "/api/v1/sign-ins/:id"}:           true,
+	{http.MethodGet, "/api/v1/devices"}:                   true,
+	{http.MethodGet, "/api/v1/devices/:id/desired-state"}: true,
+	{http.MethodGet, "/api/v1/devices/:id/live"}:          true,
+	{http.MethodPost, "/api/v1/devices/:id/live"}:         true,
+	{http.MethodDelete, "/api/v1/devices/:id/live"}:       true,
+	{http.MethodGet, "/api/v1/events"}:                    true,
 }
 
 func TestAGuardianMayCallExactlyTheGuardianAllowlist(t *testing.T) {

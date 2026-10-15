@@ -1,12 +1,13 @@
 'use strict';
 
 /* Familie — the household rather than one child: who may do what (FR-20), the children, the
- * family's holidays (FR-24), API keys (FR-17), the command-line tool, and the signed-in account.
+ * family's holidays (FR-24), API keys (FR-17), the command-line tool, and the signed-in account
+ * with every device the family is signed in on (FR-29).
  */
 
 async function loadFamily() {
   const isPrimary = state.parent && state.parent.role === 'PRIMARY_ADMIN';
-  const [parents, keys, cli, holidays] = await Promise.all([
+  const [parents, keys, cli, holidays, signIns] = await Promise.all([
     api('/parents'),
     // Only a primary admin may list keys, so anyone else gets a 403 rather than an empty list. The
     // catch keeps the whole page from failing on a call the reader was never entitled to make.
@@ -18,13 +19,17 @@ async function loadFamily() {
       .then((r) => (r.ok ? r.json() : { hosted: false }))
       .catch(() => ({ hosted: false })),
     api('/family/holidays'),
+    api('/sign-ins'),
   ]);
-  return { parents: parents.parents || [], keys: keys && (keys.api_keys || []), isPrimary, cli, holidays: holidays.holidays || [] };
+  return {
+    parents: parents.parents || [], keys: keys && (keys.api_keys || []), isPrimary, cli,
+    holidays: holidays.holidays || [], signIns: signIns.sign_ins || [],
+  };
 }
 
 function renderFamily(data) {
   return [el('div', { class: 'cols' },
-    el('div', { class: 'col' }, peopleCard(data), childrenCard(), youCard()),
+    el('div', { class: 'col' }, peopleCard(data), childrenCard(), youCard(data)),
     el('div', { class: 'col' }, holidaysCard(data), apiKeysCard(data), cliCard(data.cli)))];
 }
 
@@ -135,11 +140,49 @@ function childrenCard() {
     el('button', { class: 'btn btn-soft btn-block', type: 'button', onclick: addChild }, icon('plus'), 'Kind hinzufügen'));
 }
 
-function youCard() {
+/* The signed-in account, and every device the family is signed in on (FR-29).
+ *
+ * A sign-in lasts as long as it is used, so this list is what makes that safe: a lost phone is found
+ * here and signed out from the laptop. Everyone sees everyone's; a parent ends their own, and the
+ * primary admin anyone's — the same bar as removing that person. This browser is marked rather than
+ * given its own button, because the Abmelden below already is that button. */
+function youCard(data) {
+  const isPrimary = data.isPrimary;
+  const mine = (s) => state.parent && s.parent_id === state.parent.id;
+  const list = data.signIns || [];
   return el('div', { class: 'card' },
     el('div', { class: 'card-head' }, el('h2', { text: 'Angemeldet' })),
     el('p', { class: 'muted', text: state.parent ? state.parent.email + ' · ' + roleLabel(state.parent.role) : '' }),
-    el('button', { class: 'btn btn-block', type: 'button', 'data-action': 'signout', onclick: () => signOut('Abgemeldet.') }, icon('signout'), 'Abmelden'));
+    el('h3', { text: 'Angemeldete Geräte' }),
+    help('Du bleibst angemeldet, solange du die Konsole benutzt.',
+      'Eine Anmeldung, die ' + IDLE_DAYS + ' Tage nicht benutzt wurde, endet von selbst. Ein verlorenes Gerät hier abmelden.'),
+    el('ul', { class: 'list', 'data-signins': '' }, list.map((s) => el('li', { class: s.current ? 'is-current' : null },
+      el('span', { class: 'label' },
+        el('b', { text: s.label }),
+        el('small', {
+          // This browser's row carries the "Dieses Gerät" badge instead of a last use, which is now.
+          text: [mine(s) ? null : (s.parent_name || s.parent_email),
+            s.current ? null : 'zuletzt benutzt ' + fmtTime(s.last_used_at),
+            'angemeldet ' + fmtTime(s.created_at)].filter(Boolean).join(' · '),
+        })),
+      s.current
+        ? el('span', { class: 'badge', text: 'Dieses Gerät' })
+        : (mine(s) || isPrimary)
+          ? el('button', {
+            class: 'btn btn-quiet btn-danger', type: 'button', text: 'Abmelden', 'data-signin-end': s.id,
+            onclick: async () => {
+              const yes = await confirmSheet({
+                title: s.label + ' abmelden?',
+                lines: [(mine(s) ? 'Dieses Gerät' : 'Das Gerät von ' + (s.parent_name || s.parent_email)) + ' muss sich danach neu anmelden.'],
+                confirmLabel: 'Abmelden',
+              });
+              if (!yes) return;
+              await act('Abgemeldet', () => api('/sign-ins/' + s.id, { method: 'DELETE' }));
+              refresh();
+            },
+          })
+          : null))),
+    el('button', { class: 'btn btn-block', type: 'button', 'data-action': 'signout', onclick: () => endSession() }, icon('signout'), 'Abmelden'));
 }
 
 /* ---- holidays (FR-24.6) ------------------------------------------------------ */

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"github.com/helios57/familyguard/backend/internal/auth"
 	"github.com/helios57/familyguard/backend/internal/store"
@@ -31,7 +32,7 @@ type sessionResponse struct {
 	Parent    store.Parent `json:"parent"`
 }
 
-// googleLogin exchanges a verified Google ID token for a session token.
+// googleLogin exchanges a verified Google ID token for a sign-in token.
 //
 // Authorization is membership: the address in the verified token must already be a parent of this
 // family. There is no self-registration path, because the first thing a stranger with a Google
@@ -89,21 +90,30 @@ func (s *Server) issueSession(c *gin.Context, claims *auth.IDTokenClaims) (*sess
 	if err := s.store.RecordParentLogin(c.Request.Context(), parent.ID, claims.Subject, claims.Name); err != nil {
 		return nil, err
 	}
-	token, expires, err := s.sessions.Issue(parent.ID, parent.Email, parent.Role, s.now())
+	// FR-29: an opaque token whose SHA-256 is a row. Only the hash is stored, as for every other
+	// credential here, so the database cannot be replayed into a browser.
+	token, hash, err := auth.NewToken()
 	if err != nil {
 		return nil, err
 	}
-	s.audit(c, store.ActorParent, parent.ID.String(), "PARENT_SIGNED_IN", "parent", parent.ID.String(), nil)
-	parent.LastLoginAt = ptr(s.now())
-	return &sessionResponse{Token: token, ExpiresAt: expires, Parent: *parent}, nil
+	now := s.now()
+	signIn, err := s.store.CreateSignIn(c.Request.Context(), parent.ID, signInLabel(c.Request.UserAgent()), hash, now)
+	if err != nil {
+		return nil, err
+	}
+	s.audit(c, store.ActorParent, parent.ID.String(), "PARENT_SIGNED_IN", "parent", parent.ID.String(),
+		map[string]any{"sign_in": signIn.ID.String(), "label": signIn.Label})
+	parent.LastLoginAt = ptr(now)
+	// ExpiresAt is when this sign-in lapses if it is not used again. Every use moves it, so it is a
+	// floor, not a deadline — the console does not act on it (FR-29.2).
+	return &sessionResponse{Token: token, ExpiresAt: now.Add(s.cfg.SignInIdleTimeout), Parent: *parent}, nil
 }
 
-// requireParent authenticates a parent, by session token or by API key.
+// requireParent authenticates a parent, by sign-in token or by API key.
 //
-// The identity is re-read against the database on every request rather than trusted from the
-// credential. A session token is valid for a day and an API key until it is revoked; a parent
-// removed from the family must lose access immediately, not when their credential happens to
-// expire.
+// Both resolve against the database on every request: a sign-in lasts while it is used (FR-29) and
+// an API key until it is revoked, and a parent removed from the family, a sign-in ended from another
+// device or a key revoked must stop working on the next request, not when something expires.
 //
 // **An API key resolves to a parent and then takes exactly the same path.** That is the whole
 // design of FR-17, and it is why "every endpoint is reachable with a key" cost one branch rather
@@ -127,17 +137,20 @@ func (s *Server) requireParent() gin.HandlerFunc {
 			parent *store.Parent
 			err    error
 			actor  string
+			signIn uuid.UUID
 		)
 		if auth.IsAPIKey(token) {
 			// Routed on the scheme prefix, not attempted-and-fallen-back-to. See auth.APIKeyScheme.
 			parent, err = s.store.ParentByAPIKeyHash(c.Request.Context(), auth.HashToken(token), s.now())
 			actor = ctxAPIKeyActor
 		} else {
-			var claims *auth.SessionClaims
-			claims, err = s.sessions.Verify(token)
-			if err == nil {
-				parent, err = s.store.ParentByID(c.Request.Context(), claims.ParentID)
-			}
+			// The lookup is also the use: it moves last_used_at, which is what keeps a sign-in that
+			// is in use alive (FR-29.2). Any string that is not a live sign-in's token — a stranger's
+			// guess, an ended or lapsed one, a device token, a JWT from before FR-29 — hashes to
+			// nothing and is refused here.
+			now := s.now()
+			parent, signIn, err = s.store.ParentBySignInHash(c.Request.Context(), auth.HashToken(token),
+				now, now.Add(-s.cfg.SignInIdleTimeout))
 		}
 		if err != nil || parent == nil {
 			// Including ErrNotFound: a deleted parent, or a revoked key, holding a still-valid
@@ -147,6 +160,9 @@ func (s *Server) requireParent() gin.HandlerFunc {
 			return
 		}
 		c.Set(ctxParent, parent)
+		if signIn != uuid.Nil {
+			c.Set(ctxSignIn, signIn)
+		}
 		if actor != "" {
 			// Recorded so the audit trail can tell a script from a person. The key's own prefix is
 			// not put here: it would then appear in every audit row, and the useful question — which

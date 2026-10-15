@@ -394,6 +394,19 @@ type APIKey struct {
 	Token      string     `json:"token,omitempty"`
 }
 
+// SignIn is one device a parent is signed in on (FR-29). Current is the handler's to set: whether
+// it is the sign-in presenting the request is a fact about the request, not about the row.
+type SignIn struct {
+	ID          uuid.UUID `json:"id"`
+	ParentID    uuid.UUID `json:"parent_id"`
+	ParentEmail string    `json:"parent_email"`
+	ParentName  string    `json:"parent_name"`
+	Label       string    `json:"label"`
+	CreatedAt   time.Time `json:"created_at"`
+	LastUsedAt  time.Time `json:"last_used_at"`
+	Current     bool      `json:"current"`
+}
+
 type UsageSample struct {
 	DeviceID     uuid.UUID `json:"device_id"`
 	Day          string    `json:"day"`

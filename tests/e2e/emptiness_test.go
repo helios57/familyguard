@@ -368,6 +368,9 @@ var collectionsCoveredElsewhere = map[string]string{
 	"ListParents": "asserted by name and role in section 2: this is the one collection that is " +
 		"legitimately non-empty on a fresh system, because a deployer configured it",
 	"ListAudit": "asserted in section 2 as exactly one row — the sign-in this test performed",
+	"ListSignIns": "never empty on any request that can read it: a sign-in token is how the caller " +
+		"got here, so its own sign-in is in the list; sign_in_test reads the list on every path, " +
+		"including an API key's, and the store function initialises it to []SignIn{}",
 	"WebPushSubscriptions": "never serialised: the Web Push sender reads it and sends to each row " +
 		"inside the server (FR-28.4); time_request_test drives it end to end, and a nil result sends nothing",
 	"ChildrenDeclaring": "never serialised. It names the children whose policy a newly fetched " +

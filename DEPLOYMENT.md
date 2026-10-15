@@ -160,13 +160,12 @@ phone will download over a home connection.
 
 Everything the control plane needs that is not in a manifest arrives in **one** Kubernetes Secret
 named `familyguard-secret`. [`deploy/secret.example.yaml`](deploy/secret.example.yaml) is the
-contract — its five keys and what each one has to contain. That file is deliberately *not* part of
+contract — its four keys and what each one has to contain. That file is deliberately *not* part of
 the kustomization: applying it as it stands would deploy placeholder credentials, which is worse than
 failing.
 
 | Key | How to produce it |
 |---|---|
-| `SESSION_SIGNING_KEY` | `openssl rand -base64 48`. Never a passphrase — the server refuses anything under 32 bytes rather than deriving a key from a weak one |
 | `OAUTH_CLIENT_ID` | from the Google OAuth client (§5) |
 | `OAUTH_CLIENT_SECRET` | from the same client |
 | `POSTGRES_PASSWORD` | `openssl rand -base64 32` |
@@ -290,8 +289,8 @@ kubectl -n familyguard get secret familyguard-secret -o jsonpath='{.data}' | tr 
 ```
 
 The second command lists the **key names** in the synced Secret and never their values. Expect
-`SESSION_SIGNING_KEY`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `POSTGRES_PASSWORD`,
-`DATABASE_URL`. A missing key means whatever populates the Secret referenced something the backing
+`OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `POSTGRES_PASSWORD`, `DATABASE_URL` (a `SESSION_SIGNING_KEY`
+left over from before 0.6.43 is harmless and read by nothing; see FR-29). A missing key means whatever populates the Secret referenced something the backing
 store does not have — and that is reported as a *partial* success, so the Secret appears and the pod
 fails on the one variable that is absent (§4).
 

@@ -41,9 +41,6 @@ const (
 	// its audience, so it is also what the negative controls vary.
 	e2eClientID     = "family-guard-e2e.apps.example.test"
 	e2eClientSecret = "e2e-client-secret-not-a-real-credential"
-	// Long enough to satisfy config.MinSessionKeyBytes, written out rather than imported: the suite
-	// must fail if the server lowers that bound, not silently agree with it.
-	e2eSessionKey = "e2e-session-signing-key-0123456789-abcdef"
 
 	startTimeout = 30 * time.Second
 	stopTimeout  = 25 * time.Second
@@ -253,7 +250,6 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		"OAUTH_TOKEN_URL":     h.issuer.TokenURL(),
 		"OAUTH_CLIENT_ID":     e2eClientID,
 		"OAUTH_CLIENT_SECRET": e2eClientSecret,
-		"SESSION_SIGNING_KEY": e2eSessionKey,
 
 		"BOOTSTRAP_PARENT_EMAILS": primaryParent.Email + "," + secondParent.Email,
 		"FAMILY_NAME":             "E2E Family",

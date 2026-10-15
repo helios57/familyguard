@@ -415,6 +415,27 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 	h.call(http.MethodDelete, "/api-keys/"+key.ID, parent.Token, nil).expect(http.StatusNoContent)
 	byParent("API_KEY_DELETED", "api_key", key.ID)
 
+	// FR-29: a second sign-in of the same parent, ended from the first — the lost-phone case.
+	second := h.signIn(primaryParent)
+	var signIns struct {
+		SignIns []struct {
+			ID      string `json:"id"`
+			Current bool   `json:"current"`
+		} `json:"sign_ins"`
+	}
+	h.call(http.MethodGet, "/sign-ins", second.Token, nil).expect(http.StatusOK).decode(&signIns)
+	secondID := ""
+	for _, si := range signIns.SignIns {
+		if si.Current {
+			secondID = si.ID
+		}
+	}
+	if secondID == "" {
+		t.Fatal("the second sign-in's list marks none as current")
+	}
+	h.call(http.MethodDelete, "/sign-ins/"+secondID, parent.Token, nil).expect(http.StatusNoContent)
+	byParent("SIGN_IN_ENDED", "sign_in", secondID)
+
 	// The directory is the server's, and this test used it: nothing here should have left the
 	// deleted application's bytes behind.
 	if entries, err := os.ReadDir(apkDir); err != nil {
@@ -480,6 +501,7 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 		{"FAMILY_APP_DECLARED", "package_name", fixturePackage},
 		{"PLAY_SOURCE_SET", "package_name", "com.example.fromplay"},
 		{"PLAY_SOURCE_REMOVED", "package_name", "com.example.fromplay"},
+		{"SIGN_IN_ENDED", "own", true},
 	} {
 		found := false
 		for _, e := range entries {

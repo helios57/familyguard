@@ -20,9 +20,9 @@ package e2e
 //     JSON" when the body was perfectly valid and merely too large is a bug this file must catch.
 
 import (
-	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -80,13 +80,13 @@ func awaitCount(t *testing.T, h *harness, sub string, want int) {
 // reason renders the slog key/value pair the server writes for a refusal.
 func reason(v string) string { return `"reason":"` + v + `"` }
 
-// hs256 mints a session token the way the server does, with crypto/hmac rather than with the JWT
-// library the server verifies with.
-//
-// This is possible at all because SessionIssuer.Verify checks the signature, the expiry, the subject
-// and the role — but not an issuer or an audience. That is a deliberate property of a token this
-// server both mints and consumes, and it is what lets this suite hold a *valid* forged token and
-// show that the things it does check are the things that matter.
+// preFR29Key is what SESSION_SIGNING_KEY was in this suite before FR-29 replaced signed session
+// tokens with sign-in rows. A token minted with it is exactly what a console signed in before the
+// change still holds: a well-formed JWT, with a valid signature under the key the server used to
+// have, that must now be refused like any other string.
+const preFR29Key = "e2e-session-signing-key-0123456789-abcdef"
+
+// hs256 mints a session token the way the server did before FR-29, with crypto/hmac.
 func hs256(t *testing.T, key string, claims map[string]any) string {
 	t.Helper()
 	signing := b64(mustJSON(t, map[string]any{"alg": "HS256", "typ": "JWT"})) + "." + b64(mustJSON(t, claims))
@@ -95,14 +95,7 @@ func hs256(t *testing.T, key string, claims map[string]any) string {
 	return signing + "." + b64(mac.Sum(nil))
 }
 
-// algNone builds the same claims with the signature dropped and the algorithm disowned.
-func algNone(t *testing.T, claims map[string]any) string {
-	t.Helper()
-	return b64(mustJSON(t, map[string]any{"alg": "none", "typ": "JWT"})) + "." +
-		b64(mustJSON(t, claims)) + "."
-}
-
-// sessionClaims is the claim set the server's own issuer produces.
+// sessionClaims is the claim set the pre-FR-29 issuer produced.
 func sessionClaims(parentID, email, role string, exp time.Time) map[string]any {
 	return map[string]any{
 		"sub":   parentID,
@@ -113,70 +106,19 @@ func sessionClaims(parentID, email, role string, exp time.Time) map[string]any {
 	}
 }
 
-// b64urlAlphabet is RFC 4648 section 5, in index order, so a character can be turned back into the
-// six bits it stands for.
-const b64urlAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-
-// tamper changes a token's signature — the bytes, not the spelling.
-//
-// The first version of this helper replaced the last character of the token with a different
-// character, which reads like a one-bit change and is not one. An HMAC-SHA256 signature is 32
-// bytes; base64url spells it in 43 characters, which is 258 bits of alphabet for 256 bits of
-// signature, so the last character carries two bits that decode to nothing. Four characters
-// therefore mean the same signature, and swapping one for another leaves a token that still
-// authenticates. Measured on the server's own issuer: 23 of 400 such "tampered" tokens were
-// accepted, and this row of the table went red for the first time on the 16th sweep — 6% of runs,
-// which is exactly the shape of a guard nobody trusts.
-//
-// So the signature is decoded, a bit of the first byte is flipped, and it is re-encoded. That is a
-// change to the signature itself, and no encoding property can undo it.
-func tamper(t *testing.T, token string) string {
+// changeChar returns the token with the character at i replaced by a different one. A sign-in token
+// is compared by the hash of its exact spelling, so — unlike a signature, where two spellings could
+// decode to the same bytes — any change to any character is a different credential.
+func changeChar(t *testing.T, token string, i int) string {
 	t.Helper()
-	cut := strings.LastIndex(token, ".")
-	if cut < 0 || cut == len(token)-1 {
-		t.Fatalf("token has no signature segment to tamper with: %q", token)
+	if i < 0 || i >= len(token) {
+		t.Fatalf("no character %d in a %d-character token", i, len(token))
 	}
-	sig, err := base64.RawURLEncoding.DecodeString(token[cut+1:])
-	if err != nil || len(sig) == 0 {
-		t.Fatalf("the signature segment does not decode (%v); this helper is measuring nothing", err)
+	c := byte('A')
+	if token[i] == c {
+		c = 'B'
 	}
-	sig[0] ^= 0x01
-	return token[:cut+1] + base64.RawURLEncoding.EncodeToString(sig)
-}
-
-// respell returns the same token with the same signature bytes written differently.
-//
-// This is the input the old tamper produced by accident, asserted on purpose. The last character of
-// the signature has two bits below the ones that carry the signature; a canonical encoder leaves
-// them zero, and setting one produces a second spelling of a byte-identical signature. A verifier
-// that accepts it has a credential with four names — which cannot be compared, logged or revoked by
-// value, and which makes "one character changed" an untrue thing to say about it.
-//
-// The function refuses rather than returns if the input is not canonical to begin with, or if the
-// respelling does not decode to the same bytes, because either would turn this case into another
-// tamper: a red would then prove only that a different signature is refused, which the row above
-// already proves.
-func respell(t *testing.T, token string) string {
-	t.Helper()
-	cut := strings.LastIndex(token, ".")
-	if cut < 0 || cut == len(token)-1 {
-		t.Fatalf("token has no signature segment: %q", token)
-	}
-	seg := token[cut+1:]
-	idx := strings.IndexByte(b64urlAlphabet, seg[len(seg)-1])
-	if idx < 0 {
-		t.Fatalf("the signature ends in %q, which is not base64url", seg[len(seg)-1])
-	}
-	if idx&0x03 != 0 {
-		t.Fatalf("the server minted a non-canonical signature (last char %q); this test assumes it does not", seg[len(seg)-1])
-	}
-	respelled := seg[:len(seg)-1] + string(b64urlAlphabet[idx|0x01])
-	was, err1 := base64.RawURLEncoding.DecodeString(seg)
-	now, err2 := base64.RawURLEncoding.DecodeString(respelled)
-	if err1 != nil || err2 != nil || !bytes.Equal(was, now) {
-		t.Fatalf("the respelling changed the signature bytes (%v/%v); it would prove nothing", err1, err2)
-	}
-	return token[:cut+1] + respelled
+	return token[:i] + string(c) + token[i+1:]
 }
 
 func cookiesOf(r apiResponse) []*http.Cookie {
@@ -329,7 +271,7 @@ func TestIDTokenIsVerifiedNotTrusted(t *testing.T) {
 	h.signIn(primaryParent)
 }
 
-// ---- NFR-1: session tokens, roles, and what a forged one cannot buy ---------
+// ---- NFR-1: sign-in tokens, roles, and what a guessed one cannot buy -------
 
 func TestSessionTokensAreForgeryResistant(t *testing.T) {
 	h := newHarness(t)
@@ -348,64 +290,50 @@ func TestSessionTokensAreForgeryResistant(t *testing.T) {
 		t.Fatalf("the new parent signed in as %q, expected GUARDIAN", guardian.Parent.Role)
 	}
 
-	// Calibration for everything below: this suite can mint a token the server accepts, using the
-	// signing key and nothing else. So each refusal that follows is about the key or the claims, and
-	// never about the suite failing to build a token at all.
-	forged := hs256(t, e2eSessionKey,
-		sessionClaims(primary.Parent.ID, primary.Parent.Email, "ADMIN", time.Now().Add(time.Hour)))
+	// Calibration for everything below: the token the server handed out works and names its parent.
+	// So each refusal that follows is about the string, never about the suite holding no working
+	// credential at all.
 	var whoami parentDTO
-	h.call(http.MethodGet, "/me", forged, nil).expect(http.StatusOK).decode(&whoami)
-	if whoami.ID != primary.Parent.ID {
-		t.Fatalf("the hand-minted token identified %s, expected %s", whoami.ID, primary.Parent.ID)
+	h.call(http.MethodGet, "/me", primary.Token, nil).expect(http.StatusOK).decode(&whoami)
+	if whoami.ID != primary.Parent.ID || whoami.Role != "PRIMARY_ADMIN" {
+		t.Fatalf("the real token identified %s as %q, expected %s PRIMARY_ADMIN", whoami.ID, whoami.Role, primary.Parent.ID)
 	}
-	// The token said ADMIN. The answer says PRIMARY_ADMIN, because the role is read from the database
-	// on every request — the claim is not consulted.
-	if whoami.Role != "PRIMARY_ADMIN" {
-		t.Fatalf("the role came back as %q; a token claiming ADMIN must not change what the database says", whoami.Role)
-	}
+
+	// A sign-in that has been ended, held by the suite exactly as a stolen copy would be.
+	ended := h.signIn(primaryParent)
+	h.call(http.MethodDelete, "/sign-ins/current", ended.Token, nil).expect(http.StatusNoContent)
 
 	valid := time.Now().Add(time.Hour)
-	unknownParent := "11111111-2222-3333-4444-555555555555"
-
 	rejected := []struct {
 		what  string
 		token string
 	}{
-		{"signed with a key that is not this deployment's",
-			hs256(t, "another-signing-key-0123456789-abcdefgh",
-				sessionClaims(primary.Parent.ID, primary.Parent.Email, "PRIMARY_ADMIN", valid))},
-		{"alg none",
-			algNone(t, sessionClaims(primary.Parent.ID, primary.Parent.Email, "PRIMARY_ADMIN", valid))},
-		{"a real token with one signature byte changed", tamper(t, primary.Token)},
-		// The same signature, spelled differently. Not a forgery and not a different signature —
-		// the two decode to identical bytes, which `respell` proves before handing it over. A
-		// server that accepts this has a credential with more than one name.
-		{"a real token whose signature is respelled with non-zero padding bits", respell(t, primary.Token)},
-		{"expired an hour ago",
-			hs256(t, e2eSessionKey, sessionClaims(primary.Parent.ID, primary.Parent.Email,
-				"PRIMARY_ADMIN", time.Now().Add(-time.Hour)))},
-		{"no expiry, so it would be valid forever", func() string {
-			claims := sessionClaims(primary.Parent.ID, primary.Parent.Email, "PRIMARY_ADMIN", valid)
-			delete(claims, "exp")
-			return hs256(t, e2eSessionKey, claims)
+		{"a random token of the right shape that is nobody's", func() string {
+			buf := make([]byte, 32)
+			if _, err := rand.Read(buf); err != nil {
+				t.Fatal(err)
+			}
+			return base64.RawURLEncoding.EncodeToString(buf)
 		}()},
-		{"an empty role",
-			hs256(t, e2eSessionKey, sessionClaims(primary.Parent.ID, primary.Parent.Email, "", valid))},
-		{"a subject that is not a uuid",
-			hs256(t, e2eSessionKey, sessionClaims("primary@family.test", primary.Parent.Email, "PRIMARY_ADMIN", valid))},
-		{"a well-formed uuid that is nobody",
-			hs256(t, e2eSessionKey, sessionClaims(unknownParent, "nobody@family.test", "PRIMARY_ADMIN", valid))},
+		{"a real token with its first character changed", changeChar(t, primary.Token, 0)},
+		{"a real token with its last character changed", changeChar(t, primary.Token, len(primary.Token)-1)},
+		{"a real token with a character added", primary.Token + "A"},
+		{"a real token with its last character dropped", primary.Token[:len(primary.Token)-1]},
+		{"a sign-in that was ended", ended.Token},
+		// What every console signed in before FR-29 holds: a correctly signed JWT under the key the
+		// server used to have. Refused like any other string — the one forced sign-in after the
+		// change, and the proof that no JWT verifier is left in the path.
+		{"a session token from before FR-29, validly signed with the old key",
+			hs256(t, preFR29Key, sessionClaims(primary.Parent.ID, primary.Parent.Email, "PRIMARY_ADMIN", valid))},
 		{"the device's own credential, on a parent route", func() string {
 			f := enrolledFixture(t, h)
 			return f.deviceToken()
 		}()},
 		{"nothing at all", ""},
 	}
-	// Errorf rather than Fatalf, and the row's own name in every message. Eleven tokens go through
-	// one loop, so stopping at the first names whichever row happens to be first and hides the rest:
-	// a verifier that stopped checking signatures at all would be reported as one broken row out of
-	// four. That is also what makes this loop calibratable — the break has to be *seen* on the row
-	// it is aimed at, not on a row that shares the loop with it.
+	// Errorf rather than Fatalf, and the row's own name in every message: stopping at the first names
+	// whichever row happens to be first and hides the rest. That is also what makes this loop
+	// calibratable — the break has to be *seen* on the row it is aimed at.
 	for _, tc := range rejected {
 		resp := h.call(http.MethodGet, "/me", tc.token, nil)
 		if resp.Status != http.StatusUnauthorized {
@@ -423,6 +351,8 @@ func TestSessionTokensAreForgeryResistant(t *testing.T) {
 	if t.Failed() {
 		t.FailNow()
 	}
+	// And the refusals cost the real sign-in nothing: none of the near-misses above ended it.
+	h.call(http.MethodGet, "/me", primary.Token, nil).expect(http.StatusOK)
 
 	// A malformed Authorization header is unauthenticated, not a 500 and not a partial parse.
 	for _, header := range []string{"Bearer", "Bearer ", "Basic " + primary.Token, primary.Token} {
@@ -457,13 +387,6 @@ func TestSessionTokensAreForgeryResistant(t *testing.T) {
 			t.Fatalf("%s: message was %q", tc.who, msg)
 		}
 	}
-
-	// The escalation that a role claim would buy if the claim were believed.
-	escalated := hs256(t, e2eSessionKey,
-		sessionClaims(guardian.Parent.ID, guardian.Parent.Email, "PRIMARY_ADMIN", valid))
-	h.call(http.MethodPost, "/parents", escalated, map[string]any{
-		"email": "escalated@family.test", "role": "PRIMARY_ADMIN",
-	}).expectError(http.StatusForbidden, "forbidden")
 
 	// A primary admin cannot lock themselves out.
 	h.call(http.MethodDelete, "/parents/"+primary.Parent.ID, primary.Token, nil).
@@ -1110,7 +1033,6 @@ func TestStartupRefusesBadConfiguration(t *testing.T) {
 			"DATABASE_URL":            deadDB,
 			"OAUTH_CLIENT_ID":         e2eClientID,
 			"OAUTH_CLIENT_SECRET":     e2eClientSecret,
-			"SESSION_SIGNING_KEY":     e2eSessionKey,
 			"BOOTSTRAP_PARENT_EMAILS": primaryParent.Email,
 			"APK_URL":                 "https://apk.example.test/familyguard.apk",
 			"APK_CERT_PATH":           certPath,
@@ -1128,11 +1050,10 @@ func TestStartupRefusesBadConfiguration(t *testing.T) {
 			"OAUTH_CLIENT_ID is required"},
 		{"no oauth client secret", func(e map[string]string) { delete(e, "OAUTH_CLIENT_SECRET") },
 			"OAUTH_CLIENT_SECRET is required"},
-		{"no signing key", func(e map[string]string) { delete(e, "SESSION_SIGNING_KEY") },
-			"SESSION_SIGNING_KEY is required"},
-		{"a signing key one byte too short",
-			func(e map[string]string) { e["SESSION_SIGNING_KEY"] = strings.Repeat("k", 31) },
-			"SESSION_SIGNING_KEY must be at least 32 bytes"},
+		{"an idle timeout that is not a duration",
+			func(e map[string]string) { e["SIGN_IN_IDLE_TIMEOUT"] = "90 days" }, "SIGN_IN_IDLE_TIMEOUT must be a duration"},
+		{"an idle timeout under a second",
+			func(e map[string]string) { e["SIGN_IN_IDLE_TIMEOUT"] = "500ms" }, "SIGN_IN_IDLE_TIMEOUT must be a duration of at least 1s"},
 		{"no public url", func(e map[string]string) { delete(e, "PUBLIC_URL") }, "PUBLIC_URL is required"},
 		{"a public url that is only a path",
 			func(e map[string]string) { e["PUBLIC_URL"] = "/console" }, "PUBLIC_URL: must be an absolute URL"},
@@ -1216,14 +1137,14 @@ func TestStartupRefusesBadConfiguration(t *testing.T) {
 	// at a time.
 	env := base()
 	delete(env, "DATABASE_URL")
-	env["SESSION_SIGNING_KEY"] = "short"
+	env["SIGN_IN_IDLE_TIMEOUT"] = "soon"
 	env["TRUSTED_PROXIES"] = "ingress-nginx"
 	code, out := startServer(t, env)
 	if code != 1 {
 		t.Fatalf("three problems at once exited %d\n%s", code, out)
 	}
 	for _, want := range []string{
-		"DATABASE_URL is required", "SESSION_SIGNING_KEY must be at least 32 bytes",
+		"DATABASE_URL is required", "SIGN_IN_IDLE_TIMEOUT must be a duration",
 		"is neither an IP nor a CIDR",
 	} {
 		if !strings.Contains(out, want) {

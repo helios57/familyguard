@@ -35,7 +35,6 @@ type Deps struct {
 	Config   *config.Config
 	Store    *store.Store
 	Verifier *auth.OIDCVerifier
-	Sessions *auth.SessionIssuer
 	Logger   *slog.Logger
 
 	// HTTPClient is used for outbound calls to the identity provider (the code exchange). Injected
@@ -90,7 +89,6 @@ type Server struct {
 	cfg      *config.Config
 	store    *store.Store
 	verifier *auth.OIDCVerifier
-	sessions *auth.SessionIssuer
 	resolver *enforce.Resolver
 	catalog  *catalog.Catalog
 	hub      *Hub
@@ -121,8 +119,8 @@ type Server struct {
 
 // New wires a server. It does not listen; the caller owns the lifecycle.
 func New(d Deps) (*Server, error) {
-	if d.Config == nil || d.Store == nil || d.Sessions == nil {
-		return nil, errors.New("httpapi: config, store and sessions are required")
+	if d.Config == nil || d.Store == nil {
+		return nil, errors.New("httpapi: config and store are required")
 	}
 	if d.Verifier == nil {
 		// A nil verifier would make every parent login fail closed, which is safe but silent.
@@ -146,7 +144,6 @@ func New(d Deps) (*Server, error) {
 		cfg:               d.Config,
 		store:             d.Store,
 		verifier:          d.Verifier,
-		sessions:          d.Sessions,
 		resolver:          enforce.New(d.Store, d.Config.PublicURL.String()).WithOwnPackage(d.Config.DPCPackage()),
 		catalog:           catalog.New(d.Config.APKDir, d.Store, d.Logger, d.Config.DPCPackage()),
 		hub:               NewHub(d.Logger),
@@ -379,6 +376,14 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.interactive(http.MethodPost, "/api-keys", primaryOnly, s.createAPIKey)
 	p.interactive(http.MethodPost, "/api-keys/:id/revoke", primaryOnly, s.revokeAPIKey)
 	p.interactive(http.MethodDelete, "/api-keys/:id", primaryOnly, s.deleteAPIKey)
+
+	// Sign-ins (FR-29). Every parent sees every sign-in, for the same reason as /api-keys: "is
+	// somebody still signed in on the phone I lost" has to be answerable by either parent. Ending one
+	// is console-only — a key that could end sign-ins could lock the parents out of the console that
+	// revokes it — and whose may be ended is decided in the handler, because it depends on the row.
+	p.GET("/sign-ins", everyone, s.listSignIns)
+	p.interactive(http.MethodDelete, "/sign-ins/current", everyone, s.endCurrentSignIn)
+	p.interactive(http.MethodDelete, "/sign-ins/:id", everyone, s.endSignIn)
 
 	p.GET("/audit", admins, s.listAudit)
 	// The console reads this stream with fetch() rather than EventSource, because EventSource

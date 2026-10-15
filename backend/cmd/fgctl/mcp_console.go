@@ -160,6 +160,14 @@ func registerConsoleTools(server *mcp.Server, client *fgclient.Client) {
 			return getJSON(ctx, c, "/api/v1/api-keys")
 		})
 
+	add(server, client, "list_sign_ins",
+		"Every device a parent of the family is signed in to the console on: whose, which browser, when "+
+			"last used. An API key has no sign-in, so none is marked current. Signing a device out is only "+
+			"possible signed in to the console.",
+		func(ctx context.Context, c *fgclient.Client, _ emptyArgs) (any, error) {
+			return getJSON(ctx, c, "/api/v1/sign-ins")
+		})
+
 	add(server, client, "get_hosted_dpc",
 		"The FamilyGuard phone app this server hands out: version, versionCode and checksum. A phone "+
 			"reporting an older build in get_device updates with send_command UPDATE_APP.",

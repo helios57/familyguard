@@ -18,7 +18,7 @@ func validEnv(t *testing.T, overrides map[string]string) {
 		"OAUTH_CLIENT_SECRET":     "a-client-secret",
 		"OAUTH_AUTH_URL":          "",
 		"OAUTH_TOKEN_URL":         "",
-		"SESSION_SIGNING_KEY":     strings.Repeat("k", 48),
+		"SIGN_IN_IDLE_TIMEOUT":    "",
 		"PUBLIC_URL":              "https://guard.example.ch",
 		"APK_URL":                 "",
 		"APK_PATH":                "",
@@ -72,7 +72,10 @@ func TestLoadAcceptsAValidEnvironment(t *testing.T) {
 			c.RateLimitFloodPerMinute, c.RateLimitParentPerMinute,
 			c.RateLimitDevicePerMinute, c.RateLimitPerMinute)
 	}
-	if c.SessionTTL <= 0 || c.CommandTTL <= 0 || c.DeviceOfflineAfter <= 0 {
+	if c.SignInIdleTimeout != DefaultSignInIdleTimeout {
+		t.Fatalf("SIGN_IN_IDLE_TIMEOUT unset gave %s, expected the documented %s", c.SignInIdleTimeout, DefaultSignInIdleTimeout)
+	}
+	if c.SignInIdleTimeout <= 0 || c.CommandTTL <= 0 || c.DeviceOfflineAfter <= 0 {
 		t.Fatal("a duration defaulted to zero, which would make the corresponding check vacuous")
 	}
 	if len(c.AllowedOrigins) != 0 {
@@ -106,8 +109,8 @@ func TestLoadRejects(t *testing.T) {
 		{"no oauth client secret", map[string]string{"OAUTH_CLIENT_SECRET": ""}, "OAUTH_CLIENT_SECRET"},
 		{"relative oauth auth url", map[string]string{"OAUTH_AUTH_URL": "/authorize"}, "OAUTH_AUTH_URL"},
 		{"relative oauth token url", map[string]string{"OAUTH_TOKEN_URL": "/token"}, "OAUTH_TOKEN_URL"},
-		{"no signing key", map[string]string{"SESSION_SIGNING_KEY": ""}, "SESSION_SIGNING_KEY"},
-		{"short signing key", map[string]string{"SESSION_SIGNING_KEY": "tooshort"}, "SESSION_SIGNING_KEY"},
+		{"an idle timeout that is not a duration", map[string]string{"SIGN_IN_IDLE_TIMEOUT": "90 days"}, "SIGN_IN_IDLE_TIMEOUT"},
+		{"an idle timeout under a second", map[string]string{"SIGN_IN_IDLE_TIMEOUT": "500ms"}, "SIGN_IN_IDLE_TIMEOUT"},
 		{"no public url", map[string]string{"PUBLIC_URL": ""}, "PUBLIC_URL"},
 		{"relative public url", map[string]string{"PUBLIC_URL": "/guard"}, "PUBLIC_URL"},
 		// PUBLIC_URL is copied into the provisioning payload as server_url, where the same https
@@ -160,16 +163,16 @@ func TestLoadRejects(t *testing.T) {
 // misconfiguration survives a maintenance window.
 func TestLoadReportsEveryProblemAtOnce(t *testing.T) {
 	validEnv(t, map[string]string{
-		"DATABASE_URL":        "",
-		"OAUTH_CLIENT_ID":     "",
-		"SESSION_SIGNING_KEY": "",
-		"PUBLIC_URL":          "",
+		"DATABASE_URL":         "",
+		"OAUTH_CLIENT_ID":      "",
+		"SIGN_IN_IDLE_TIMEOUT": "never",
+		"PUBLIC_URL":           "",
 	})
 	_, err := Load()
 	if err == nil {
 		t.Fatal("accepted a configuration missing everything")
 	}
-	for _, want := range []string{"DATABASE_URL", "OAUTH_CLIENT_ID", "SESSION_SIGNING_KEY", "PUBLIC_URL"} {
+	for _, want := range []string{"DATABASE_URL", "OAUTH_CLIENT_ID", "SIGN_IN_IDLE_TIMEOUT", "PUBLIC_URL"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error omits %q, so a deployer would need another restart to find it: %v", want, err)
 		}

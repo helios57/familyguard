@@ -87,6 +87,7 @@ func mcpSamples(t *testing.T) map[string][]map[string]any {
 		"list_audit": {none}, "whoami": {none},
 
 		"get_family": {none}, "list_parents": {none}, "list_api_keys": {none}, "get_hosted_dpc": {none},
+		"list_sign_ins":       {none},
 		"create_child":        {{"name": "Mira"}},
 		"update_child":        {with(child, "name", "Mira")},
 		"set_policy":          {with(child, "daily_limit_minutes", 90)},

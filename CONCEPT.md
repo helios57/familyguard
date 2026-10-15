@@ -161,7 +161,7 @@ backend/
   cmd/fgctl/             the CLI and MCP server over the parent API (FR-17 keys)
   internal/config/       env parsing; refuses to start on a missing or weak secret
   internal/store/        pgx queries + embedded SQL migrations
-  internal/auth/         OIDC ID-token verification, session tokens, device tokens
+  internal/auth/         OIDC ID-token verification, sign-in/device/API-key tokens
   internal/httpapi/      router, handlers, middleware, SSE hub (stream.go), console mount
   internal/policy/       policy validation and the desired-state compiler
   internal/enforce/      the pure resolver: (policy, usage, apps, now) -> DesiredState
@@ -176,7 +176,13 @@ Two principals, no third, and no default-allow branch anywhere.
 **Parent.** An ID token is verified here, never trusted: fetch the issuer's JWKS (cached by `kid`,
 TTL-bounded), check the RS256 signature, `iss`, `aud` equal to our own OAuth client ID, `exp`/`iat`,
 and `email_verified`. The email must already exist in `parents` — there is no auto-provisioning. On
-success we mint our own HS256 session token (24 h).
+success we hand out a **sign-in** (FR-29): 256 random bits whose SHA-256 is a row in
+`parent_sign_ins`. Every request resolves the token against that row and moves its `last_used_at`, so
+a sign-in lasts as long as it is used and ends after `SIGN_IN_IDLE_TIMEOUT` (90 days) without use, or
+the moment a parent ends it — from this browser's Abmelden or from *Familie › Angemeldete Geräte* on
+any other. Until 0.6.43 this was an HS256 token that ended 24 hours after sign-in whatever the parent
+did, which meant signing in every day; a signed token cannot be extended or ended once it is out, a
+row can.
 
 There are two ways to reach that verification and exactly one place that acts on it
 (`issueSession`), because a second copy of the membership check is how one path ends up skipping it:
@@ -281,7 +287,7 @@ Each file is hashed once at startup; the ETag is that hash and `Cache-Control` i
 every load revalidates and a deploy is visible immediately. Immutable caching would need hashed
 filenames, and there is no build step to produce them.
 
-The session token lives in `localStorage`, deliberately **not** in a cookie: nothing sends it
+The sign-in token lives in `localStorage`, with no expiry of its own, deliberately **not** in a cookie: nothing sends it
 automatically, so there is no CSRF surface to defend. The cost is that XSS could read it — which is
 what the CSP and the no-inline-script rule are there to prevent, and both are asserted by tests
 rather than assumed.
@@ -407,7 +413,6 @@ one restart per mistake is how a misconfiguration survives a maintenance window.
 |---|---|
 | `DATABASE_URL` | PostgreSQL DSN |
 | `OAUTH_CLIENT_ID` / `OAUTH_CLIENT_SECRET` | the Google OAuth client; the secret is required, because defaulting it to "browser sign-in off" yields a console with a button that can never work |
-| `SESSION_SIGNING_KEY` | ≥ 32 bytes; short keys are rejected, not padded |
 | `PUBLIC_URL` | absolute; the OAuth redirect and the QR payload are built from it |
 
 | Optional | Default | |
@@ -421,6 +426,7 @@ one restart per mistake is how a misconfiguration survives a maintenance window.
 | `RATE_LIMIT_FLOOD_PER_MINUTE` | 1200 | one client address, every route, before authentication — the bound on what one address can make this server do at all |
 | `RATE_LIMIT_PARENT_PER_MINUTE` | 600 | one signed-in parent, keyed by their id. Two parents on one home network no longer share a bucket, and answering a queue of waiting apps is measured against a person's own budget rather than an anonymous caller's |
 | `RATE_LIMIT_DEVICE_PER_MINUTE` | 240 | one enrolled phone, keyed by its device id. A household leaves through one address, so an address-keyed budget made a family's phones compete with each other and with the console |
+| `SIGN_IN_IDLE_TIMEOUT` | 90 days (`2160h`) | how long a parent's sign-in lasts without being used (FR-29). Every request extends it; a Go duration of at least `1s` |
 | `AUDIT_RETENTION_DAYS`, `LOCATION_RETENTION_DAYS` | 365, 365 | the owner's ruling is "keep it for at least 1 year", and it covers a child's location history too (it said 30 days until 0.6.37, which deleted most of what a parent would look back for). Both still expire by default, and a deployment may shorten either. Zero is rejected — it would mean "delete everything older than now" |
 | `FAMILY_NAME`, `ADDR`, `LOG_LEVEL`, `DPC_COMPONENT` | | |
 

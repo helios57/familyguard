@@ -38,9 +38,8 @@ APP="familyguard-smoke-app-$$"
 WORK=""
 
 # Test values. Nothing here is a credential to anything: the database lives for the length of this
-# script, and the signing key signs sessions no client will ever present.
+# script.
 PG_PASSWORD="smoke-not-a-secret"
-SESSION_KEY="smoke-signing-key-not-a-secret-0123456789"
 
 notmeasured() { echo "NOT MEASURED: $*" >&2; exit 2; }
 
@@ -181,7 +180,7 @@ refusal="$(docker run --rm "$IMAGE" 2>&1)"
 printf '%s' "$refusal" | command grep -q 'DATABASE_URL is required'
 check "an unconfigured container refuses to start, by name"
 
-printf '%s' "$refusal" | command grep -q 'SESSION_SIGNING_KEY is required'
+printf '%s' "$refusal" | command grep -q 'OAUTH_CLIENT_ID is required'
 check "…and reports every problem at once, not just the first"
 
 echo
@@ -226,7 +225,6 @@ docker run -d --name "$APP" --network "$NET" \
 	-p 127.0.0.1::8080 \
 	-e DATABASE_URL="postgres://postgres:$PG_PASSWORD@$PG:5432/postgres?sslmode=disable" \
 	-e PUBLIC_URL="https://guard.example" \
-	-e SESSION_SIGNING_KEY="$SESSION_KEY" \
 	-e OAUTH_CLIENT_ID="smoke.apps.googleusercontent.com" \
 	-e OAUTH_CLIENT_SECRET="smoke-not-a-secret" \
 	-e BOOTSTRAP_PARENT_EMAILS="parent@example.com" \

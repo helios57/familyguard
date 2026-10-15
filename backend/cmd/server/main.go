@@ -97,10 +97,6 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("oidc verifier: %w", err)
 	}
-	sessions, err := auth.NewSessionIssuer(cfg.SessionKey, cfg.SessionTTL)
-	if err != nil {
-		return fmt.Errorf("session issuer: %w", err)
-	}
 
 	signatureSum, packageSum, err := apkChecksums(cfg)
 	if err != nil {
@@ -168,7 +164,6 @@ func run() error {
 		Config:            cfg,
 		Store:             st,
 		Verifier:          verifier,
-		Sessions:          sessions,
 		Logger:            log,
 		SignatureChecksum: signatureSum,
 		PackageChecksum:   packageSum,
@@ -366,8 +361,14 @@ func maintain(ctx context.Context, st *store.Store, cfg *config.Config, log *slo
 		if err != nil {
 			log.Error("maintenance: prune locations", "error", err)
 		}
+		// A sign-in stays a row for as long as the audit log keeps the entries that name it (FR-29.5).
+		signIns, err := st.PruneSignIns(opCtx, cfg.AuditRetentionDays, cfg.SignInIdleTimeout, time.Now().UTC())
+		if err != nil {
+			log.Error("maintenance: prune sign-ins", "error", err)
+		}
 		log.Info("maintenance",
-			"commands_expired", expired, "audit_pruned", audit, "locations_pruned", locations)
+			"commands_expired", expired, "audit_pruned", audit, "locations_pruned", locations,
+			"sign_ins_pruned", signIns)
 	}
 
 	// Once at startup, so a pod that restarts more often than the interval still sweeps.

@@ -65,10 +65,11 @@ function readSession() {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const s = JSON.parse(raw);
-    // An expired token is discarded here rather than being sent and rejected: the first request of
-    // every page load would otherwise be a guaranteed 401.
-    if (!s.token || !s.expires || new Date(s.expires) <= new Date()) return null;
-    return s;
+    // No expiry is kept or checked here (FR-29.2): a sign-in lasts while it is used, and only the
+    // server knows when it was last used. One that has lapsed or been ended answers 401, and api()
+    // turns that into the sign-in screen.
+    if (!s.token) return null;
+    return { token: s.token };
   } catch (_) {
     return null;
   }
@@ -91,12 +92,36 @@ function takeSessionFromHash() {
     document.getElementById('signin-message').textContent = msg;
     return null;
   }
-  const s = { token: p.get('token'), expires: p.get('expires') };
+  const s = { token: p.get('token') };
   if (!s.token) return null;
   localStorage.setItem(SESSION_KEY, JSON.stringify(s));
   return s;
 }
 
+/* How long an unused sign-in lasts, for the sentence that says so. The server decides; this only
+   has to agree with its default (SIGN_IN_IDLE_TIMEOUT, 90 days). */
+const IDLE_DAYS = 90;
+
+/* endSession is Abmelden: the sign-in ends on the server, so a copy of the token — in another tab,
+ * a backup, a stolen phone's storage — stops working with it (FR-29.3). Not through api(), whose 401
+ * path calls signOut and would sign out twice. If the server cannot be reached, this browser is
+ * still signed out, and the message says where to finish the job. */
+async function endSession() {
+  const s = state.session;
+  let ended = !s;
+  if (s) {
+    try {
+      const res = await fetch(API + '/sign-ins/current', { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + s.token } });
+      // 401: already ended or lapsed on the server, which is what was asked for.
+      ended = res.ok || res.status === 401;
+    } catch (_) { ended = false; }
+  }
+  signOut(ended ? 'Abgemeldet.'
+    : 'Abgemeldet — aber der Server war nicht erreichbar. Beende diese Anmeldung unter Familie › Angemeldete Geräte.');
+}
+
+/* signOut forgets the session in this browser only. Called directly where the server already said
+   the sign-in is over (a 401). */
 function signOut(message) {
   localStorage.removeItem(SESSION_KEY);
   state.session = null;
@@ -394,7 +419,7 @@ function isAdmin() { return !!state.parent && (state.parent.role === 'PRIMARY_AD
 
 async function boot() {
   state.session = takeSessionFromHash() || readSession();
-  document.getElementById('signout').addEventListener('click', () => signOut('Abgemeldet.'));
+  document.getElementById('signout').addEventListener('click', () => endSession());
   document.getElementById('sheet-close').addEventListener('click', closeSheet);
   window.addEventListener('hashchange', onRoute);
 

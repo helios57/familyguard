@@ -5,11 +5,11 @@ package httpapi
 //
 // The alternative — dropping Google's Identity Services script into the console and letting it hand
 // the page an ID token — is one line of HTML and it is the reason this file exists instead. That
-// script runs with the console's own origin: it can read the session token, call the API as the
+// script runs with the console's own origin: it can read the sign-in token, call the API as the
 // parent, and change what the page shows. Redirecting to the provider and back keeps every third
 // party outside the origin, which is also what lets the console keep `script-src 'self'`.
 //
-// The session token comes back in the URL *fragment*. A query parameter would be written to every
+// The sign-in token comes back in the URL *fragment*. A query parameter would be written to every
 // access log, proxy log and Referer header between here and the browser; a fragment is never sent
 // to a server at all.
 
@@ -162,10 +162,8 @@ func (s *Server) oauthCallback(c *gin.Context) {
 		return
 	}
 
-	frag := url.Values{
-		"token":   {session.Token},
-		"expires": {session.ExpiresAt.Format(time.RFC3339)},
-	}
+	// The token only: a sign-in has no fixed end the console could act on (FR-29.2).
+	frag := url.Values{"token": {session.Token}}
 	c.Redirect(http.StatusFound, "/#"+frag.Encode())
 }
 

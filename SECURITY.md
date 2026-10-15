@@ -54,17 +54,25 @@ is one misconfigured `OIDC_ISSUER` away from being untrue.
 Only addresses in `BOOTSTRAP_PARENT_EMAILS`, or a parent an existing parent has added, can sign in.
 A verified Google account is not by itself an authorization.
 
-Session tokens are HS256 over `SESSION_SIGNING_KEY`. The key must be ≥32 bytes — the server refuses
-to start otherwise, and `NewSessionIssuer` refuses a short key again so that a caller bypassing
-config cannot weaken the MAC. Forgery resistance is covered by `TestSessionTokensAreForgeryResistant`.
+A sign-in (FR-29) is 256 bits from `crypto/rand`, handed to the browser once; the server keeps only
+its SHA-256, in `parent_sign_ins`, as it does for device tokens and API keys. Every request resolves
+the hash in **one** statement that also checks the sign-in is live (not ended, used within
+`SIGN_IN_IDLE_TIMEOUT`, 90 days by default) and moves `last_used_at` — so there is no window between
+"is it live" and "use it", and the use that proves a sign-in active is the one that extends it. The
+parent and their role are read in the same statement: a removed parent, a demoted one, or a sign-in
+ended from another device stops working on the next request.
 
-The token is also **one string**. Base64url spells a 32-byte signature in 43 characters, so its last
-character carries two bits that decode to nothing — without strict decoding the same signature has
-four spellings and the same credential has four names. `Verify` parses with `jwt.WithStrictDecoding()`
-so a non-canonical trailing bit is a rejection: the credential can be compared, logged and revoked by
-value, and "one character was changed" means the token changed. This is not a forgery boundary — an
-attacker still cannot produce a signature — and the OIDC verifier deliberately does not do it, for
-the reason given at that line.
+There is no signing key, so there is none to leak, rotate or weaken, and nothing to forge: a string is
+either the exact spelling of a live sign-in's token or it is refused. Ending one is immediate —
+Abmelden in the console ends it on the server, not only in the browser, and *Familie › Angemeldete
+Geräte* lists every live sign-in of the family so a lost phone can be signed out from elsewhere. A
+parent ends their own; the primary admin anyone's; an API key may list them and may end none
+(FR-17.2). Ended and lapsed rows are kept, unlisted, for `AUDIT_RETENTION_DAYS` and then deleted.
+
+Until 0.6.43 sessions were HS256 tokens over `SESSION_SIGNING_KEY` that ended 24 hours after sign-in.
+`TestSessionTokensAreForgeryResistant` still presents one, validly signed with the key the test suite
+used to configure, and asserts it is refused like any other string — as are a random token of the
+right shape, a real one with a character changed, added or dropped, an ended one, and a device token.
 
 Every rejected credential returns the same opaque error. A probe cannot learn *which* part of a
 token was wrong.

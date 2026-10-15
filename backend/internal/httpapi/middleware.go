@@ -23,6 +23,8 @@ const (
 	// person signed in, which is why the reader defaults to PARENT rather than requiring every
 	// handler to know about keys.
 	ctxActorKind = "fg.actor_kind"
+	// ctxSignIn is the id of the sign-in a request arrived with (FR-29). Absent for an API key.
+	ctxSignIn = "fg.sign_in"
 )
 
 // ctxAPIKeyActor is the audit actor type for a request that arrived with an API key.

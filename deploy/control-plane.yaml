@@ -28,8 +28,8 @@ spec:
       labels:
         app: familyguard-control-plane
       annotations:
-        # Rotating SESSION_SIGNING_KEY or the OAuth secret updates the Secret, and a pod that kept
-        # the old key in memory would go on accepting cookies you believe you revoked.
+        # Rotating the OAuth secret or the database password updates the Secret, and a pod that kept
+        # the old value in memory would go on using it until it restarted.
         reloader.stakater.com/auto: "true"
         # Add an annotation here carrying the SHA-256 of the APK on the host path below, and change
         # it in the same commit that replaces that file. The server hashes the APK once at startup
@@ -145,11 +145,6 @@ spec:
                 secretKeyRef:
                   name: familyguard-secret
                   key: DATABASE_URL
-            - name: SESSION_SIGNING_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: familyguard-secret
-                  key: SESSION_SIGNING_KEY
             - name: OAUTH_CLIENT_ID
               valueFrom:
                 secretKeyRef:

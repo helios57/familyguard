@@ -58,7 +58,7 @@ something else.
 
 - **GitOps.** These are plain manifests. Point Argo CD, Flux or `kubectl apply -k` at them; nothing
   here depends on which.
-- **Secret management.** The manifests name a Secret and read five keys from it. How it is
+- **Secret management.** The manifests name a Secret and read four keys from it. How it is
   materialised is yours — see `secret.example.yaml`.
 - **Pod restart on rotation.** The Deployments carry `reloader.stakater.com/auto`, which does
   nothing unless [Stakater Reloader](https://github.com/stakater/Reloader) is installed. Without it,

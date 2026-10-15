@@ -4037,7 +4037,7 @@ proven.
 | FR-26 energy: modes, push, route, self-report | 41, 42, 44, 45 | e2e `TestAPhoneReportsWhatFamilyGuardSpendsAndTheServerAnswersPerHour`, `TestFgctlAndMCPShowTheEnergyReport`, `TestTheConsoleShowsWhatFamilyGuardSpends`, `TestTheDeviceViewSaysWhetherThePhoneHoldsItsStream`, `TestTheConsoleSaysWhenAPhoneIsResting`, `TestARestingPhoneIsWokenByAPushAndOnlyThen`, `TestAServerWithoutPushSaysSoToThePhone`; JVM `PowerModeTest`, `EventStreamTest`, `UpdateScheduleTest`, `PushPolicyTest`, `ScreenRouteTest`, `FilterBypassTest`, `EnergyMeterTest`, `SynchronizerTest`. **Device:** `TestAdFreeAppsBypassTheFilterAndThePhoneReportsItsEnergy` (`energy.sh`), `TestAPhoneWithItsScreenOffLetsGoOfTheServerAndStillHearsOfChanges` (`modes.sh`), `TestARestingPhoneIsWokenByARealPush` (`push.sh`, the real FCM), `TestTheFilterCarriesOnlyDNSFiveMinutesAfterTheScreenGoesOff` (`route.sh`). **Not proven:** the battery saved on the family phones |
 | FR-27 Live | 42 | e2e `TestLiveKeepsAPhoneReportingForAWhileAndAGuardianSeesOnlyTheSession`, `TestAGuardianStartsLiveAndSeesThePosition`, `TestFgctlAndMCPStartAndStopLive`; JVM `LiveThrottleTest`. **Device:** `TestAPhoneWithItsScreenOffLetsGoOfTheServerAndStillHearsOfChanges` (`modes.sh`) — Live reached a dozing phone by its poll and streamed positions about every 10 s |
 | FR-28 Three kinds of time; asking for more | 51 | e2e `TestAChildAsksForMoreTimeAndAParentAnswersInTheConsole` (the push received and decrypted as the browser would), `TestATimeRequestIsRefusedWhereItCannotMeanAnything`, `TestAGoneBrowserIsDroppedFromWebPush`, `TestTheConsoleServiceWorkerShowsAPush`, `TestAktivitätSaysBonuszeitApartFromTheLimit`, `TestEveryAuditedActionIsWritten`; Go `TestOnlyPushServicesAreAddressed`; JVM `TimeViewTest`. **Device:** the phone tour (`tour.sh`) asks from the button, and the answer arrives as a notification |
-| NFR-1/2 auth | 2.4, 3.x | e2e `TestBrowserSignInJourney`, `TestBrowserSignInFailureModes`, `TestIDTokenIsVerifiedNotTrusted`, `TestSessionTokensAreForgeryResistant`, `TestOneDeviceCannotActOnAnother`; `TestVerifyRejects`, `TestVerifyAcceptsGenuineToken`, `TestVerifyDoesNotFetchJWKSPerToken`, `TestUnknownKidRefreshIsRateLimited`, `TestRefreshKeepsCacheOnBadDocument`, `TestSessionRejects`, `TestSessionRoundTrip`, `TestSessionIssuerRefusesWeakKey`, `TestBearerToken` |
+| NFR-1/2 auth | 2.4, 3.x | e2e `TestBrowserSignInJourney`, `TestBrowserSignInFailureModes`, `TestIDTokenIsVerifiedNotTrusted`, `TestSessionTokensAreForgeryResistant`, `TestOneDeviceCannotActOnAnother`; `TestVerifyRejects`, `TestVerifyAcceptsGenuineToken`, `TestVerifyDoesNotFetchJWKSPerToken`, `TestUnknownKidRefreshIsRateLimited`, `TestRefreshKeepsCacheOnBadDocument`, `TestBearerToken`; sign-ins (FR-29, Phase 58): e2e `TestASignInLastsWhileItIsUsedAndEndsWhenItIsNot`, `TestSigningOutEndsTheSignInOnTheServer`, `TestEveryParentSeesTheFamilysSignInsAndEndsTheirOwn`, `TestTheConsoleStaysSignedInAndSignsOutOnTheServer`; `TestSignInLabelNamesTheBrowserAndSystem`. (`TestSessionRejects`, `TestSessionRoundTrip` and `TestSessionIssuerRefusesWeakKey` went with the JWT issuer in 0.6.43.) |
 | NFR-3 no fabricated success | 3.6, 5.3, 5.5 | `TestEveryReadFailureIsReported`; and the mutation sweeps — 5.3's 39 breaks and 5.5's 39, each one a place the code could have believed a return code instead of reading state back |
 | NFR-4 persistence | 2.2 | e2e `TestStateSurvivesRestart` |
 | NFR-5 no fake data | 3.x | e2e `TestAFreshSystemShowsAsEmpty` — three independent halves, because the requirement fails in three places: *structural* (the embedded migrations are scanned for `INSERT INTO`/`COPY … FROM` before a server starts, and the **served** console bytes for baked-in markup and literal UUIDs), *behavioural* (a fresh server reports only its configured family and parents, 11 collections come back as the literal `[]` rather than `null`, and every computed field of `desired-state` is non-null), and *epistemic* (a device that has never reported telemetry has `battery_level` **absent or null**, never `0` — with a negative control that a heartbeat of real zeros still reads back as zeros). Plus a two-directional growth ratchet over `internal/store/*.go`, so a 16th collection or a renamed one stops the suite. **Calibrated 11/11**, including both of the test's own fail-closed branches — see the record above. `TestDeviceLifecycleJourney` remains corroborating evidence, not the assertion |
@@ -9358,3 +9358,74 @@ and on a machine whose session bus is up that call waited ~40 s. The harness now
 `DBUS_SESSION_BUS_ADDRESS=disabled:` — CI's environment, which has no bus — and the test is green in
 2.3 s. The console tour now photographs the catalog sheet with a family app and two followed Play apps
 (one published, one waiting); at 360 px the remove button overflowed the sheet and is now "Entfolgen".
+
+## Phase 58 — stay signed in (0.6.43, FR-29)
+
+The owner asked for a parent app, and when asked what it should add over the console on the home
+screen, the answer was one thing: *"that I don't have to login but stay logged in"*. The cause was not
+the lack of an app. A parent's session was an HS256 token that ended 24 hours after sign-in whatever
+the parent did, and the console threw it away at that moment — so every parent signed in every day,
+in a browser or in any wrapper around one.
+
+**Ruling: a sign-in is a row, not a signed token.** The alternative proposed first — keep the 24-hour
+token and add a long-lived "device token" to renew it silently — gives the same experience with two
+credentials instead of one, and still cannot be ended from another device before it expires. A row
+can: `parent_sign_ins` (migration 0029) holds the SHA-256 of 256 random bits, a label, `created_at`,
+`last_used_at` and `ended_at`. Every request resolves the hash in one statement that checks the
+sign-in is live and moves `last_used_at` (`ParentBySignInHash`), so the use that proves a sign-in
+active is what extends it, and there is no gap between the check and the use. A sign-in unused for
+`SIGN_IN_IDLE_TIMEOUT` (default 90 days, confirmed by the owner) lapses. There is no signing key any
+more: `SESSION_SIGNING_KEY` is read by nothing, `NewSessionIssuer` and its tests are gone, and the
+`golang-jwt` dependency remains only for verifying Google's ID tokens. **What it costs:** every console
+signed in before the deploy holds a JWT, which is now refused like any other string — one last sign-in
+per browser after 0.6.43.
+
+**Seeing and ending sign-ins.** `GET /sign-ins` lists every live sign-in of the family with the
+caller's own marked `current` (an API key has none). `DELETE /sign-ins/current` is the console's
+Abmelden, which now ends the sign-in on the server before forgetting it locally; `DELETE
+/sign-ins/{id}` ends one from elsewhere — a parent's own, or anyone's for the primary admin. Both
+deletes are console-only (an API key gets `api_key_forbidden`), audited as `SIGN_IN_ENDED`. The
+console's *Familie* tab lists them as *Angemeldete Geräte*, labelled from the User-Agent ("Chrome ·
+Android"), with this browser marked *Dieses Gerät*. A guardian, who sees only the overview, signs out
+from the header button the same way. The browser redirect no longer carries an expiry, and the
+console keeps none. Maintenance deletes ended and lapsed rows after `AUDIT_RETENTION_DAYS`. MCP:
+`list_sign_ins`.
+
+### 58.1 — tests and calibration
+
+E2E (`tests/e2e/sign_in_test.go`): a sign-in used every second outlives a 3-second idle timeout three
+times over, then left alone for longer than the timeout is refused, and a new sign-in works; Abmelden
+via the API ends that sign-in and not the same parent's other one; every parent sees the family's
+sign-ins with exactly one marked current, a guardian cannot end the primary's (403, and the sign-in
+still works), the primary admin can, an ended one is gone from the list and 404s, an API key can list
+and cannot end, removing a parent ends their sign-ins; and in a real Chrome the console survives a
+reload with no expiry stored, lists this browser as *Dieses Gerät* with "Chrome" in its label, and its
+Abmelden makes a copy of the token taken before the click answer 401. All four were red before the
+implementation existed (`GET /me` 200 after the idle window; `/sign-ins/current` and `/sign-ins` 404;
+no `[data-signins]`). `TestSessionTokensAreForgeryResistant` now refuses a random token of the right
+shape, a real one with its first or last character changed, one added, one dropped, an ended one, a
+JWT validly signed with the old e2e key, a device token and the empty string — and the real token
+still answers 200 afterwards. `TestEveryAuditedActionIsWritten` drives `SIGN_IN_ENDED`;
+`TestStartupRefusesBadConfiguration` and the config unit tests refuse a malformed or sub-second
+`SIGN_IN_IDLE_TIMEOUT`; `TestAGuardianMayCallExactlyTheGuardianAllowlist` went red on the three new
+routes until the allowlist named them.
+
+Probes, each red on its own assertion and then restored (checked with `cmp` against a saved copy):
+
+| probe | test | result |
+|---|---|---|
+| `last_used_at` not moved by a use (`= last_used_at + ($2 - $2)`) | `TestASignInLasts…` | **red** at the use loop, after ~3 s: `GET /me: expected 200, got 401` |
+| the idle cutoff passed as 100 years | `TestASignInLasts…` | **red**: *a sign-in idle for longer than 3s answered 200* |
+| the auth lookup ignores `ended_at` | forgery, signing-out, family-list, console | **red ×4**, each naming the ended token answering 200 |
+| the console's Abmelden calls a path that does not exist | `TestTheConsoleStaysSignedIn…` | **red**: *the token from before Abmelden still answers 200* |
+| a guardian allowed to end another parent's sign-in | `TestEveryParentSees…` | **red**: *answered 204, expected 403* |
+| Edge's tokens removed from the label table | `TestSignInLabelNamesTheBrowserAndSystem` | **red**: `Edge · Windows` read as `Chrome · Windows` |
+
+Two first attempts are **not** counted: `$3 - interval '100 years'` and `NULL + ($2 - $2)` were SQL
+type errors, so they reddened every request (a 401 on the first use, a 500 on the delete) rather than
+the assertion they were aimed at — a compile error wearing a red. Each was redone as a value-only
+change, above. **6 probes, 6 red. Cumulative: 519.**
+
+**Not proven here:** the 90-day lapse itself, on the real clock — the e2e proves the mechanism with a
+3-second timeout, and the default is a configuration value.
+

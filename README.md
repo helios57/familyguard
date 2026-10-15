@@ -104,12 +104,12 @@ Two version numbers here are separate decisions, and only one of them reaches a 
 ## Running the control plane locally
 
 The server refuses to start on an incomplete or weak configuration rather than defaulting its way
-into one — a 16-byte session key is rejected, not padded.
+into one — a bootstrap address that is not an email, or a plaintext `PUBLIC_URL`, is refused, not
+corrected.
 
 | Variable | Required | Meaning |
 |---|---|---|
 | `DATABASE_URL` | yes | pgx connection string; migrations run under an advisory lock at startup |
-| `SESSION_SIGNING_KEY` | yes | ≥32 bytes; signs parent session tokens |
 | `OAUTH_CLIENT_ID` | yes | Google OAuth client the ID tokens must be addressed to |
 | `OAUTH_CLIENT_SECRET` | yes | for the authorization-code exchange |
 | `PUBLIC_URL` | yes | the externally reachable base URL; the QR payload is minted against it |
@@ -119,9 +119,9 @@ into one — a 16-byte session key is rejected, not padded.
 | `APK_URL` | no | overrides the download URL in the QR when the APK is served elsewhere |
 | `ALLOWED_ORIGINS` | no | exact-origin CORS allowlist; empty means same-origin only |
 | `TRUSTED_PROXIES` | no | who may set `X-Forwarded-For`; empty means nobody |
+| `SIGN_IN_IDLE_TIMEOUT` | no | how long a parent stays signed in without using the console; default `2160h` (90 days) |
 
-Three of those are secrets — `SESSION_SIGNING_KEY`, `OAUTH_CLIENT_SECRET` and the password inside
-`DATABASE_URL`. Never put a real value for any of them on a command line, in a shell history file or
+Two of those are secrets — `OAUTH_CLIENT_SECRET` and the password inside `DATABASE_URL`. Never put a real value for any of them on a command line, in a shell history file or
 in a commit; in the cluster they arrive through the Secret described in
 [`deploy/README.md`](deploy/README.md), and nowhere in this repository is one of them written down.
 See [SECURITY.md](SECURITY.md).

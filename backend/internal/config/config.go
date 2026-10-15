@@ -18,9 +18,10 @@ import (
 	"github.com/helios57/familyguard/backend/internal/provisioning"
 )
 
-// MinSessionKeyBytes is the smallest accepted HMAC signing key. 32 bytes matches the SHA-256
-// output size used by HS256; anything shorter weakens the MAC.
-const MinSessionKeyBytes = 32
+// DefaultSignInIdleTimeout is how long a parent's sign-in survives without a single request
+// (FR-29.2). Long enough that a parent who opens the console once a month never signs in again;
+// short enough that a phone lost in a drawer locks itself out within a season.
+const DefaultSignInIdleTimeout = 90 * 24 * time.Hour
 
 // Default OIDC endpoints. They are configurable so the end-to-end suite can drive the real
 // verification code against an issuer it controls, rather than mocking the verifier away.
@@ -46,8 +47,8 @@ type Config struct {
 	OAuthClientSecret string
 	OAuthAuthURL      string
 	OAuthTokenURL     string
-	SessionKey        []byte
-	SessionTTL        time.Duration
+	// SignInIdleTimeout ends a parent's sign-in that has not been used for this long (FR-29.2).
+	SignInIdleTimeout time.Duration
 	BootstrapEmail    []string
 
 	AllowedOrigins []string
@@ -195,7 +196,7 @@ func Load() (*Config, error) {
 		FamilyName:        envOr("FAMILY_NAME", "Family"),
 		DPCComponent:      envOr("DPC_COMPONENT", "io.github.helios57.familyguard/.admin.AdminReceiver"),
 		LogLevel:          envOr("LOG_LEVEL", "info"),
-		SessionTTL:        24 * time.Hour,
+		SignInIdleTimeout: DefaultSignInIdleTimeout,
 		CommandTTL:        24 * time.Hour,
 		// Two passive polls and a margin (FR-26.2): a phone asleep between polls is resting, not gone.
 		// A phone that holds its stream is online whatever this says — see httpapi.devices.
@@ -282,14 +283,12 @@ func Load() (*Config, error) {
 		}
 	}
 
-	key := os.Getenv("SESSION_SIGNING_KEY")
-	switch {
-	case key == "":
-		fail("SESSION_SIGNING_KEY is required")
-	case len(key) < MinSessionKeyBytes:
-		fail("SESSION_SIGNING_KEY must be at least %d bytes, got %d", MinSessionKeyBytes, len(key))
-	default:
-		c.SessionKey = []byte(key)
+	if v := os.Getenv("SIGN_IN_IDLE_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err != nil || d < time.Second {
+			fail("SIGN_IN_IDLE_TIMEOUT must be a duration of at least 1s, got %q", v)
+		} else {
+			c.SignInIdleTimeout = d
+		}
 	}
 
 	pub := os.Getenv("PUBLIC_URL")

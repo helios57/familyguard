@@ -954,6 +954,30 @@ for more time"*.
   screen first, and the console says so.
 - FR-28.5 `fgctl today <child>` lists the day's requests, and the MCP tool `answer_time_request`
   answers one (FR-17.5).
+
+### FR-29 Staying signed in (2026-10-15)
+The owner, 2026-10-15, on a parent app: *"It should add, that I don't have to login but stay logged
+in"*. A console session used to be a signed token that ended after 24 hours whatever the parent did,
+so a parent signed in with Google once a day.
+
+- FR-29.1 **A sign-in is a server-side record.** Signing in issues a random 256-bit token; the server
+  keeps only its SHA-256, with the parent, a label naming the device (browser and system, read from
+  the User-Agent at sign-in), when it was made and when it was last used. Nothing about the parent is
+  inside the token, and no signing key exists to leak or rotate.
+- FR-29.2 **It lasts while it is used.** A sign-in stops working after `SIGN_IN_IDLE_TIMEOUT`
+  (default 90 days) without a request; every request moves its last use. A parent who opens the
+  console once a month never signs in again; a phone lost in a drawer locks itself out.
+- FR-29.3 **Signing out ends it on the server**, not only in the browser: the token is refused from
+  that moment, wherever a copy of it is.
+- FR-29.4 **Every parent sees every sign-in of the family** (Familie › *Angemeldete Geräte*: whose,
+  which device, since when, last used, which one is this browser), the way a co-parent sees every API
+  key (FR-17). A parent ends any of their own; a primary admin ends anyone's. Ending one is a
+  credential action, so an API key may list sign-ins but not end one (FR-17.2). Audited as
+  `SIGN_IN_ENDED`, with whose it was and whether the holder signed themself out.
+- FR-29.5 Removing a parent ends their sign-ins with them, and a role change applies to the next
+  request (FR-20). A sign-in that has been ended or idle for longer than the audit retention is
+  deleted; until then it is kept, unlisted, so its last use stays answerable.
+
 ---
 
 ## 4. Non-functional requirements
