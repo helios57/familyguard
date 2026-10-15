@@ -114,6 +114,13 @@ func mcpSamples(t *testing.T) map[string][]map[string]any {
 		"list_managed_apps":    {child},
 		"set_managed_app": {with(child, "package_name", placeholderPackage, "managed", true),
 			with(child, "package_name", placeholderPackage, "managed", false)},
+		"list_family_managed_apps": {none},
+		"set_family_managed_app": {{"package_name": placeholderPackage, "managed": true},
+			{"package_name": placeholderPackage, "managed": false}},
+		"list_play_sources": {none},
+		"set_play_source": {{"package_name": placeholderPackage, "follow": true, "tracks": []string{"production"}},
+			{"package_name": placeholderPackage, "follow": false}},
+		"sync_play": {none},
 	}
 }
 

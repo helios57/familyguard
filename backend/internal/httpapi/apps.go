@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -187,10 +188,15 @@ func (s *Server) deleteApp(c *gin.Context) {
 // that must be visible: the phone will do nothing about a declaration it cannot fulfil, and without
 // this the console would show the app as assigned and the parent would wait for an install that has
 // no bytes behind it.
+//
+// ForAllChildren marks a package that reaches this child through the family's set (FR-16.7), so a
+// parent who looks at one child sees every app that phone will install, and which of them is
+// withdrawn at the family level rather than here.
 type managedAppView struct {
-	PackageName string     `json:"package_name"`
-	Available   bool       `json:"available"`
-	App         *store.App `json:"app,omitempty"`
+	PackageName    string     `json:"package_name"`
+	Available      bool       `json:"available"`
+	App            *store.App `json:"app,omitempty"`
+	ForAllChildren bool       `json:"for_all_children,omitempty"`
 }
 
 func (s *Server) managedAppViews(c *gin.Context, packages []string) ([]managedAppView, bool) {
@@ -222,9 +228,29 @@ func (s *Server) listManagedApps(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
+	family, err := s.store.FamilyManagedPackages(c.Request.Context())
+	if err != nil {
+		s.fail(c, err)
+		return
+	}
+	own := map[string]bool{}
+	for _, p := range packages {
+		own[p] = true
+	}
+	forAll := map[string]bool{}
+	for _, p := range family {
+		forAll[p] = true
+		if !own[p] {
+			packages = append(packages, p)
+		}
+	}
+	slices.Sort(packages)
 	views, ok := s.managedAppViews(c, packages)
 	if !ok {
 		return
+	}
+	for i := range views {
+		views[i].ForAllChildren = forAll[views[i].PackageName]
 	}
 	c.JSON(http.StatusOK, gin.H{"managed_apps": views})
 }
@@ -243,13 +269,7 @@ func (s *Server) declareManagedApp(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if _, err := s.store.LatestApp(c.Request.Context(), pkg); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			failWith(c, http.StatusBadRequest, "unknown_package",
-				"no version of "+pkg+" is registered; upload it first")
-			return
-		}
-		s.fail(c, err)
+	if !s.declarable(c, pkg) {
 		return
 	}
 	if err := s.store.DeclareManagedApp(c.Request.Context(), childID, pkg); err != nil {

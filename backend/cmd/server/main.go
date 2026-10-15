@@ -26,6 +26,7 @@ import (
 	"github.com/helios57/familyguard/backend/internal/config"
 	"github.com/helios57/familyguard/backend/internal/fgctldist"
 	"github.com/helios57/familyguard/backend/internal/httpapi"
+	"github.com/helios57/familyguard/backend/internal/play"
 	"github.com/helios57/familyguard/backend/internal/provisioning"
 	"github.com/helios57/familyguard/backend/internal/push"
 	"github.com/helios57/familyguard/backend/internal/store"
@@ -146,6 +147,23 @@ func run() error {
 		log.Info("push: off (no FCM_CREDENTIALS); phones poll every 5 minutes")
 	}
 
+	// FR-16.8: Google Play access is on exactly when a service-account key is configured. A key
+	// that will not load refuses to start, for the same reason as push: running with it silently
+	// off would leave every followed app un-updated with nothing to say why.
+	var playClient *play.Client
+	if cfg.PlayServiceAccount != "" {
+		creds, err := push.DecodeCredentials(cfg.PlayServiceAccount)
+		if err != nil {
+			return fmt.Errorf("play: %w", err)
+		}
+		if playClient, err = play.New(ctx, creds, cfg.PlayEndpoint); err != nil {
+			return err
+		}
+		log.Info("play: on", "account", playClient.Account(), "interval", cfg.PlaySyncInterval.String())
+	} else {
+		log.Info("play: off (no PLAY_SERVICE_ACCOUNT); no app follows Google Play")
+	}
+
 	srv, err := httpapi.New(httpapi.Deps{
 		Config:            cfg,
 		Store:             st,
@@ -158,6 +176,7 @@ func run() error {
 		FgctlCatalog:      cli,
 		Push:              sender,
 		PushOptions:       pushOptions,
+		Play:              playClient,
 	})
 	if err != nil {
 		return fmt.Errorf("server: %w", err)
@@ -190,6 +209,7 @@ func run() error {
 
 	go maintain(ctx, st, cfg, log)
 	go scanCatalog(ctx, srv.Catalog(), log)
+	go srv.RunPlaySync(ctx)
 
 	log.Info("listening",
 		"addr", listener.Addr().String(), "public_url", cfg.PublicURL.String(), "version", version)

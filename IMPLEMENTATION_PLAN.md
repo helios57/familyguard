@@ -9273,3 +9273,88 @@ carries the icon; the self-hosted APK's still has all three.
 
 **Not proven:** that Play's review accepts the bundle and the listing's declarations — that is
 established only by the upload.
+
+
+## Phase 57 — every child, and builds from Google Play (0.6.42, FR-16.7, FR-16.8)
+
+Two things a parent could not say before: "every child has this app, including the one I add next
+year", and "this app comes from Google Play — keep it current". Both were possible only by hand: a
+switch per child, and an upload per release.
+
+**The family's set.** `family_managed_apps` is a second declared set beside `child_managed_apps`, not a
+flag copied onto every child: a row per child would make "every child" a fact written N times, and the
+child created next month would not be one of them. A child's effective set is the union, computed in
+`ManagedAppsForChild` — where the phone's policy is computed — so it cannot go stale for a child nobody
+remembered. Declaring or withdrawing a family app bumps every child's policy in the same transaction.
+Withdrawing it leaves a child's own declaration alone; the two are separate decisions, and the console
+shows a family app on the child's screen as on and greyed out, marked as the family's.
+
+**Play as a source of builds.** `play_sources` holds one row per followed package: the tracks to look
+at, a label, and the result of the last check (when, the published version Play reported, the last
+error) — "followed" and "readable" are different facts and the console shows both. `internal/play` is a
+small client for the Android Publisher API (service-account JWT via `x/oauth2/google`): the releases of
+each track, only `RELEASE_LIFECYCLE_STATE_PUBLISHED` taken — a release in review is one Google has not
+finished checking — the newest across the tracks; then `generatedApks` for that version code and its
+**universal APK**, which is the file Play signs and serves, never a rebuild. The download goes through
+the catalog's own path (`RegisterExpecting`): same parser, same size limit, same signer pin, plus the
+expectation that the file is the package, version code and signing certificate Play named (Play reports
+the certificate as colon-separated uppercase hex; normalised, it is what the APK parser reads). A file
+that is not what Play named is refused and the catalog is untouched. A version not newer than the
+catalog's is not fetched at all, so a check that finds nothing new costs two small API calls.
+
+A new build is audited (`PLAY_BUILD_FETCHED`, actor `SYSTEM`), every child that declares the package —
+own or family — gets a policy bump, and every one of their phones is told; an unheard phone is woken by
+FCM like for any policy change. The phone installs it under the FR-16.4 window: `no_install_apps` is
+lifted for the seconds of the install and restored, so a child still cannot install anything. The sync
+runs every `PLAY_SYNC_INTERVAL` (1 h), after a `PUT /play-sources/{package}` for that package, and on
+`POST /play-sources/sync`; runs are serialised. A package followed on Play but with no build yet is
+declarable and reads as waiting.
+
+**Least privilege.** The server is meant to hold a key that can read and nothing else — a service
+account of its own, invited in the Play Console for the apps it follows — never the release pipeline's
+publisher key. `PLAY_SERVICE_ACCOUNT` without `APK_DIR`, or a key that does not parse, refuses to start.
+
+MCP: `list_family_managed_apps`, `set_family_managed_app`, `list_play_sources`, `set_play_source`,
+`sync_play`. The console's catalog sheet has a *For every child* section and a *From Google Play*
+section (a Play link is accepted as well as a package name).
+
+### 57.1 — tests and calibration
+
+`internal/play`: a fake Google that verifies the JWT's RS256 signature, issuer and scope; 5 tests
+(published filter across tracks, nothing published, the universal APK and its signer normalised, no
+universal APK, the 401/403 text naming the Play Console). E2E (`tests/e2e/play_test.go`, a real server,
+a real PostgreSQL, the fake Google serving real fixture APKs): a followed app reaches every child —
+including one created afterwards — and a newly published release replaces it on the next sync with every
+child's policy bumped; the family set and a child's own declaration are separate decisions; a build that
+is not what Play named (wrong signer) is refused and the catalog unchanged; the sync runs by itself on
+its interval; without access the source records the error and the console says so.
+`TestMCPCoversEveryParentRoute` was red on the seven new routes until the tools existed.
+
+Probes, each red on its intended assertion and then restored: the published filter removed, the 403
+text without the Play Console, the signer not normalised (unit); the family union dropped from
+`ManagedAppsForChild`, the published filter removed in the server, the expectation not passed to
+`RegisterExpecting`, a sync that re-fetches an unchanged version, a new build without the policy bump
+(e2e). **8 probes, 8 red. Cumulative: 513.**
+
+**Not proven here:** which Play Console permission the `generatedApks` download needs — Google
+documents the OAuth scope, not the Console permission — and so whether a read-only invitation is
+enough; that is measured with the reader account in production.
+
+**Measured on API 37 (familyguard37), because Google's APK carries a signer older phones never
+read:** the universal APK Play generates is signed v2 + v3.0 with the app-signing certificate *and* v3.2
+(minSdk 37) with a hybrid RSA + ML-DSA pair, with no rotation lineage. Installed on API 37,
+`dumpsys package` reports the current signer as the ML-DSA certificate (`36e8317e…`) and the app-signing
+certificate (`ad4a4061…`, the one Play's `certificateSha256Hash` names) only among the past signatures.
+That is harmless here, and the reason is worth keeping: the DPC never compares a download with the
+server's pin. It compares the archive with the installed package, both read by the same platform
+verifier on the same phone, so on API 37 both sides read the ML-DSA certificate and on older phones both
+read the app-signing one. The pin against Play's word is the server's (`RegisterExpecting`). A DPC that
+one day compares a server-provided signer must accept the expected certificate from the signing
+history, or every Android 17 phone refuses every Play build.
+
+**The service-worker test was red locally on an untouched tree** (`TestTheConsoleServiceWorkerShowsAPush`,
+3 of 3): since Chrome 155 `showNotification` goes to the desktop's notification service over D-Bus,
+and on a machine whose session bus is up that call waited ~40 s. The harness now starts Chrome with
+`DBUS_SESSION_BUS_ADDRESS=disabled:` — CI's environment, which has no bus — and the test is green in
+2.3 s. The console tour now photographs the catalog sheet with a family app and two followed Play apps
+(one published, one waiting); at 360 px the remove button overflowed the sheet and is now "Entfolgen".

@@ -353,7 +353,25 @@ type App struct {
 const (
 	AppSourceNode   = "NODE"
 	AppSourceUpload = "UPLOAD"
+	// AppSourcePlay is a build the server fetched from Google Play itself (FR-16.8): Google's own
+	// signed universal APK, byte-identical to what Play hands a phone.
+	AppSourcePlay = "PLAY"
 )
+
+// PlaySource is one package the server follows on Google Play (FR-16.8).
+//
+// CheckedAt, PublishedVersion and LastError describe the last check, not the source: "the server
+// follows this app" and "the server has been able to read it" are different facts, and the console
+// shows both.
+type PlaySource struct {
+	PackageName      string     `json:"package_name"`
+	Tracks           []string   `json:"tracks"`
+	Label            string     `json:"label"`
+	AddedAt          time.Time  `json:"added_at"`
+	CheckedAt        *time.Time `json:"checked_at,omitempty"`
+	PublishedVersion *int64     `json:"published_version,omitempty"`
+	LastError        string     `json:"last_error"`
+}
 
 // ErrSignerChanged is returned when a package is registered under a different key from the one
 // pinned at its first registration (FR-16.4). It is deliberately distinct from ErrConflict: a

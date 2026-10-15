@@ -881,6 +881,59 @@ Things worth knowing before you rely on it:
 - Bedtime, the daily limit and app rules all still apply to a managed app. Installing something is
   not exempting it.
 
+### Every child at once
+
+Apps → *Manage catalog* → **For every child** has one switch per catalog app (FR-16.7). On means
+every child's phone installs it, **including a child you add later**, with nothing done for them.
+On a child's own Apps screen such an app shows its switch on and greyed out, marked as the family's:
+you withdraw it for the family, not per child. Withdrawing it there removes it from every child that
+does not also have it switched on individually.
+
+### Apps from Google Play
+
+Instead of uploading, the server can follow an app on Google Play and fetch every release Google
+**publishes** (FR-16.8). It downloads Google's own universal APK — the file Play itself signs and
+serves — never a rebuilt one, and refuses the file unless it is the package, version and signing
+certificate Play named for it. A release still in Google's review is not taken.
+
+| Variable | Default | What it is |
+|---|---|---|
+| `PLAY_SERVICE_ACCOUNT` | *(unset — feature off)* | a Google service-account key, JSON or base64 of it — from a Secret. Requires `APK_DIR`. |
+| `PLAY_SYNC_INTERVAL` | `1h` | how often the server looks for a newly published release |
+| `PLAY_ENDPOINT` | `https://androidpublisher.googleapis.com` | for benches only |
+
+The log says `play: on` with the account, or `play: off (no PLAY_SERVICE_ACCOUNT)`.
+
+Setting it up:
+
+1. **Create a service account for reading only** — not the key your release pipeline publishes
+   with. In the Google Cloud project linked to your Play developer account (Play Console → Setup →
+   API access):
+   `gcloud iam service-accounts create familyguard-play-reader --project <project>` and
+   `gcloud iam service-accounts keys create key.json --iam-account familyguard-play-reader@<project>.iam.gserviceaccount.com`.
+   Put the key in your secret store and give the server the base64 of it as `PLAY_SERVICE_ACCOUNT`;
+   delete `key.json`.
+2. **Invite it in the Play Console** (Users and permissions → Invite new users → its address) with
+   access to the apps it should follow, and **View app information (read-only)**. Google documents
+   the scope these calls need, not the Console permission, so if the console shows *"Google Play
+   refused access (403)"* for an app after the invite has had a few minutes to take effect, that
+   permission was not enough for the APK download and the error names the app it failed on.
+3. **Follow the app**: Apps → *Manage catalog* → **From Google Play** → the package name (a Play
+   link works too), the tracks, a name → Follow. *Production* takes only the public release;
+   *Production and closed testing* also takes a published closed-testing release, which is how an
+   app you distribute to your own testers reaches the children's phones.
+4. Switch it on for a child, or for every child. A followed app can be switched on before Google has
+   published any build of it; it then reads as waiting and installs itself when there is one.
+
+From then on nothing needs doing: a new published release is in the catalog within one interval and
+on the phones within minutes of that. The phone lifts its install restriction only for the seconds of
+the install and puts it back, so the child still cannot install anything. Each followed app shows
+when it was last checked, the published version Play reported, and the last error — *"followed"* and
+*"readable"* are different facts, and only the second one installs anything.
+
+Without `PLAY_SERVICE_ACCOUNT` you can still follow apps; nothing is fetched and the section says why.
+You can also fetch a published build yourself and upload it — the same bytes, the same pin.
+
 ## Getting the vendor's software off the phones
 
 **Family → Apps → "Blocked for everyone".** One list, applied to every child, including any added

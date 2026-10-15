@@ -158,6 +158,14 @@ type Config struct {
 	FCMSenderID      string
 	FCMEndpoint      string
 
+	// FR-16.8: builds from Google Play. PlayServiceAccount is a service-account key (JSON or base64
+	// of it) that the app's developer has given read access in the Play Console; absent, the server
+	// follows nothing on Play and says so. PlaySyncInterval is how often it looks for a new published
+	// release. PlayEndpoint is for benches.
+	PlayServiceAccount string
+	PlayEndpoint       string
+	PlaySyncInterval   time.Duration
+
 	// WebPushExtraHosts are host[:port] values a parent browser's push address may name besides the
 	// browsers' own push services (FR-28.4), over http too — for a bench that receives its own
 	// pushes, never for a deployment: the address is a parent's input and the request leaves the
@@ -231,6 +239,20 @@ func Load() (*Config, error) {
 	c.FCMEndpoint = envOr("FCM_ENDPOINT", "https://fcm.googleapis.com")
 	if c.FCMCredentials != "" && (c.FCMApplicationID == "" || c.FCMAPIKey == "" || c.FCMSenderID == "") {
 		fail("FCM_CREDENTIALS is set, so FCM_APPLICATION_ID, FCM_API_KEY and FCM_SENDER_ID are required too")
+	}
+
+	c.PlayServiceAccount = os.Getenv("PLAY_SERVICE_ACCOUNT")
+	c.PlayEndpoint = envOr("PLAY_ENDPOINT", "https://androidpublisher.googleapis.com")
+	c.PlaySyncInterval = time.Hour
+	if v := os.Getenv("PLAY_SYNC_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err != nil || d < time.Second {
+			fail("PLAY_SYNC_INTERVAL must be a duration of at least 1s, got %q", v)
+		} else {
+			c.PlaySyncInterval = d
+		}
+	}
+	if c.PlayServiceAccount != "" && c.APKDir == "" {
+		fail("PLAY_SERVICE_ACCOUNT is set but APK_DIR is not: a build fetched from Google Play has nowhere to be kept")
 	}
 
 	for _, h := range strings.Split(os.Getenv("WEB_PUSH_EXTRA_HOSTS"), ",") {

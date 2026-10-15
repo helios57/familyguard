@@ -20,6 +20,7 @@ import (
 	"github.com/helios57/familyguard/backend/internal/config"
 	"github.com/helios57/familyguard/backend/internal/enforce"
 	"github.com/helios57/familyguard/backend/internal/fgctldist"
+	"github.com/helios57/familyguard/backend/internal/play"
 	"github.com/helios57/familyguard/backend/internal/policy"
 	"github.com/helios57/familyguard/backend/internal/provisioning"
 	"github.com/helios57/familyguard/backend/internal/push"
@@ -66,6 +67,9 @@ type Deps struct {
 	// same Firebase project, sent with the policy; nil exactly when Push is.
 	Push        *push.Sender
 	PushOptions *push.Options
+	// Play reads Google Play for the packages the family follows (FR-16.8); nil is no Play access,
+	// which the console shows rather than hides.
+	Play *play.Client
 
 	// FgctlCatalog is the CLI builds this deployment hosts, scanned at startup. Nil means it hosts
 	// none, which is reported as "hosted": false rather than as an error -- a control plane is
@@ -79,6 +83,9 @@ type Server struct {
 	pushOptions *push.Options
 	pushMu      sync.Mutex
 	pushLast    map[uuid.UUID]time.Time
+
+	play   *play.Client
+	playMu sync.Mutex
 
 	cfg      *config.Config
 	store    *store.Store
@@ -134,6 +141,7 @@ func New(d Deps) (*Server, error) {
 	srv := &Server{
 		push:              d.Push,
 		pushOptions:       d.PushOptions,
+		play:              d.Play,
 		pushLast:          map[uuid.UUID]time.Time{},
 		cfg:               d.Config,
 		store:             d.Store,
@@ -350,6 +358,16 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.GET("/children/:id/managed-apps", admins, s.listManagedApps)
 	p.PUT("/children/:id/managed-apps/:package", admins, s.declareManagedApp)
 	p.DELETE("/children/:id/managed-apps/:package", admins, s.withdrawManagedApp)
+	// FR-16.7: an application every child has, including a child added later.
+	p.GET("/family/managed-apps", admins, s.listFamilyManagedApps)
+	p.PUT("/family/managed-apps/:package", admins, s.declareFamilyManagedApp)
+	p.DELETE("/family/managed-apps/:package", admins, s.withdrawFamilyManagedApp)
+	// FR-16.8: builds fetched from Google Play. Following a package is the same authority as
+	// uploading it: whatever Google publishes for it next lands on the children's phones.
+	p.GET("/play-sources", admins, s.listPlaySources)
+	p.PUT("/play-sources/:package", admins, s.putPlaySource)
+	p.DELETE("/play-sources/:package", admins, s.deletePlaySource)
+	p.POST("/play-sources/sync", admins, s.syncPlaySources)
 
 	// API keys (FR-17). Minting one hands out this family's whole parent surface, so it is
 	// PRIMARY_ADMIN only — the same bar as adding a parent, which is what it amounts to.

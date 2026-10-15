@@ -139,7 +139,8 @@ func (s *Store) ManagedPackages(ctx context.Context, childID uuid.UUID) ([]strin
 	return out, rows.Err()
 }
 
-// ManagedAppsForChild returns the highest version of each application a child is declared to have.
+// ManagedAppsForChild returns the highest version of each application a child is declared to have,
+// whether the declaration is the child's own or the family's (FR-16.7).
 //
 // One statement rather than ManagedPackages followed by a LatestApp per row: this runs on every
 // device sync, and a per-package round trip would make the cost of a child's app list grow with the
@@ -151,10 +152,16 @@ func (s *Store) ManagedPackages(ctx context.Context, childID uuid.UUID) ([]strin
 // declaration separately (ManagedPackages) and shows the gap — the phone is told only what exists.
 func (s *Store) ManagedAppsForChild(ctx context.Context, childID uuid.UUID) ([]App, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT DISTINCT ON (a.package_name) `+prefixedAppCols("a")+`
-		   FROM child_managed_apps m
+		`WITH declared AS (
+		      SELECT package_name FROM child_managed_apps WHERE child_id = $1
+		      UNION
+		      SELECT f.package_name
+		        FROM family_managed_apps f
+		        JOIN children c ON c.family_id = f.family_id
+		       WHERE c.id = $1)
+		 SELECT DISTINCT ON (a.package_name) `+prefixedAppCols("a")+`
+		   FROM declared m
 		   JOIN apps a ON a.package_name = m.package_name
-		  WHERE m.child_id = $1
 		  ORDER BY a.package_name, a.version_code DESC`, childID)
 	if err != nil {
 		return nil, err
@@ -204,4 +211,82 @@ func (s *Store) WithdrawManagedApp(ctx context.Context, childID uuid.UUID, packa
 		return false, mapErr(err)
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// ---- what every child is declared to have (FR-16.7) --------------------------------------------
+
+// FamilyManagedPackages lists the packages declared for every child of the family.
+func (s *Store) FamilyManagedPackages(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT package_name FROM family_managed_apps ORDER BY package_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// DeclareFamilyManagedApp adds a package to the family's set, and bumps every child's policy version
+// in the same transaction: the declaration changes what every phone should have, so a phone that
+// reconnects on its own must see it whether or not the fast-path notification reaches it.
+func (s *Store) DeclareFamilyManagedApp(ctx context.Context, familyID uuid.UUID, packageName string) error {
+	return mapErr(s.tx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO family_managed_apps (family_id, package_name) VALUES ($1, $2)
+			 ON CONFLICT (family_id, package_name) DO NOTHING`, familyID, packageName); err != nil {
+			return err
+		}
+		return bumpEveryPolicy(ctx, tx)
+	}))
+}
+
+// WithdrawFamilyManagedApp removes a package from the family's set and reports whether a row went
+// away, for the same reason WithdrawManagedApp does: it is what uninstalls the app.
+func (s *Store) WithdrawFamilyManagedApp(ctx context.Context, familyID uuid.UUID, packageName string) (bool, error) {
+	removed := false
+	err := s.tx(ctx, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM family_managed_apps WHERE family_id = $1 AND package_name = $2`, familyID, packageName)
+		if err != nil {
+			return err
+		}
+		removed = tag.RowsAffected() > 0
+		if !removed {
+			return nil
+		}
+		return bumpEveryPolicy(ctx, tx)
+	})
+	return removed, mapErr(err)
+}
+
+// ChildrenDeclaring lists every child whose effective set contains a package — declared for the
+// child or for the whole family. A new build of that package changes what those phones should
+// install, so these are the children a new build is announced to.
+func (s *Store) ChildrenDeclaring(ctx context.Context, packageName string) ([]uuid.UUID, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT child_id FROM child_managed_apps WHERE package_name = $1
+		 UNION
+		 SELECT c.id FROM children c
+		   JOIN family_managed_apps f ON f.family_id = c.family_id
+		  WHERE f.package_name = $1`, packageName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }

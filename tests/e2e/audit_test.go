@@ -74,7 +74,8 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 	// permanently listed as uncovered — an exclusion list is how a ratchet stops ratcheting.
 	// And with local calendars allowed, so FR-25's two actions can be driven from a calendar this
 	// test serves itself.
-	h, apkDir := catalogHarness(t, withEnv("CALENDAR_ALLOW_LOCAL", "true"))
+	// And with Google Play access (a fake Google), so FR-16.8's sync is drivable too.
+	h, apkDir := catalogHarness(t, append(newFakePlay(t).options(), withEnv("CALENDAR_ALLOW_LOCAL", "true"))...)
 	calendar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(icsBody(icsEvent("a", "Termin", "DTSTART:20261007T120000Z", "DTEND:20261007T123000Z"))))
 	}))
@@ -382,6 +383,24 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 		expect(http.StatusNoContent)
 	byParent("APP_WITHDRAWN", "child", child.ID)
 
+	// FR-16.7: the same package for every child, a separate decision from the child's own.
+	h.call(http.MethodPut, "/family/managed-apps/"+fixturePackage, parent.Token, nil).
+		expect(http.StatusNoContent)
+	byParent("FAMILY_APP_DECLARED", "family", "")
+	h.call(http.MethodDelete, "/family/managed-apps/"+fixturePackage, parent.Token, nil).
+		expect(http.StatusNoContent)
+	byParent("FAMILY_APP_WITHDRAWN", "family", "")
+
+	// FR-16.8: following a package on Google Play, checking it, and no longer following it.
+	h.call(http.MethodPut, "/play-sources/com.example.fromplay", parent.Token,
+		map[string]any{"tracks": []string{"production"}, "label": "Von Play"}).expect(http.StatusOK)
+	byParent("PLAY_SOURCE_SET", "app", "")
+	h.call(http.MethodPost, "/play-sources/sync", parent.Token, nil).expect(http.StatusOK)
+	byParent("PLAY_SYNCED", "app", "")
+	h.call(http.MethodDelete, "/play-sources/com.example.fromplay", parent.Token, nil).
+		expect(http.StatusNoContent)
+	byParent("PLAY_SOURCE_REMOVED", "app", "")
+
 	h.call(http.MethodDelete, "/apps/"+registered.ID, parent.Token, nil).expect(http.StatusNoContent)
 	byParent("APP_DELETED", "app", registered.ID)
 
@@ -458,6 +477,9 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 		{"COMMAND_FAILED", "error", "the device owner app is not admin"},
 		{"DEVICE_ENROLLED", "model", "Pixel 7a"},
 		{"APP_REMOVED_FROM_LIST", "package", pkgGame},
+		{"FAMILY_APP_DECLARED", "package_name", fixturePackage},
+		{"PLAY_SOURCE_SET", "package_name", "com.example.fromplay"},
+		{"PLAY_SOURCE_REMOVED", "package_name", "com.example.fromplay"},
 	} {
 		found := false
 		for _, e := range entries {

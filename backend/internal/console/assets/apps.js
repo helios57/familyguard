@@ -23,7 +23,12 @@ async function loadApps() {
   ]);
   // Family-wide, so fetched once. Tolerated as empty: one endpoint being unavailable must not blank
   // the whole page.
-  const blocklist = await api('/family/blocked-packages').catch(() => ({ packages: [] }));
+  const [blocklist, familyManaged, play] = await Promise.all([
+    api('/family/blocked-packages').catch(() => ({ packages: [] })),
+    // FR-16.7 and FR-16.8: what every child has, and what the server follows on Google Play.
+    api('/family/managed-apps').catch(() => ({ managed_apps: [] })),
+    api('/play-sources').catch(() => ({ configured: false, sources: [] })),
+  ]);
   const list = devices.devices || [];
   // include_system=1 is load bearing: preinstalled bloatware IS a system app — that is exactly why it
   // cannot be uninstalled and has to be hidden — so without the flag com.facebook.katana is filtered
@@ -95,6 +100,8 @@ async function loadApps() {
     catalog: catalog.apps || [],
     catalogConfigured: catalog.configured === true,
     managed: managed.managed_apps || [],
+    familyManaged: new Set((familyManaged.managed_apps || []).map((m) => m.package_name)),
+    play: { configured: play.configured === true, account: play.account || '', sources: play.sources || [] },
     blocklist: blocklist.packages || [],
   };
 }
@@ -449,11 +456,17 @@ function managedAppsCard(data) {
 
   const declared = new Set(data.managed.map((m) => m.package_name));
   const groups = catalogByPackage(data.catalog);
+  const inCatalog = new Set(groups.map((g) => g.newest.package_name));
+  const followed = new Map(data.play.sources.map((p) => [p.package_name, p]));
   // A package declared whose build is no longer in the catalog: the phone is told nothing about it,
-  // so it must be visible — silence here is an app a parent believes they installed.
-  const orphans = data.managed.filter((m) => !m.available);
+  // so it must be visible — silence here is an app a parent believes they installed. A package the
+  // server follows on Google Play is the expected case of this before Google publishes a build, and
+  // says so rather than warning.
+  const orphans = data.managed.filter((m) => !m.available && !followed.has(m.package_name));
+  // Followed on Play, nothing fetched yet: shown so it can be chosen before the build exists.
+  const waiting = data.play.sources.filter((p) => !inCatalog.has(p.package_name));
 
-  if (!groups.length && !orphans.length) {
+  if (!groups.length && !orphans.length && !waiting.length) {
     card.append(el('p', { class: 'muted', text: 'Noch keine App für diese Familie hinzugefügt.' }));
     card.append(el('button', { class: 'btn btn-soft btn-block', type: 'button', 'data-action': 'catalog', onclick: () => openCatalogSheet(data) }, icon('plus'), 'App hinzufügen'));
     return card;
@@ -467,29 +480,40 @@ function managedAppsCard(data) {
     refresh();
   };
 
-  card.append(el('ul', { class: 'list' },
-    groups.map(({ newest, versions }) => el('li', {},
+  // A package every child has is not this child's decision: its switch shows it on and cannot be
+  // turned off here — withdrawing it is done for the family, in the catalog, and the row says so.
+  const row = (pkg, title, detail) => {
+    const forAll = data.familyManaged.has(pkg);
+    return el('li', {},
       el('span', { class: 'label' },
-        el('b', { text: newest.label || newest.package_name }),
-        el('small', {
-          text: newest.package_name + ' · ' + (newest.version_name || 'Build ' + newest.version_code) +
-            (versions.length > 1 ? ' · ' + versions.length + ' Builds' : '') +
-            (newest.size_bytes ? ' · ' + fmtSize(newest.size_bytes) : ''),
-        })),
+        el('b', { text: title }),
+        el('small', { text: detail }),
+        forAll ? el('small', { class: 'muted', text: 'Für alle Kinder — im Katalog änderbar' }) : null),
       el('label', { class: 'switch switch-bare' },
         el('input', {
           type: 'checkbox',
-          checked: declared.has(newest.package_name),
-          'aria-label': (newest.label || newest.package_name) + ' auf diesem Handy installieren',
-          onchange: (e) => toggle(newest.package_name, e.target.checked),
-        })))),
+          checked: forAll || declared.has(pkg),
+          disabled: forAll,
+          'aria-label': title + ' auf diesem Handy installieren',
+          onchange: (e) => toggle(pkg, e.target.checked),
+        })));
+  };
+
+  card.append(el('ul', { class: 'list' },
+    groups.map(({ newest, versions }) => row(newest.package_name, newest.label || newest.package_name,
+      newest.package_name + ' · ' + (newest.version_name || 'Build ' + newest.version_code) +
+        (versions.length > 1 ? ' · ' + versions.length + ' Builds' : '') +
+        (newest.size_bytes ? ' · ' + fmtSize(newest.size_bytes) : '') +
+        (newest.source === 'PLAY' ? ' · Google Play' : ''))),
+    waiting.map((p) => row(p.package_name, p.label || p.package_name,
+      p.package_name + ' · Google Play — noch keine Version veröffentlicht, wird automatisch installiert, sobald es eine gibt')),
     orphans.map((m) => el('li', {},
       el('span', { class: 'label' },
         el('b', { text: m.package_name }),
         el('small', { class: 'warn', text: 'für dieses Handy gewählt, aber keine Version davon ist im Katalog — es wird nichts installiert' })),
       el('button', { class: 'btn btn-quiet btn-danger', type: 'button', text: 'Entfernen', onclick: () => toggle(m.package_name, false) })))));
 
-  card.append(help('Das Handy installiert diese selbst.', 'Wird eine entfernt, installiert das Handy sie wieder. Schlafenszeit und App-Regeln gelten auch für sie.'));
+  card.append(help('Das Handy installiert diese selbst.', 'Wird eine entfernt, installiert das Handy sie wieder. Schlafenszeit und App-Regeln gelten auch für sie. Apps von Google Play werden aktualisiert, sobald Google eine neue Version veröffentlicht — das Handy hebt die Installationssperre nur für diesen Moment auf.'));
   return card;
 }
 
@@ -537,13 +561,31 @@ function openCatalogSheet(data) {
     },
   });
 
+  const forAllToggle = async (pkg, on) => {
+    await act(on ? 'Wird auf allen Kinder-Handys installiert' : 'Nicht mehr für alle Kinder', () =>
+      api('/family/managed-apps/' + encodeURIComponent(pkg), { method: on ? 'PUT' : 'DELETE' }));
+    refresh();
+  };
+  const forAllSwitch = (pkg, title) => el('label', { class: 'switch switch-bare' },
+    el('input', {
+      type: 'checkbox',
+      checked: data.familyManaged.has(pkg),
+      'aria-label': title + ' auf allen Kinder-Handys installieren, auch bei später hinzugefügten Kindern',
+      onchange: (e) => forAllToggle(pkg, e.target.checked),
+    }));
+  const familyRows = catalogByPackage(data.catalog).map(({ newest }) => el('li', {},
+    el('span', { class: 'label' },
+      el('b', { text: newest.label || newest.package_name }),
+      el('small', { text: newest.package_name })),
+    forAllSwitch(newest.package_name, newest.label || newest.package_name)));
+
   const rows = catalogByPackage(data.catalog).flatMap(({ versions }) =>
     versions.sort((a, b) => b.version_code - a.version_code).map((a) => el('li', {},
       el('span', { class: 'label' },
         el('b', { text: (a.label || a.package_name) + ' ' + (a.version_name || a.version_code) }),
         el('small', {
           text: a.package_name + ' · Build ' + a.version_code + ' · ' + fmtSize(a.size_bytes) +
-            ' · ab Android-SDK ' + a.min_sdk + ' · ' + (a.source === 'NODE' ? 'aus dem Server-Ordner' : 'hochgeladen'),
+            ' · ab Android-SDK ' + a.min_sdk + ' · ' + sourceText(a.source),
         })),
       el('button', {
         class: 'btn btn-quiet btn-danger', type: 'button', text: 'Löschen',
@@ -560,12 +602,114 @@ function openCatalogSheet(data) {
       }))));
 
   openSheet('App-Katalog', el('div', { class: 'stack' },
+    el('h3', { class: 'section-title', text: 'Für alle Kinder' }),
+    familyRows.length
+      ? el('ul', { class: 'list' }, familyRows)
+      : el('p', { class: 'muted', text: 'Noch keine App im Katalog.' }),
+    el('p', { class: 'muted', text: 'Eine App für alle Kinder kommt auch auf die Handys von Kindern, die du später hinzufügst.' }),
+    playSection(data),
+    el('h3', { class: 'section-title', text: 'Hochladen' }),
     form,
     el('p', { class: 'muted', text: 'Oder .apk-Dateien in den App-Ordner des Servers kopieren und ihn durchsuchen. Nichts wird dem Dateinamen geglaubt — Paket, Version und Signatur werden aus der Datei gelesen.' }),
     scan,
     status,
     el('h3', { class: 'section-title', text: 'Im Katalog' }),
     rows.length ? el('ul', { class: 'list' }, rows) : el('p', { class: 'muted', text: 'Noch nichts.' })), 'catalog');
+}
+
+function sourceText(source) {
+  if (source === 'NODE') return 'aus dem Server-Ordner';
+  if (source === 'PLAY') return 'von Google Play';
+  return 'hochgeladen';
+}
+
+/* ---- Google Play as a source (FR-16.8) -----------------------------------
+ *
+ * Following an app means: every release Google PUBLISHES on the chosen tracks is fetched — Google's
+ * own signed file, never a rebuilt one — and installed on the phones that have the app. A release in
+ * Google's review is not taken. The listing says whether the server can read Play at all, because
+ * "followed" and "readable" are different facts and only the second one installs anything.
+ */
+const PLAY_TRACKS = [
+  { value: 'production', label: 'Nur Produktion' },
+  { value: 'production,alpha', label: 'Produktion + geschlossener Test' },
+  { value: 'production,alpha,internal', label: 'Produktion + alle Tests' },
+];
+
+function playSourceStatus(p) {
+  if (p.last_error) return { cls: 'warn', text: 'Fehler bei der letzten Prüfung: ' + p.last_error };
+  if (!p.checked_at) return { cls: 'muted', text: 'Noch nicht geprüft' };
+  const when = new Date(p.checked_at).toLocaleString('de-CH', { dateStyle: 'short', timeStyle: 'short' });
+  if (p.published_version == null) return { cls: 'muted', text: 'Geprüft ' + when + ' — noch keine Version veröffentlicht' };
+  return { cls: 'muted', text: 'Geprüft ' + when + ' — veröffentlicht: Build ' + p.published_version };
+}
+
+function playSection(data) {
+  const box = el('div', { class: 'stack' }, el('h3', { class: 'section-title', text: 'Von Google Play' }));
+  if (!data.play.configured) {
+    box.append(el('p', { class: 'warn', text: 'Der Server hat noch keinen Zugriff auf Google Play (PLAY_SERVICE_ACCOUNT fehlt). Du kannst Apps schon eintragen; sie werden geholt, sobald der Zugriff eingerichtet ist.' }));
+  } else {
+    box.append(el('p', { class: 'muted', text: 'Gelesen als ' + data.play.account + '. Dieses Konto braucht in der Play Console Lesezugriff auf jede App hier.' }));
+  }
+
+  const pkg = el('input', { type: 'text', placeholder: 'Paketname, z. B. com.example.spiel', 'aria-label': 'Paketname auf Google Play', autocapitalize: 'off', spellcheck: 'false' });
+  const name = el('input', { type: 'text', placeholder: 'Name (optional)', 'aria-label': 'Name für diese App' });
+  const tracks = el('select', { 'aria-label': 'Welche Versionen' },
+    PLAY_TRACKS.map((t) => el('option', { value: t.value, text: t.label })));
+  const follow = el('form', {
+    class: 'stack',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      // A Play link is accepted as well as a bare package name: it is what a parent has to hand.
+      let id = pkg.value.trim();
+      const m = id.match(/[?&]id=([A-Za-z0-9._]+)/) || id.match(/\/apps\/testing\/([A-Za-z0-9._]+)/);
+      if (m) id = m[1];
+      if (!id) return;
+      const out = await act(id + ' wird von Google Play geholt', () => api('/play-sources/' + encodeURIComponent(id), {
+        method: 'PUT', body: { tracks: tracks.value.split(','), label: name.value.trim() },
+      }));
+      if (out) { closeSheet(); refresh(); }
+    },
+  },
+  el('label', { class: 'field' }, el('span', { text: 'App von Google Play folgen' }), pkg),
+  name,
+  tracks,
+  el('button', { class: 'btn btn-primary btn-block', type: 'submit', text: 'Folgen' }));
+  box.append(follow);
+
+  if (data.play.sources.length) {
+    box.append(el('ul', { class: 'list' }, data.play.sources.map((p) => {
+      const st = playSourceStatus(p);
+      return el('li', {},
+        el('span', { class: 'label' },
+          el('b', { text: p.label || p.package_name }),
+          el('small', { text: p.package_name + ' · ' + p.tracks.join(', ') }),
+          el('small', { class: st.cls, text: st.text })),
+        el('button', {
+          class: 'btn btn-quiet btn-danger', type: 'button', text: 'Entfolgen', 'aria-label': p.package_name + ' nicht mehr von Google Play holen',
+          onclick: async () => {
+            const yes = await confirmSheet({
+              title: 'Nicht mehr von Google Play holen?',
+              lines: [p.package_name + '. Die schon geholten Versionen bleiben im Katalog und auf den Handys.'],
+              confirmLabel: 'Nicht mehr folgen',
+            });
+            if (!yes) return;
+            await act('Folgt nicht mehr', () => api('/play-sources/' + encodeURIComponent(p.package_name), { method: 'DELETE' }));
+            refresh();
+          },
+        }));
+    })));
+    if (data.play.configured) {
+      box.append(el('button', {
+        class: 'btn btn-block', type: 'button', text: 'Jetzt bei Google Play prüfen',
+        onclick: async () => {
+          const out = await act('Google Play geprüft', () => api('/play-sources/sync', { method: 'POST' }));
+          if (out) { closeSheet(); refresh(); }
+        },
+      }));
+    }
+  }
+  return box;
 }
 
 /* ---- the family blocklist (FR-18) ---------------------------------------

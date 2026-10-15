@@ -327,6 +327,10 @@ func allCollections(childID, deviceID string) []collection {
 		// holidays, and the console's editors iterate both.
 		{"/children/" + childID + "/agenda", "entries", "GetAgenda", stageCreated},
 		{"/family/holidays", "holidays", "ListHolidays", stageFresh},
+		// FR-16.7 and FR-16.8: a new family has declared nothing for every child and follows nothing
+		// on Google Play, and the console's catalog sheet iterates both.
+		{"/family/managed-apps", "managed_apps", "FamilyManagedPackages", stageFresh},
+		{"/play-sources", "sources", "ListPlaySources", stageFresh},
 		{"/device/commands", "commands", "PendingCommands", stageEnrolled},
 	}
 }
@@ -366,6 +370,8 @@ var collectionsCoveredElsewhere = map[string]string{
 	"ListAudit": "asserted in section 2 as exactly one row — the sign-in this test performed",
 	"WebPushSubscriptions": "never serialised: the Web Push sender reads it and sends to each row " +
 		"inside the server (FR-28.4); time_request_test drives it end to end, and a nil result sends nothing",
+	"ChildrenDeclaring": "never serialised. It names the children whose policy a newly fetched " +
+		"Google Play build changes (FR-16.8), inside the server; play_test drives it end to end",
 	"DeviceIDsForChild": "never serialised. It fans a policy change out to a child's devices " +
 		"inside the server and its result is a list of ids, not a response body",
 	"ListFamilyBlockedPackages": "legitimately non-empty on a fresh system, and driven by " +

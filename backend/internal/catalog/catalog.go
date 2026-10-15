@@ -81,6 +81,25 @@ func (c *Catalog) Configured() bool { return c.dir != "" }
 // limit caps what will be read. It is passed in rather than taken from apk.MaxSize so that the HTTP
 // layer's own body limit and this one are the same number stated once at the caller.
 func (c *Catalog) Register(ctx context.Context, r io.Reader, limit int64, source, label string) (*store.App, error) {
+	return c.RegisterExpecting(ctx, r, limit, source, label, nil)
+}
+
+// Expectation is what a caller was promised the file is, checked after it is read and before
+// anything is claimed for it.
+type Expectation struct {
+	PackageName  string
+	VersionCode  int64
+	SignerSHA256 string
+}
+
+// ErrNotAsExpected means the file read is not the build its source named. Nothing is registered.
+var ErrNotAsExpected = errors.New("the file is not the build its source named")
+
+// RegisterExpecting is Register for a file whose identity was announced before it arrived — a
+// build Google Play names by package, version code and signing certificate (FR-16.8). A file that
+// differs in any of the three is refused before its row is claimed: the signer pin protects every
+// LATER version, and this is what protects the first.
+func (c *Catalog) RegisterExpecting(ctx context.Context, r io.Reader, limit int64, source, label string, want *Expectation) (*store.App, error) {
 	if !c.Configured() {
 		return nil, ErrNotConfigured
 	}
@@ -120,6 +139,11 @@ func (c *Catalog) Register(ctx context.Context, r io.Reader, limit int64, source
 	if c.reserved != "" && info.PackageName == c.reserved {
 		return nil, fmt.Errorf("%w: %s is the FamilyGuard app itself, which updates through "+
 			"/device/apk-info rather than the app catalog", ErrReservedPackage, info.PackageName)
+	}
+	if want != nil && (info.PackageName != want.PackageName || info.VersionCode != want.VersionCode ||
+		!strings.EqualFold(info.SignerSHA256, want.SignerSHA256)) {
+		return nil, fmt.Errorf("%w: expected %s %d signed by %s, read %s %d signed by %s", ErrNotAsExpected,
+			want.PackageName, want.VersionCode, want.SignerSHA256, info.PackageName, info.VersionCode, info.SignerSHA256)
 	}
 
 	fileName := fmt.Sprintf("%s-%d.apk", info.PackageName, info.VersionCode)

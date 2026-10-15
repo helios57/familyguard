@@ -290,7 +290,16 @@ func startBrowser(t *testing.T) *browser {
 	// --lang alone is not enough on Linux: headless Chrome takes its locale — and with it a time
 	// field's 24-hour display — from the environment. Measured 2026-09-30: with only the flag the
 	// console still drew "09:00 PM".
-	cmd.Env = append(os.Environ(), "LANGUAGE=de_CH:de", "LANG=de_CH.UTF-8", "LC_ALL=de_CH.UTF-8")
+	//
+	// And no session bus. --password-store=basic above removed the keyring's D-Bus call, but it is
+	// not the only one: since Chrome 155 a service worker's showNotification goes to the desktop's
+	// notification service over the same bus, and on this machine that call waits ~40 s and the
+	// notification arrives long after any test stopped waiting. Measured 2026-10-15 on
+	// TestTheConsoleServiceWorkerShowsAPush: red 3 of 3 with the bus, green in 2.3 s without it.
+	// A test browser needs nothing from the desktop, and CI has no session bus at all — so this
+	// is the environment CI measures in, not a workaround.
+	cmd.Env = append(os.Environ(), "LANGUAGE=de_CH:de", "LANG=de_CH.UTF-8", "LC_ALL=de_CH.UTF-8",
+		"DBUS_SESSION_BUS_ADDRESS=disabled:")
 	// Its own process group, so the cleanup can kill every process Chrome forked rather than only
 	// the one it started. Killing the parent alone leaves the helpers running, which is what makes
 	// the profile directory refuse to be removed and, on a loaded machine, leaves browsers behind.

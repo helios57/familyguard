@@ -65,9 +65,19 @@ func TestConsoleTour(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	h, _ := catalogHarness(t)
+	// FR-16.7 / FR-16.8: one app from Google Play for every child, and one followed that Google has
+	// not published yet, so the catalog sheet has both states to draw.
+	play := newFakePlay(t)
+	play.publish(fixturePackage, playBuild{"production", 1, statePublished, "fixture-v1.apk", fixtureSignerSHA256})
+	h, _ := catalogHarness(t, play.options()...)
 	fam := seedAFamilyWorthLookingAt(t, h)
 	enrichTheTourFamily(t, h, fam)
+	h.call(http.MethodPut, "/play-sources/"+fixturePackage, fam.parentToken,
+		map[string]any{"tracks": []string{"production", "alpha"}, "label": "Wortspiel"}).expect(http.StatusOK)
+	h.call(http.MethodPut, "/play-sources/com.example.waiting", fam.parentToken,
+		map[string]any{"tracks": []string{"production"}, "label": "Rechenspiel"}).expect(http.StatusOK)
+	h.call(http.MethodPost, "/play-sources/sync", fam.parentToken, nil).expect(http.StatusOK)
+	h.call(http.MethodPut, "/family/managed-apps/"+fixturePackage, fam.parentToken, nil).expect(http.StatusNoContent)
 
 	b := startBrowser(t)
 	b.phone(phoneWidth, phoneHeight)
@@ -121,6 +131,21 @@ func TestConsoleTour(t *testing.T) {
 		b.waitFor("document.getElementById('sheet').open", 10*time.Second, "the phone sheet")
 		time.Sleep(500 * time.Millisecond)
 		b.screenshot(t, filepath.Join(dir, fmt.Sprintf("%s-%d9-phone-sheet.png", size.name, i)))
+		b.eval("document.getElementById('sheet-close').click()", nil)
+
+		// The catalog sheet, scrolled through: the family's set and the apps followed on Play.
+		b.eval("location.hash = '#/apps'", nil)
+		b.waitFor("document.querySelector('#view [data-action=catalog]') !== null", 20*time.Second, "the catalog button")
+		time.Sleep(1000 * time.Millisecond)
+		b.eval("window.scrollTo(0, 0)", nil)
+		b.screenshot(t, filepath.Join(dir, fmt.Sprintf("%s-%d5b-apps-family.png", size.name, i)))
+		b.eval("document.querySelector('#view [data-action=catalog]').click()", nil)
+		b.waitFor("document.getElementById('sheet').open", 10*time.Second, "the catalog sheet")
+		time.Sleep(500 * time.Millisecond)
+		b.screenshot(t, filepath.Join(dir, fmt.Sprintf("%s-%d8-catalog-sheet.png", size.name, i)))
+		b.eval("(() => { const s = document.querySelector('#sheet .sheet-body') || document.getElementById('sheet'); s.scrollTop = s.scrollHeight; })()", nil)
+		time.Sleep(300 * time.Millisecond)
+		b.screenshot(t, filepath.Join(dir, fmt.Sprintf("%s-%d8-catalog-sheet-end.png", size.name, i)))
 		b.eval("document.getElementById('sheet-close').click()", nil)
 	}
 }

@@ -125,6 +125,18 @@ type managedArgs struct {
 	Managed     bool   `json:"managed" jsonschema:"true installs it on the child's phones and keeps it current; false removes it from them"`
 }
 
+type familyManagedArgs struct {
+	PackageName string `json:"package_name" jsonschema:"a package from list_apps or list_play_sources"`
+	Managed     bool   `json:"managed" jsonschema:"true installs it on every child's phones, including children added later, and keeps it current; false withdraws it from every child that does not also have it on its own"`
+}
+
+type playSourceArgs struct {
+	PackageName string   `json:"package_name" jsonschema:"the app's package name on Google Play, e.g. com.example.game"`
+	Follow      bool     `json:"follow" jsonschema:"true follows the app on Google Play (or changes its tracks and label); false stops following it, leaving the builds already fetched in the catalog"`
+	Tracks      []string `json:"tracks,omitempty" jsonschema:"the Play tracks to take published releases from, e.g. [\"production\", \"alpha\"]; default [\"production\"]"`
+	Label       string   `json:"label,omitempty" jsonschema:"the name to show for the app"`
+}
+
 func registerConsoleTools(server *mcp.Server, client *fgclient.Client) {
 	// ---- the family -------------------------------------------------------------------------
 
@@ -405,6 +417,56 @@ func registerConsoleTools(server *mcp.Server, client *fgclient.Client) {
 				return nil, err
 			}
 			return map[string]any{"package_name": in.PackageName, "managed": in.Managed}, nil
+		})
+
+	add(server, client, "list_family_managed_apps",
+		"The catalog apps every child's phones install and keep current, including children added later.",
+		func(ctx context.Context, c *fgclient.Client, _ emptyArgs) (any, error) {
+			return getJSON(ctx, c, "/api/v1/family/managed-apps")
+		})
+
+	add(server, client, "set_family_managed_app",
+		"Install an app on every child's phones, now and for children added later, and keep it current — "+
+			"or withdraw it from every child that does not also have it on its own.",
+		func(ctx context.Context, c *fgclient.Client, in familyManagedArgs) (any, error) {
+			method := "PUT"
+			if !in.Managed {
+				method = "DELETE"
+			}
+			if err := c.Do(ctx, method, "/api/v1/family/managed-apps/"+url.PathEscape(in.PackageName), nil, nil); err != nil {
+				return nil, err
+			}
+			return map[string]any{"package_name": in.PackageName, "managed": in.Managed}, nil
+		})
+
+	// ---- Google Play as a source of builds ----------------------------------------------------
+
+	add(server, client, "list_play_sources",
+		"The apps the server follows on Google Play: their tracks, the newest published version it saw, "+
+			"and the last check's error. configured=false means the server has no Play access yet.",
+		func(ctx context.Context, c *fgclient.Client, _ emptyArgs) (any, error) {
+			return getJSON(ctx, c, "/api/v1/play-sources")
+		})
+
+	add(server, client, "set_play_source",
+		"Follow an app on Google Play, so every release Google publishes on its tracks is fetched into the "+
+			"catalog and installed on the phones that have it — or stop following it.",
+		func(ctx context.Context, c *fgclient.Client, in playSourceArgs) (any, error) {
+			path := "/api/v1/play-sources/" + url.PathEscape(in.PackageName)
+			if !in.Follow {
+				if err := c.Do(ctx, "DELETE", path, nil, nil); err != nil {
+					return nil, err
+				}
+				return map[string]any{"package_name": in.PackageName, "follow": false}, nil
+			}
+			return doJSON(ctx, c, "PUT", path, map[string]any{"tracks": in.Tracks, "label": in.Label})
+		})
+
+	add(server, client, "sync_play",
+		"Check Google Play now for every followed app and fetch any newly published build. The server also "+
+			"does this by itself on an interval.",
+		func(ctx context.Context, c *fgclient.Client, _ emptyArgs) (any, error) {
+			return doJSON(ctx, c, "POST", "/api/v1/play-sources/sync", nil)
 		})
 }
 

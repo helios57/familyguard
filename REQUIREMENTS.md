@@ -576,6 +576,26 @@ child; and the phone must arrive at that state by itself, on a device the child 
 - FR-16.6 The FamilyGuard app itself is not a catalog entry. It updates through FR-15, which is a
   different mechanism with different checks, and two descriptions of what version of itself the
   phone should run is a loop, not redundancy.
+- FR-16.7 A parent can declare an application for **every** child at once, and that declaration
+  reaches a child added later with nothing done for them. It is a second set beside each child's
+  own, not a row copied onto each child: a child's effective set is the union of the two, computed
+  when the phone's policy is, so no child can be left out of it by being created afterwards.
+  Withdrawing an application from the family's set removes it from every child that does not also
+  have it on their own; a child-level declaration is a separate decision and is left alone. A
+  child's view shows the family's applications and marks them as the family's.
+- FR-16.8 A build can come from Google Play instead of from an upload. The parent names the
+  package and the Play tracks to follow; the control plane checks Play on an interval and
+  fetches the newest release Google has **published** on those tracks — never one still in
+  review — as the universal APK Google itself generated and signed, never a rebuilt or re-signed
+  one. The file must be the package, version and signing certificate Play named for it before it
+  is kept, which protects the first registration that FR-16.4's pin cannot. The new build
+  then lands in the catalog like any other, and every child that has the application is told at
+  once, so the phone installs the update within minutes of Google publishing it. The phone's
+  install restriction stays in force: it is lifted only around the install itself and put back
+  (FR-16.3). An application followed on Play can be declared before Google has published a
+  build of it, and reads as waiting until it has. Whether the control plane can read Play at
+  all, and the last check's result per application, is shown to the parent: an application the
+  server follows but cannot read is otherwise indistinguishable from one with no new release.
 
 ### FR-17 Non-interactive access (API keys)
 Everything a parent can do must also be doable by something that is not sitting at a browser — a
