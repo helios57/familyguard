@@ -401,10 +401,24 @@ func TestTheConsoleServiceWorkerShowsAPush(t *testing.T) {
 	b.call("ServiceWorker.deliverPushMessage", map[string]any{
 		"origin": h.base, "registrationId": registration, "data": string(payload),
 	})
-	b.waitFor(`navigator.serviceWorker.ready.then((r) => r.getNotifications()).then((n) => window.__fgShown = n.map((x) => [x.title, x.body, x.tag, x.data && x.data.url].join('|'))) && (window.__fgShown || []).length > 0`,
-		10*time.Second, "the notification")
+	// Polled by hand rather than with waitFor, so a timeout can say what the worker was doing: the
+	// one red this test has had on CI (2026-10-15, 1 in 12 local repeats green) printed only the
+	// page, which cannot see the worker at all.
 	var shown []string
-	b.eval(`window.__fgShown`, &shown)
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		b.eval(`navigator.serviceWorker.ready.then((r) => r.getNotifications()).then((n) => n.map((x) => [x.title, x.body, x.tag, x.data && x.data.url].join('|')))`, &shown)
+		if len(shown) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			var state any
+			b.eval(`navigator.serviceWorker.ready.then((r) => ({ permission: Notification.permission, active: r.active && r.active.state, waiting: !!r.waiting, installing: !!r.installing, controlled: !!navigator.serviceWorker.controller }))`, &state)
+			t.Fatalf("no notification 10s after the push to registration %s\npage: %+v\nregistrations: %v\nworker versions: %v\nworker errors: %v",
+				registration, state, b.swRegistrations, b.swVersions, b.swErrors)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	if len(shown) != 1 || shown[0] != "Mira bittet um 30 Min. mehr|Film fertig schauen|time-x|#/" {
 		t.Errorf("the notification shown is %v", shown)
 	}

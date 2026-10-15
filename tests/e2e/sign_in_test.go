@@ -104,6 +104,7 @@ func TestSigningOutEndsTheSignInOnTheServer(t *testing.T) {
 	}
 }
 
+// FR-29.4 and FR-29.5, through the API: who may see which sign-in, and who may end it.
 func TestEveryParentSeesTheFamilysSignInsAndEndsTheirOwn(t *testing.T) {
 	h := newHarness(t)
 	primary := h.signIn(primaryParent)

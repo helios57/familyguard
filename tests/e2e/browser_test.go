@@ -234,6 +234,11 @@ type browser struct {
 	// swRegistrations are the service-worker registration ids the page reported once
 	// ServiceWorker.enable is on (FR-28.4): the handle a push is delivered to.
 	swRegistrations map[string]string // registration id -> scope URL
+	// swVersions and swErrors are what the worker itself did, for a push test that times out.
+	// Diagnostics only, like pageErrors: the page cannot see an exception thrown in the worker,
+	// so without these a push that never became a notification prints nothing about why.
+	swVersions map[string]string // version id -> "registration/status/runningStatus"
+	swErrors   []string
 }
 
 // startBrowser launches headless Chrome and attaches to its first page.
@@ -487,6 +492,17 @@ func (b *browser) recordIfPageError(frame []byte) {
 				ScopeURL       string `json:"scopeURL"`
 				IsDeleted      bool   `json:"isDeleted"`
 			} `json:"registrations"`
+			Versions []struct {
+				VersionID      string `json:"versionId"`
+				RegistrationID string `json:"registrationId"`
+				Status         string `json:"status"`
+				RunningStatus  string `json:"runningStatus"`
+			} `json:"versions"`
+			ErrorMessage struct {
+				ErrorMessage string `json:"errorMessage"`
+				SourceURL    string `json:"sourceURL"`
+				LineNumber   int    `json:"lineNumber"`
+			} `json:"errorMessage"`
 			ExceptionDetails struct {
 				Text       string `json:"text"`
 				LineNumber int    `json:"lineNumber"`
@@ -518,6 +534,16 @@ func (b *browser) recordIfPageError(frame []byte) {
 				b.swRegistrations[r.RegistrationID] = r.ScopeURL
 			}
 		}
+	case "ServiceWorker.workerVersionUpdated":
+		if b.swVersions == nil {
+			b.swVersions = map[string]string{}
+		}
+		for _, v := range event.Params.Versions {
+			b.swVersions[v.VersionID] = v.RegistrationID + "/" + v.Status + "/" + v.RunningStatus
+		}
+	case "ServiceWorker.workerErrorReported":
+		m := event.Params.ErrorMessage
+		b.swErrors = append(b.swErrors, fmt.Sprintf("%s:%d: %s", m.SourceURL, m.LineNumber, m.ErrorMessage))
 	case "Runtime.exceptionThrown":
 		d := event.Params.ExceptionDetails
 		text := d.Text

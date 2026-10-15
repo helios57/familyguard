@@ -90,7 +90,7 @@ func (s *Server) issueSession(c *gin.Context, claims *auth.IDTokenClaims) (*sess
 	if err := s.store.RecordParentLogin(c.Request.Context(), parent.ID, claims.Subject, claims.Name); err != nil {
 		return nil, err
 	}
-	// FR-29: an opaque token whose SHA-256 is a row. Only the hash is stored, as for every other
+	// FR-29.1: an opaque token whose SHA-256 is a row. Only the hash is stored, as for every other
 	// credential here, so the database cannot be replayed into a browser.
 	token, hash, err := auth.NewToken()
 	if err != nil {

@@ -23,8 +23,8 @@ func signInOf(c *gin.Context) uuid.UUID {
 	return id
 }
 
-// listSignIns returns every live sign-in of the family and marks the caller's own. An API key has no
-// sign-in, so its list marks none — which is the truth, not an omission.
+// listSignIns returns every live sign-in of the family and marks the caller's own (FR-29.4). An API
+// key has no sign-in, so its list marks none — which is the truth, not an omission.
 func (s *Server) listSignIns(c *gin.Context) {
 	list, err := s.store.ListSignIns(c.Request.Context(), s.now().Add(-s.cfg.SignInIdleTimeout))
 	if err != nil {
