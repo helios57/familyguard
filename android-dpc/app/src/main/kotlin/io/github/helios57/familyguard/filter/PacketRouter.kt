@@ -318,6 +318,12 @@ class PacketRouter(
             }
         }
 
+        override fun onWritten(count: Int) {
+            // The bytes the app sent have left for the destination, so the window they held can
+            // reopen — and if it reopened far enough, the flow tells the app with a window update.
+            synchronized(flows) { apply(entry, entry.flow.upstreamWrote(count)) }
+        }
+
         override fun onClosed() {
             synchronized(flows) { apply(entry, entry.flow.upstreamClosed()) }
         }

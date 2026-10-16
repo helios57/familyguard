@@ -402,6 +402,11 @@ Applied at provisioning and re-applied on every boot:
   never before. Measured 2026-09-23: without it, every download larger than a window or two lost
   its middle — Jellyfin's 650 KB scripts arrived as 172 KB and the app showed a black screen, and a
   4 MiB download through a real kernel tunnel arrived as exactly 65 536 bytes.
+  The same holds the other way: the window the filter offers the app reopens as the app's bytes
+  reach the destination, the app is told when it has, and a probe of a closed window is answered.
+  Without it one connection carried at most 64 KiB from the app in its whole life: on 2026-10-16 a
+  music app's keep-alive connection on the family phone took 482 small requests and then hung, and
+  on 2026-10-17 a 4 MiB upload through a real kernel tunnel never completed.
 
 ### FR-7 YouTube killswitch
 One toggle per child that blocks YouTube across every layer available to us:

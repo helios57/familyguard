@@ -318,6 +318,204 @@ class TcpFlowTest {
         assertEquals("the FIN must come after the last byte, and it must come", body.size, finAt)
     }
 
+    /**
+     * The upload the family phone could not finish (FR-6.13, the other direction).
+     *
+     * The window this flow offers the app is what is left of its buffer after the bytes still on
+     * their way to the destination. Until 0.6.44 nothing ever reported those bytes as written, so
+     * the window only shrank: one connection could carry 64 KiB from the app in its whole life.
+     * MuPlay's keep-alive connection took exactly 482 small requests and then sat with a full send
+     * queue. The app here only ever learns the window from segments the flow sends, and sends only
+     * into it — so if a window that reopens is not *announced*, this stalls and says so.
+     */
+    @Test
+    fun `the app can send far more than one window, because a window that reopens is announced`() {
+        val flow = flow()
+        handshake(flow)
+        val hello = clientHello("cdn.example.org")
+        val body = ByteArray(2 shl 20).also { java.util.Random(11).nextBytes(it) }
+
+        val forwarded = ByteArrayOutputStream()
+        var unwritten = 0
+        var window = 0
+        var acked = 0
+        var updates = 0
+        fun take(effects: List<FlowEffect>, fromWrite: Boolean = false) {
+            for (effect in effects) {
+                if (effect is FlowEffect.ToUpstream) {
+                    forwarded.write(effect.bytes)
+                    unwritten += effect.bytes.size
+                }
+            }
+            for (tcp in packets(effects)) {
+                window = tcp.windowSize
+                acked = (tcp.acknowledgementNumber - (CLIENT_ISN + 1)).toInt()
+                if (fromWrite) updates++
+            }
+        }
+        take(flow.accept(data(hello)))
+        check(flow.phase == TcpFlow.Phase.OPEN) { "the fixture did not open the flow" }
+
+        var offset = hello.size
+        val end = hello.size + body.size
+        var rounds = 0
+        while (offset < end) {
+            check(rounds++ < 1_000_000) { "no progress" }
+            val room = window - (offset - acked)
+            if (room > 0) {
+                val n = minOf(TcpFlow.DEFAULT_MSS, room, end - offset)
+                take(flow.accept(data(body.copyOfRange(offset - hello.size, offset - hello.size + n), offset)))
+                offset += n
+                continue
+            }
+            // The app is blocked on a closed window. The destination takes a little at a time.
+            if (unwritten == 0) {
+                throw AssertionError(
+                    "stalled after ${offset - hello.size} of ${body.size} bytes: the app sees a window of " +
+                        "$window and every byte it sent has been written upstream, so the window " +
+                        "reopened and nobody told the app",
+                )
+            }
+            val n = minOf(unwritten, 8 * 1024)
+            unwritten -= n
+            take(flow.upstreamWrote(n), fromWrite = true)
+        }
+
+        assertBytes(
+            "the destination must receive the hello and the whole body, in order",
+            hello + body,
+            forwarded.toByteArray(),
+        )
+        assertTrue("the window was reopened only by announcements, so there must have been some", updates > 0)
+    }
+
+    /**
+     * Downloads and uploads on one connection at once, each far past any window, with the app
+     * acknowledging only what has arrived and sending only into the window it was told about.
+     * The one connection a music app keeps open to its server does exactly this.
+     */
+    @Test
+    fun `one connection carries megabytes both ways at once, byte for byte`() {
+        val flow = flow()
+        handshake(flow)
+        val hello = clientHello("cdn.example.org")
+        val up = ByteArray(3 shl 19).also { java.util.Random(21).nextBytes(it) } // 1.5 MiB
+        val down = ByteArray(3 shl 19).also { java.util.Random(22).nextBytes(it) }
+
+        val forwarded = ByteArrayOutputStream()
+        val received = ByteArrayOutputStream()
+        var unwritten = 0
+        var window = 0
+        var acked = 0
+        var downAcked = 0 // what the app has told the flow it received
+        fun take(effects: List<FlowEffect>) {
+            for (effect in effects) {
+                if (effect is FlowEffect.ToUpstream) {
+                    forwarded.write(effect.bytes)
+                    unwritten += effect.bytes.size
+                }
+            }
+            for ((packet, tcp) in packetsWith(effects)) {
+                window = tcp.windowSize
+                acked = (tcp.acknowledgementNumber - (CLIENT_ISN + 1)).toInt()
+                if (tcp.payloadLength > 0) {
+                    assertEquals(
+                        "a downstream segment arrived out of order or twice",
+                        (SERVER_ISN + 1 + received.size()).toLong(),
+                        tcp.sequenceNumber,
+                    )
+                    received.write(packet, tcp.payloadOffset, tcp.payloadLength)
+                }
+            }
+        }
+        take(flow.accept(data(hello)))
+
+        var offset = hello.size
+        val end = hello.size + up.size
+        var downAt = 0
+        var rounds = 0
+        while (offset < end || received.size() < down.size) {
+            check(rounds++ < 1_000_000) { "no progress" }
+            var moved = false
+            if (downAt < down.size && !flow.upstreamShouldPause()) {
+                val n = minOf(32 * 1024, down.size - downAt)
+                take(flow.fromUpstream(down, downAt, n))
+                downAt += n
+                moved = true
+            }
+            val room = window - (offset - acked)
+            if (offset < end && room > 0) {
+                val n = minOf(TcpFlow.DEFAULT_MSS, room, end - offset)
+                downAcked = received.size()
+                take(
+                    flow.accept(
+                        segment(
+                            TcpHeader.FLAG_ACK or TcpHeader.FLAG_PSH,
+                            CLIENT_ISN + 1 + offset,
+                            SERVER_ISN + 1 + downAcked,
+                            up.copyOfRange(offset - hello.size, offset - hello.size + n),
+                        ),
+                    ),
+                )
+                offset += n
+                moved = true
+            } else if (downAcked < received.size()) {
+                downAcked = received.size()
+                take(flow.accept(segment(TcpHeader.FLAG_ACK, CLIENT_ISN + 1 + offset, SERVER_ISN + 1 + downAcked)))
+                moved = true
+            }
+            if (unwritten > 0) {
+                val n = minOf(unwritten, 8 * 1024)
+                unwritten -= n
+                take(flow.upstreamWrote(n))
+                moved = true
+            }
+            if (!moved) {
+                throw AssertionError(
+                    "stalled: sent ${offset - hello.size} of ${up.size} up, received ${received.size()} of " +
+                        "${down.size} down, window $window",
+                )
+            }
+        }
+
+        assertBytes("the upload must reach the destination whole and in order", hello + up, forwarded.toByteArray())
+        assertBytes("the download must reach the app whole and in order", down, received.toByteArray())
+    }
+
+    /**
+     * A window that is still shut is announced as shut, and a probe after it reopens hears so.
+     *
+     * A sender facing a zero window probes it, one byte behind what was acknowledged, so that the
+     * receiver has to answer with its window. This flow used to stay silent: a sender that had
+     * missed the window update could only wait for its own timeout.
+     */
+    @Test
+    fun `a zero-window probe is answered with the window as it stands`() {
+        val flow = open()
+        var sent = openedBytes
+        var unwritten = openedBytes
+        while (true) {
+            val effects = flow.accept(data(ByteArray(TcpFlow.DEFAULT_MSS), offset = sent))
+            sent += TcpFlow.DEFAULT_MSS
+            unwritten += TcpFlow.DEFAULT_MSS
+            if (packets(effects).last().windowSize < TcpFlow.DEFAULT_MSS) break
+        }
+        fun probe() = flow.accept(segment(TcpHeader.FLAG_ACK, CLIENT_ISN + 1 + sent - 1, SERVER_ISN + 1))
+
+        val shut = packets(probe()).single()
+        assertTrue("the window has not reopened, so the answer must not claim it has", shut.windowSize < TcpFlow.DEFAULT_MSS)
+        assertEquals(
+            "the answer must still acknowledge everything",
+            (CLIENT_ISN + 1 + sent).toLong(),
+            shut.acknowledgementNumber,
+        )
+
+        assertTrue("a reopening smaller than a segment is not worth a packet", flow.upstreamWrote(100).isEmpty())
+        flow.upstreamWrote(unwritten - 100)
+        val open = packets(probe()).single()
+        assertEquals("with everything written the whole window is free again", TcpFlow.MAX_UNSCALED_WINDOW, open.windowSize)
+    }
+
     @Test
     fun `an out-of-order segment is refused with a duplicate acknowledgement, never accepted`() {
         val flow = open()
