@@ -9429,3 +9429,57 @@ change, above. **6 probes, 6 red. Cumulative: 519.**
 **Not proven here:** the 90-day lapse itself, on the real clock — the e2e proves the mechanism with a
 3-second timeout, and the default is a configuration value.
 
+
+## Phase 59 — the window the filter offers the app reopens (0.6.44, FR-6.13)
+
+Found on the family phone while debugging MuPlay, not by a test. The music app keeps one keep-alive
+connection to its server; on 0.6.42 that connection answered exactly 482 `getAlbum` requests —
+about 64 KB of requests — and then sat with unsent bytes in the app's send queue until the app gave
+up. Scrolling album covers in MuPlay 0.3.0 stalled the same way, at 74 KB unsent.
+
+**Cause.** `TcpFlow` advertises `RECEIVE_CAPACITY - upstreamQueued` to the app, and `upstreamQueued`
+grew by every byte the app sent. The one method that shrank it, `upstreamWrote`, was called by
+nothing — the same shape as the unwired `upstreamShouldPause` that FR-6.13 first fixed for the
+other direction. So the window only ever closed: every connection could carry 64 KiB from the app in
+its whole life. Downloads never touched the counter, which is why `realtun`'s 4 MiB download and
+every browsing session stayed green.
+
+**Fix.** `NioUpstreamPool` reports each socket write (`UpstreamListener.onWritten`, outside the
+connection's queue lock — the router takes its own lock first and then that one), `PacketRouter`
+passes it to `TcpFlow.upstreamWrote`, and the flow answers with a pure window update once the
+window has grown by a segment or half the buffer over what the app was last told (RFC 1122
+§4.2.3.3, receiver silly-window avoidance) — without the announcement the app's stack learns of the
+room only from its persist timer, which Linux backs off to two minutes. Two further holes on the
+same path: a zero-window probe or keep-alive (one byte behind what was acknowledged) is now
+answered with the current window, as is a repeated FIN; and a connection whose app finished before
+the socket connected now half-closes on connect instead of never.
+
+### 59.1 — tests and calibration
+
+`TcpFlowTest`: 2 MiB from an app that sends only into the window it was last told about and never
+probes; 1.5 MiB each way at once on one flow; a zero-window probe answered shut and then open, and a
+reopening smaller than a segment not announced. `TcpRelayThroughputTest` (new): `PacketRouter`,
+`TcpFlow` and the real `NioUpstreamPool` in front of a real loopback server, 2 MiB each way on one
+connection, with no `upstreamWrote` call in the test — the window can only reopen through the pool.
+`tools/realtun/realtun_sni_test.py` gains a 4 MiB upload whose hash the server answers with, in both
+arms, against a real Linux sender that does probe.
+
+That last run found a race this change had widened: `flush()` decided "drained" before reporting
+the write, and while the report waited for the router's lock the app's last bytes and its FIN could
+both arrive — so the half-close went out ahead of them. `TcpRelayThroughputTest` measured it as an
+upload 946 bytes short; `flush()` now asks again after the report.
+
+| probe | test | result |
+|---|---|---|
+| `onWritten` in `PacketRouter` wired to nothing | `TcpRelayThroughputTest` | **red**: *stalled: sent 65536 of 2097152 bytes (acknowledged 65536), offered window 0* |
+| the same | `realtun_sni_test.py` (WSL2 kernel, `unshare -n`) | **red** ×2 arms: *4 MiB upload … curl=28* (timed out) |
+| `upstreamWrote` never announces | `TcpFlowTest` 2 MiB upload | **red**: *stalled after 65460 of 2097152 bytes … nobody told the app* |
+| probes not answered | `TcpFlowTest` zero-window probe | **red**: *List is empty* |
+
+The both-directions `TcpFlowTest` case stays green with the announcement removed, and that is
+information rather than a pass: downstream segments carry the window too, so a flow that is busy
+both ways never needs the pure update. **4 probes, 4 red (the realtun one counted once). Cumulative:
+523.**
+
+**Not proven here:** the instrumented layer, which has no test that drives traffic through the
+tunnel; the retest on the family phone follows the release.

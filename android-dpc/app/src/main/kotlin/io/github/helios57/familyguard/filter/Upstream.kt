@@ -38,6 +38,16 @@ interface UpstreamListener {
     /** [bytes] is only valid for the duration of the call; copy anything kept past it. */
     fun onData(bytes: ByteArray, offset: Int, length: Int)
 
+    /**
+     * [count] more of the bytes given to [Upstream.send] are now in the socket's kernel buffer.
+     *
+     * This is what lets a flow reopen the window it advertises to the app: a byte handed over is
+     * not a byte gone, and until it is written the flow has to keep room for it. Not reported, the
+     * window only ever shrinks — which is exactly what happened before 0.6.44, when nothing called
+     * this. A no-op where nothing waits on it.
+     */
+    fun onWritten(count: Int) {}
+
     /** The destination closed cleanly. */
     fun onClosed()
 

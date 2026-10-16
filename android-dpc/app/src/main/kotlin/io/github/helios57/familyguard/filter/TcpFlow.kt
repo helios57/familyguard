@@ -143,8 +143,26 @@ class TcpFlow(
     /** Everything the app has sent that has not been decided on yet. */
     private val sniffed = ByteArrayOutputStream()
 
-    /** Bytes handed to the service for the upstream socket that it has not reported written. */
+    /**
+     * Bytes handed to the service for the upstream socket that it has not reported written.
+     *
+     * It shrinks only through [upstreamWrote]. Until 0.6.44 nothing called that, so this only ever
+     * grew: every connection could carry 64 KiB from the app in its whole life and then advertised
+     * a zero window for good. Measured 2026-10-16 on the family phone: MuPlay's one keep-alive
+     * connection to its server took exactly 482 small requests, then sat with its send queue full
+     * until the app timed out — while downloads, which this counter does not touch, kept working.
+     */
     private var upstreamQueued: Int = 0
+
+    /**
+     * The window most recently put on the wire, as the app's stack read it (clamped to 16 bits).
+     *
+     * Kept because a window that reopens has to be *said*. The app's stack only learns of room from
+     * a segment we send, and on a connection where the app is the one waiting there is no segment
+     * of ours coming otherwise: it would sit on a zero window until its persist timer fired, which
+     * Linux backs off to two minutes.
+     */
+    private var lastAdvertised: Int = 0
 
     /**
      * Our unacknowledged data, kept so a duplicate ACK can be answered.
@@ -187,10 +205,30 @@ class TcpFlow(
      */
     fun upstreamShouldPause(): Boolean = pendingToClient.size() >= PENDING_CAPACITY
 
-    /** The service reports what it actually managed to write, so the window can reopen. */
-    fun upstreamWrote(count: Int) {
+    /**
+     * The service reports what it actually managed to write to the upstream socket, so the window
+     * can reopen — and, when it has reopened by enough to matter, the app is told so.
+     *
+     * The announcement follows the receiver half of RFC 1122 §4.2.3.3 (silly-window avoidance): a
+     * pure window update only once the window has grown by a full segment, or by half the buffer,
+     * over what the app was last told. Announcing every few bytes would cost a packet per socket
+     * write; announcing less would leave a stalled sender stalled.
+     */
+    fun upstreamWrote(count: Int): List<FlowEffect> {
+        if (count <= 0) return emptyList()
         upstreamQueued = (upstreamQueued - count).coerceAtLeast(0)
+        // After the app's FIN it will send nothing more, so there is nobody to tell.
+        if (phase != Phase.OPEN || finReceived) return emptyList()
+        val growth = currentWindow() - lastAdvertised
+        if (growth < minOf(maximumSegment, RECEIVE_CAPACITY / 2)) return emptyList()
+        return listOf(FlowEffect.ToClient(ack()))
     }
+
+    /** What [advertisedWindow] is once written into the header's 16 bits. */
+    private fun currentWindow(): Int = advertisedWindow().coerceAtMost(MAX_UNSCALED_WINDOW)
+
+    /** The window for a segment about to be sent, remembered as the one the app now believes. */
+    private fun announceWindow(): Int = currentWindow().also { lastAdvertised = it }
 
     // ---- from the app --------------------------------------------------------------------------
 
@@ -241,6 +279,17 @@ class TcpFlow(
         }
 
         if (phase == Phase.DONE) return effects
+
+        if (tcp.payloadLength == 0 && (!tcp.isFin || finReceived) &&
+            tcp.sequenceNumber == ((receiveNext - 1) and 0xFFFFFFFFL)
+        ) {
+            // A zero-window probe or a keep-alive: both are sent one byte *behind* what we have
+            // acknowledged, precisely so that the receiver answers. The answer carries our current
+            // window, which is how a sender whose window update went missing finds out it may send.
+            // Ignoring it, as this did, leaves such a sender probing into silence. A FIN sent again
+            // (our acknowledgement of the first did not land) has the same shape and the same answer.
+            return effects + FlowEffect.ToClient(ack())
+        }
 
         if (tcp.payloadLength > 0) {
             if (tcp.sequenceNumber != receiveNext) {
@@ -334,7 +383,7 @@ class TcpFlow(
                     sequence = sendNext,
                     acknowledgement = receiveNext,
                     flags = TcpHeader.FLAG_ACK or TcpHeader.FLAG_PSH,
-                    window = advertisedWindow(),
+                    window = announceWindow(),
                     payload = bytes,
                     payloadOffset = at,
                     payloadLength = take,
@@ -463,7 +512,7 @@ class TcpFlow(
         sequence = initialSequence,
         acknowledgement = receiveNext,
         flags = TcpHeader.FLAG_SYN or TcpHeader.FLAG_ACK,
-        window = advertisedWindow(),
+        window = announceWindow(),
     )
 
     private fun ack(): ByteArray = segment(TcpHeader.FLAG_ACK)
@@ -489,7 +538,7 @@ class TcpFlow(
         sequence = sendNext,
         acknowledgement = receiveNext,
         flags = flags,
-        window = advertisedWindow(),
+        window = announceWindow(),
     )
 
     companion object {
@@ -507,6 +556,12 @@ class TcpFlow(
 
         /** How much the app may have in flight towards us before it has to wait. */
         const val RECEIVE_CAPACITY = 64 * 1024
+
+        /**
+         * The largest window a header can carry without window scaling, which the SYN-ACK does not
+         * offer. [RECEIVE_CAPACITY] is one more than this, and [PacketBuilder] clamps it.
+         */
+        const val MAX_UNSCALED_WINDOW = 0xFFFF
 
         /** How much we may have in flight towards the app, on top of whatever window it offers. */
         const val SEND_CAPACITY = 64 * 1024

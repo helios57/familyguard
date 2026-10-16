@@ -121,6 +121,15 @@ def make_certificate(tmpdir: str) -> tuple[str, str]:
 LARGE = os.urandom(4 << 20)
 LARGE_SHA = hashlib.sha256(LARGE).hexdigest()
 
+# FR-6.13, the other direction.  Until 0.6.44 the relay never reopened the window it offered the
+# app, so one connection could carry 64 KiB FROM the app in its whole life and then stalled with a
+# zero window: on the family phone in October 2026 a music app's keep-alive connection took exactly
+# 482 small requests and then hung.  The download above stayed green throughout, because downloads
+# never touched that counter.  The server answers with the hash of what reached it, so a short or
+# reordered upload cannot pass.
+UPLOAD = os.urandom(4 << 20)
+UPLOAD_SHA = hashlib.sha256(UPLOAD).hexdigest()
+
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802  (the base class names it)
@@ -131,6 +140,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(LARGE)
             return
         payload = BODY.encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_POST(self) -> None:  # noqa: N802  (the base class names it)
+        remaining = int(self.headers.get("Content-Length", "0"))
+        digest = hashlib.sha256()
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 65536))
+            if not chunk:
+                break
+            digest.update(chunk)
+            remaining -= len(chunk)
+        payload = digest.hexdigest().encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
@@ -190,6 +214,25 @@ def fetch_large(name: str) -> tuple[int, int, str]:
     return result.returncode, len(result.stdout), hashlib.sha256(result.stdout).hexdigest()
 
 
+def send_large(name: str, tmpdir: str) -> tuple[int, str]:
+    """POST UPLOAD as the client uid.  Returns (curl exit status, the hash the server received)."""
+    path = os.path.join(tmpdir, "realtun-upload.bin")
+    with open(path, "wb") as handle:
+        handle.write(UPLOAD)
+    os.chmod(path, 0o644)
+    result = subprocess.run(
+        [
+            "setpriv", "--reuid", str(CLIENT_UID), "--regid", str(CLIENT_UID), "--clear-groups",
+            "curl", "-sS", "-k", "--max-time", "30",
+            "--resolve", f"{name}:{SERVER_PORT}:{SERVER_ADDRESS}",
+            "-H", "Expect:", "--data-binary", f"@{path}",
+            f"https://{name}/upload",
+        ],
+        capture_output=True, text=True,
+    )
+    return result.returncode, result.stdout.strip()
+
+
 def arm(label: str, tun_fd: int, classpath: str, rules: str, tmpdir: str) -> dict[str, tuple[int, str]]:
     rules_path = os.path.join(tmpdir, f"sni-rules-{label}.txt")
     with open(rules_path, "w", encoding="utf-8") as handle:
@@ -201,6 +244,7 @@ def arm(label: str, tun_fd: int, classpath: str, rules: str, tmpdir: str) -> dic
     try:
         results = {BLOCKED_NAME: fetch(BLOCKED_NAME), ALLOWED_NAME: fetch(ALLOWED_NAME)}
         results["large"] = fetch_large(ALLOWED_NAME)
+        results["upload"] = send_large(ALLOWED_NAME, tmpdir)
     finally:
         log = list(tunnel.log) + [f"packets: tun->filter {tunnel.from_tun}, filter->tun {tunnel.to_tun}"]
         tunnel.close()
@@ -244,6 +288,11 @@ def main() -> int:
                 intact = "intact" if digest == LARGE_SHA else f"CORRUPT ({size} of {len(LARGE)} bytes)"
                 print(f"    {'4 MiB download':26} curl={status:<3} {intact}")
                 continue
+            if name == "upload":
+                status, digest = outcome
+                intact = "intact" if digest == UPLOAD_SHA else f"NOT RECEIVED WHOLE ({digest[:16] or 'no answer'})"
+                print(f"    {'4 MiB upload':26} curl={status:<3} {intact}")
+                continue
             status, body = outcome
             verdict = CURL_STATUS.get(status, f"curl error {status}") if status != 0 else (body or "empty")
             print(f"    {name:26} curl={status:<3} {verdict}")
@@ -276,6 +325,14 @@ def main() -> int:
                 f"{label}: a 4 MiB download through the tunnel arrived as {size} of {len(LARGE)} bytes "
                 f"(curl={status}) with a different hash -- the relay lost or reordered data, which "
                 f"breaks every large download on the phone"
+            )
+
+        status, digest = results["upload"]
+        if digest != UPLOAD_SHA:
+            failures.append(
+                f"{label}: a 4 MiB upload through the tunnel did not reach the server whole "
+                f"(curl={status}, server hash {digest[:16] or 'none'}) -- the relay stopped taking "
+                f"bytes from the app, which hangs every app that sends more than a window"
             )
 
     if failures:

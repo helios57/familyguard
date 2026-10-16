@@ -243,6 +243,10 @@ class NioUpstreamPool(
                 if (!channel.finishConnect()) return
                 connected = true
                 listener.onConnected()
+                // The app may have finished before the socket did. closeSend() could not shut a
+                // socket that was not connected yet, and with nothing queued no write readiness
+                // would ever come to do it here — so the half-close would never reach the server.
+                if (sendClosed && synchronized(outgoing) { outgoing.isEmpty() }) shutdownOutput()
                 interest()
                 return
             }
@@ -276,15 +280,27 @@ class NioUpstreamPool(
         }
 
         private fun flush() {
-            synchronized(outgoing) {
-                while (outgoing.isNotEmpty()) {
-                    val head = outgoing.peek() ?: return
-                    channel.write(head)
-                    if (head.hasRemaining()) return
-                    outgoing.poll()
+            var written = 0
+            try {
+                synchronized(outgoing) {
+                    while (outgoing.isNotEmpty()) {
+                        val head = outgoing.peek() ?: break
+                        written += channel.write(head)
+                        if (head.hasRemaining()) break
+                        outgoing.poll()
+                    }
                 }
+            } finally {
+                // Outside the lock, always. The router calls send() holding its own lock and then
+                // takes this one; reporting from inside it would take the two in the opposite
+                // order and deadlock the tunnel under exactly the load that makes writes partial.
+                if (written > 0) listener.onWritten(written)
             }
-            if (sendClosed) shutdownOutput()
+            // Asked again rather than remembered from the loop: while the report above waited for
+            // the router's lock, the app's last bytes and its FIN can both have arrived. Shutting
+            // down on the stale answer would put the FIN ahead of them — measured, by
+            // TcpRelayThroughputTest, as an upload that arrived 946 bytes short.
+            if (sendClosed && synchronized(outgoing) { outgoing.isEmpty() }) shutdownOutput()
         }
 
         private fun flushThenShutdown() {
