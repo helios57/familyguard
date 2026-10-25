@@ -129,7 +129,8 @@ Applied at provisioning and re-applied on every boot:
 - FR-3.2 Measurement uses a monotonic clock, so changing the wall clock cannot inflate or reset it.
 - FR-3.3 Measurement pauses while the screen is off.
 - FR-3.4 A per-child global daily limit (minutes) is enforced. Reaching it suspends non-exempt apps
-  for the rest of the day; the day boundary is the device's local midnight.
+  for the rest of the day; the day boundary is the device's local midnight. The limit is switched on
+  and off explicitly, and on at 0 minutes is a limit (FR-30.6).
 - FR-3.5 The console shows usage per child and per app, for a day the parent chooses. Today is where
   it opens and there is no way to step past it — a day that cannot have happened yet renders as an
   empty card, which is indistinguishable from a phone that stopped reporting.
@@ -218,8 +219,9 @@ Applied at provisioning and re-applied on every boot:
 - FR-3.11 **Extra time for today.** A parent can add minutes to a child's daily limit for the
   current day only, from the console (+15, +30, +60) or the API. The extra time belongs to the
   child's calendar day in the policy's timezone and ends at its midnight even on a phone that is
-  offline and cannot be told. Grants on one day add up, to at most a day's 1 440 minutes; with no
-  daily limit there is nothing to add to, and the request says so. Every grant is audited.
+  offline and cannot be told. Grants on one day add up, to at most a day's 1 440 minutes; with the
+  daily limit switched off there is nothing to add to, and the request says so — on at 0 minutes is a
+  limit, and extra time opens it (FR-30.6). Every grant is audited.
 - FR-3.12 **Bedtime and the daily limit pause what a child can open**, and nothing else: the phone
   reports which apps have a launcher entry, and an app that has none — the hundred system services
   every phone carries, an emergency handler, a sync agent, a keyboard — is left running. A parent's
@@ -445,7 +447,10 @@ The parent triggers these from the console; the device acts as soon as it receiv
   button, on either volume key, or on the side key turning the screen on or off. Two things do not
   count: the screen waking in the first 2 seconds (the siren's own full-screen launch does that), and
   the screen going off by its own timeout (the stop screen keeps it on, so only the side key turns it
-  off). `STOP_ALARM` and the 5-minute end still stop it as before.
+  off). From Android 16 a volume key stops it whatever holds the focus — the notification shade pulled
+  down over the Stopp screen, a system dialog, or no Stopp screen at all; below 16 that needs the
+  phone maker's opt-in, and without it the shade's own Stopp button and the side key remain. `STOP_ALARM` and the 5-minute end still
+  stop it as before.
 
 ### FR-10 Telemetry
 The device periodically reports: battery level, charging state, screen state, connectivity, OS
@@ -939,8 +944,8 @@ it should be intuitive (bonus-time stays a week, additional time stays till midn
 reset at midnight) make the app on the phone intuitive and easy to understand, add a button -> ask
 for more time"*.
 
-- FR-28.1 **Asking.** The phone's Heute screen offers *Mehr Zeit erbitten* while the profile has a
-  daily limit and is neither paused nor in bedtime: 15, 30 or 60 minutes and an optional note
+- FR-28.1 **Asking.** The phone's Heute screen offers *Mehr Zeit erbitten* while the profile's daily
+  limit is switched on (at any minutes, 0 included — FR-30.6) and it is neither paused nor in bedtime: 15, 30 or 60 minutes and an optional note
   (≤ 140 characters), `POST /device/time-requests`. One request waits at a time; three a day; the
   server must be reachable, and the phone says so when it is not. A request gives nothing by itself.
   Audited as `TIME_REQUESTED` (the phone's act).

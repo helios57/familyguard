@@ -9483,3 +9483,133 @@ both ways never needs the pure update. **4 probes, 4 red (the realtun one counte
 
 **Not proven here:** the instrumented layer, which has no test that drives traffic through the
 tunnel; the retest on the family phone follows the release.
+
+
+## Phase 60 — learning apps earn time, and any button stops the siren (0.6.45, FR-30, FR-9.4)
+
+Two requests on one day. The owner: *"all the apps under <prefix>.\* … do add extra time when used. and
+the default time should be 0 for the moment, so the kids have to play the learning-games to get time
+for movies"*, corrected to *"like bonus-time, it should not decay for a week"*. And: *"Wenn das Handy
+klingelt (Suchfunktion) soll es aufhören zu klingeln wenn ein Knopf betätigt wird."* Design:
+`docs/superpowers/specs/2026-10-25-learning-apps-earn-time-design.md`; plan:
+`docs/superpowers/plans/2026-10-25-learning-apps-earn-time.md`.
+
+**Learning apps (FR-30).** A family setting holds package-name prefixes (migration 0030,
+`families.learning_prefixes`); `IsLearning` is a plain prefix match, the same in the Go and Kotlin
+engines and pinned by shared vectors. A learning app is always free, and its foreground minutes are
+credited as Bonuszeit to the day they were played: the phone keeps a third cumulative ledger beside
+the day totals and the task credits (`LearningAccount`), counts only while it is enforcing, and
+reports it as `learning` with its usage; the server keeps the larger of what it has and what it is
+sent, per device and day, so a re-sent report never doubles a credit. The balance the server sends
+leaves out this device's today, and the phone adds its own count, so a minute learned offline is
+spendable at the phone's next re-evaluation.
+
+**A daily limit of 0 is a limit.** Until now `daily_limit_minutes = 0` meant *no limit*, everywhere.
+A policy now carries `daily_limit_enabled` beside the minutes; the migration set it exactly where the
+minutes were above 0, and a request that sends only minutes keeps the old meaning, so a console from
+before 0.6.45 cannot lock a phone by sending 0.
+
+**Rulings** (each recorded in the plan's ledger with what it costs if wrong): the prefix shape refuses
+empty parts (`org..x`); reading the prefixes is admins-only, as the family blocklist is (FR-20.1), and
+an API key may set them, because MCP is one; `fgctl` gains no policy setter — `set_policy` is the
+writer and `fgctl policy` now prints *off* or *N minutes*; a blocked learning app is shown on the Apps
+page by matching the prefixes from the desired-state input, since the engine drops it from
+`learning_packages`; a day with the limit on at 0 and nothing used is drawn as a full bar that is not
+red.
+
+**The siren (FR-9.4).** A ringing siren now shows a full-screen *Stopp* screen over the lock screen,
+and any button stops it: the screen's button or anywhere on it, Back, Home, Recents, either volume
+key (a key event on the screen), and the side key — which an app never sees as a key. With the
+display off it shows up as the display turning on, and with the Stopp screen holding the display on,
+as the display turning off; `SirenKeys` decides which of those is a press: a display-on inside 2 s of
+the start is the screen's own, and a display-off counts only while the screen holds it on. The screen
+is started directly as well as by the full-screen intent, because on an unlocked phone in use a
+full-screen intent is only a heads-up.
+
+A volume key reaches the Stopp screen only while it holds the focus, and the emulator proof found
+that it does not always: in 2 of 6 runs the launcher's *Application Not Responding* dialog held the
+focus at the press, the key went to the dialog, and the siren rang on. The same happens under the
+pulled-down notification shade, under any system dialog, and when the platform shows only the
+heads-up. So while the siren rings the phone also holds a **media session** — playing, with a remote
+volume of its own and no media notification, so no player appears — and a key the focused window
+does not consume goes there; every adjustment is a press. With the Stopp screen focused the screen
+consumes the key first, and only the first press stops.
+
+That route is complete only from Android 16. Read in the platform source,
+`MediaSessionRecord.canHandleVolumeKey` in android13/14/15-release hands a key to a remote-volume
+session only when the maker set `config_volumeAdjustmentForRemoteGroupSessions` or the app owns a
+MediaRouter2 routing session; android16-release and main drop both conditions. The stock API 33 image
+sets neither and logs *"No routing session for io.github.helios57.familyguard"*. So on the API 33
+family phone a volume key under the shade or a system dialog stops nothing unless its maker opted
+in, and the shade's own Stopp button and the side key remain. A MediaRouter2 provider faking a
+remote route would close the gap, and that is a workaround dressed as a feature, so it was not done.
+
+The emulator's software-rendered launcher and System UI raise *Application Not Responding* often
+enough to hold the focus at a press. The test therefore sets `hide_error_dialogs` while it runs and
+restores it afterwards: the basic cases are about a key reaching the Stopp screen, and the case where
+something else holds the focus is the shade, pulled down on purpose.
+
+### 60.1 — tests and calibration
+
+Server: `TestSharedVectors` (15 new learning and switch vectors, 69 → 84; the Kotlin engine runs the
+same file in `EnforcementEngineVectorsTest`), `TestWhatCountsDoesNotDependOnTheMoment`, `TestLearningReachesTheEngineWithoutThisDevicesToday`;
+e2e `learning_test.go` (prefixes, credits, idempotence, the switch, the migration), `learning_cli_test.go`
+(`fgctl learning-apps`, MCP), `learning_console_test.go` (a real Chrome at 360 and 1440 px: the
+Lern-Apps card, the Apps labels and Sperren, *davon erspielt*, on at 0 saved as on). Phone:
+`LearningAccountTest`, `SynchronizerTest`, `TodayReportTest`, `TimeViewTest`, `SirenKeysTest`
+(1053 unit tests). And two proofs on a real emulator with the real DPC (`tests/android/learning.sh`,
+`tests/android/siren.sh`), each passed on both images, API 37 and API 33 (no API 36 image exists for
+the emulator; the API 36 family phone is the owner's measurement):
+
+- **Learning, offline.** On at 0 with a counted app (Camera2) and a learning app (DeskClock, named by
+  its whole package as the prefix): the counted app is paused and the learning app is not; then with
+  wifi and data off, 2½ minutes in the learning app open the counted app at the phone's next poll
+  (4m55s after learning began; 4m57s on API 33), and using it pauses it again (5m1s). The first runs found two things
+  about the harness, not the product: Calendar cannot stand in for either app — offline, its first
+  launch hands over to a Google sign-in error screen in another package — and the emulator has no
+  usage access until it is granted, so the phone measured nothing and said *screen time NOT
+  MEASURED*, exactly as a phone set up without that step would.
+- **Siren.** Untouched for 10 s it still rings (the negative control: a siren that ended by itself
+  would otherwise read as stopped by a key); volume down 3 s in silences it in 0.2–0.6 s, the side key
+  in about 1 s, and volume up with the notification shade pulled down over the Stopp screen in 0.5 s —
+  read from `dumpsys audio`, never from the app, and with the focused window logged at every press.
+  The shade case is checked to have the focus elsewhere before it presses, or it would prove nothing;
+  below API 36 it is reported NOT MEASURED, and the script's result line says so. Repeated: 2 of 2
+  on API 37 with all three cases, 4 of 4 on API 33 with two, after `hide_error_dialogs`.
+
+Probes, each red on its own assertion and then restored (checked with `cmp` against a saved copy):
+
+| probe | test | result |
+|---|---|---|
+| `IsLearning` never matches (`&& false`) | `TestSharedVectors`, `TestOnlyWhatTheLimitPausesCountsAgainstIt` | **red**: every learning vector |
+| the switch ignored, `LimitOn` back to `minutes > 0` | `TestSharedVectors` | **red**: *switched on at 0 minutes, every counted app is paused* and 8 more |
+| the exempt probe does not force the switch on | `TestWhatCountsDoesNotDependOnTheMoment` | **red**: *what counts changed with the moment* |
+| the resolver does not leave out this device's today | `TestLearningReachesTheEngine…` | **red**: *learning credits leave out 0000… want this device* |
+| the migration turns on every policy (`>= 0`) | `TestMigrationKeepsZeroAsNoLimit` | **red**: *a policy with 0 minutes came out of the migration with a limit of 0* |
+| the learning merge takes the new report, not the larger | `TestLearningUsageEarnsBonuszeit` | **red**: *after re-sent and smaller reports: learned 4 … want 7* |
+| minutes alone at 0 read as on | `TestDailyLimitSwitch` | **red**: *minutes 0 alone: Enabled:true, want off* |
+| the store returns nil prefixes | `TestAFreshSystemShowsAsEmpty` | **red**: *"prefixes" came back as null* |
+| `fgctl policy` always prints minutes | `TestFgctlLearningApps` | **red** (after the assertion was tightened, below) |
+| MCP `set_policy` drops the switch | `TestMCPSetLearningApps` | **red**: *the server holds {Enabled:false Minutes:0}* |
+| the Kotlin engine's learning match broken | `EnforcementEngineVectorsTest` | **red**: the learning vectors |
+| `LearningAccount` credits while not enforcing | `LearningAccountTest` | **red**: exactly the paused case |
+| the Synchronizer drops the phone's own learning | `SynchronizerTest` | **red**: *expected 10 but was 3* |
+| no app is a learning app on Heute | `TodayReportTest` | **red**: *a learning app is named as one* |
+| *spiel ein Lernspiel* shown without a learning app | `TimeViewTest` | **red**: *pointed at a learning game only when there is one* |
+| the console saves minutes without the switch | `TestConsoleDailyLimitZero` | **red**: *the server holds enabled=false minutes=0* |
+| the console's learning set never matches | `TestConsoleLearningApps` | **red** at both widths: the rule chip is back |
+| the siren's grace is 0 | `SirenKeysTest` | **red**: exactly `screenOnInsideGraceIsIgnored` |
+| the Stopp screen ignores every key (`event.action == 99`) | emulator siren (API 37) | **red**: *volume down: 5s after the press the alarm player is started=true* |
+| the media session's volume never counts | emulator siren (API 37) | **red**: exactly the shade case, the other two green |
+| both display rules broken (grace never ends, display-off never a press) | emulator siren (API 37) | **red**: *side key: 5s after the press … started=true* |
+| `LearningAccount` credits nothing (`it > 86_400_000L`) | emulator learning (API 37) | **red**: *com.android.camera2 … suspended="true" after 7m0s* |
+
+Four probes stayed green, and each is information rather than a pass. The store's nil-prefixes probe
+first set `out = nil` inside a branch pgx never takes (it returns an empty, non-nil slice for `'{}'`),
+so it was redone as `return nil, nil`. The first `fgctl policy` probe stayed green because *off* also
+appears on the bedtime line; the assertion now reads the daily-limit line only. And each display rule
+broken **alone** leaves the side key working: with the display-off rule gone, locking the phone makes
+the platform fire the full-screen intent again, the Stopp screen turns the display on, and the
+display-on rule stops it (*siren stopped by display on*); with the display-on rule gone, display-off
+carries it. Two independent routes, so only breaking both shows the test can see a dead side key —
+that is the probe counted above. **22 probes, 22 red. Cumulative: 545.**

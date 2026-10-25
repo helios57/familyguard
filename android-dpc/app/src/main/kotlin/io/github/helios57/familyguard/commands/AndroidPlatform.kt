@@ -16,6 +16,9 @@ import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.Ringtone
 import android.media.RingtoneManager
+import android.media.VolumeProvider
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Build
 import android.os.CancellationSignal
 import android.os.Handler
@@ -61,6 +64,9 @@ class AndroidSirenDevice(
     private val keys = AtomicReference<SirenKeys?>(null)
 
     private val screenWatched = AtomicBoolean(false)
+
+    /** The volume keys' route that does not depend on the Stopp screen holding the focus; null while silent. */
+    private val volumeKeys = AtomicReference<MediaSession?>(null)
 
     /**
      * The side key, which no app is told about directly: with the display off a press turns it on,
@@ -216,6 +222,7 @@ class AndroidSirenDevice(
                 ContextCompat.RECEIVER_NOT_EXPORTED,
             )
         }
+        listenToVolumeKeys(rules)
         manager.notify(SIREN_NOTIFICATION_ID, builder.build())
         // A device owner may start an activity from the background. If the platform refuses anyway,
         // the full-screen intent and the notification's button are still there, so this is logged
@@ -227,9 +234,45 @@ class AndroidSirenDevice(
     override fun hideStopControl() {
         keys.set(null)
         SirenActivity.pressed = null
+        volumeKeys.getAndSet(null)?.let { runCatching { it.release() } }
         if (screenWatched.compareAndSet(true, false)) runCatching { context.unregisterReceiver(screen) }
         context.sendBroadcast(Intent(SirenActivity.ACTION_FINISHED).setPackage(context.packageName))
         context.getSystemService(NotificationManager::class.java)?.cancel(SIREN_NOTIFICATION_ID)
+    }
+
+    /**
+     * A volume key reaches the Stopp screen only while it holds the focus, and anything over it takes
+     * that away: the notification shade pulled down, a system dialog, or the platform showing the
+     * heads-up instead of the screen. A key the focused window does not consume goes to the playing
+     * media session, so while the siren rings this is one — playing, with a remote volume of its own,
+     * whose every adjustment is a press. It plays nothing and posts no media notification, so it
+     * shows no player; the tone stays on the alarm stream.
+     *
+     * From API 36 the platform always hands a volume key to such a session. Below it, only where the
+     * maker enabled `config_volumeAdjustmentForRemoteGroupSessions` (`MediaSessionRecord
+     * .canHandleVolumeKey`); the stock API 33 image does not, logs "No routing session", and adjusts
+     * the system stream instead. There a key under the shade or a system dialog stops nothing, and
+     * the notification's own button and the side key are what is left. The session is still opened
+     * on those versions, because a maker that enabled it gets the route for free.
+     *
+     * Started from whatever thread shows the control, so the callbacks get the main looper
+     * explicitly. A session that will not open costs this route only, and is logged.
+     */
+    private fun listenToVolumeKeys(rules: SirenKeys) {
+        val session = runCatching {
+            MediaSession(context, TAG).apply {
+                setCallback(object : MediaSession.Callback() {}, Handler(Looper.getMainLooper()))
+                setPlaybackToRemote(object : VolumeProvider(VOLUME_CONTROL_RELATIVE, 1, 1) {
+                    override fun onAdjustVolume(direction: Int) {
+                        if (rules.onKey(SystemClock.elapsedRealtime())) pressed("a volume key")
+                    }
+                })
+                setPlaybackState(PlaybackState.Builder().setState(PlaybackState.STATE_PLAYING, 0, 1f).build())
+                isActive = true
+            }
+        }.onFailure { Log.w(TAG, "the volume keys cannot reach the siren off the Stopp screen: ${it.message}") }
+            .getOrNull() ?: return
+        volumeKeys.getAndSet(session)?.let { runCatching { it.release() } }
     }
 
     /**

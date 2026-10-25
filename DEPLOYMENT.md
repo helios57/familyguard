@@ -1012,6 +1012,33 @@ cluster. Two settings, both optional:
 | `CALENDAR_MAX_AGE` | `30m` | how old the kept copy may be before a read fetches it again (in the background; the read answers from the copy) |
 | `CALENDAR_ALLOW_LOCAL` | `false` | lifts the fence and allows `http://` — for a bench whose calendars are served locally. **Never in a deployment.** |
 
+## Learning apps (FR-30)
+
+Which apps are learning apps is a **family** setting: a list of package-name prefixes, empty in a new
+installation, so nothing changes until somebody sets one. An app on a child's phone whose package
+starts with a prefix is always free and earns its minutes as Bonuszeit, valid seven days. Set it from
+the console (*Familie → Lern-Apps*, admins), from the command line, or from MCP — not from the repo or
+the manifests, which never carry a family's package names:
+
+```bash
+fgctl learning-apps                                # the prefixes, and how many installed apps each names
+fgctl learning-apps --set org.example.learn.        # comma-separated for more than one
+fgctl learning-apps --clear
+```
+
+MCP: `get_learning_apps`, `set_learning_apps {"prefixes": [...]}`. A prefix is one or more dotted
+parts with no empty part (`org..x` and `org.*` are refused). Each line's count is the check that the
+prefix names what you meant: 0 means no phone in the family has such an app.
+
+To make the learning apps the way to earn screen time, switch the daily limit **on at 0 minutes**:
+`set_policy {"child_id": …, "daily_limit_enabled": true, "daily_limit_minutes": 0}`, or the console's
+*Regeln → Tageslimit* switch with 0 minutes. A save of `daily_limit_minutes: 0` *without* the switch
+still means "no limit", the meaning a client from before 0.6.45 relies on.
+
+The phone measures the minutes itself, so they count offline, but only with **usage access** granted
+(see [the grants Device Owner does not give you](#the-grants-device-owner-does-not-give-you)): a
+phone without it learns nothing and says *screen time NOT MEASURED* in its log.
+
 ## Push: waking a resting phone (FR-26.3)
 
 With the screen off a phone lets go of its connection and checks in every 5 minutes (FR-26.2). With
