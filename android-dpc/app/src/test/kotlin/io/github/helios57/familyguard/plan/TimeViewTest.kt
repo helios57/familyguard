@@ -4,7 +4,9 @@ import io.github.helios57.familyguard.enforce.EnforcementEngine
 import io.github.helios57.familyguard.enforce.TodayReport
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** FR-28 on the phone: the three kinds of time, and "Mehr Zeit erbitten". */
@@ -18,9 +20,13 @@ class TimeViewTest {
         extra: Int = 0,
         bonus: Int = 0,
         reason: String = "",
+        enabled: Boolean = daily > 0,
+        learned: Int = 0,
+        learningApps: Boolean = false,
     ) = TodayReport(
         usedMinutes = used, limitMinutes = maxOf(0, daily + extra), bonusMinutes = extra,
-        dailyLimitMinutes = daily, earnedMinutesLeft = bonus, suspendReason = reason, nextChangeAt = "",
+        dailyLimitMinutes = daily, dailyLimitEnabled = enabled, earnedMinutesLeft = bonus,
+        learnedMinutes = learned, hasLearningApps = learningApps, suspendReason = reason, nextChangeAt = "",
         apps = emptyList(),
     )
 
@@ -40,6 +46,22 @@ class TimeViewTest {
     fun `past the limit only the Bonuszeit is left, and a debt is not time`() {
         assertEquals(20, TimeView.card(report(used = 120, daily = 90, bonus = 20), null).leftMinutes)
         assertEquals(0, TimeView.card(report(used = 120, daily = 90, bonus = -10), null).leftMinutes)
+    }
+
+    /** FR-30.6/30.7: on at 0, what is left is only the Bonuszeit, and the learned part is named. */
+    @Test
+    fun `at a limit of 0 what is left is the Bonuszeit, and today's learning is shown`() {
+        val card = TimeView.card(report(used = 0, daily = 0, enabled = true, bonus = 7, learned = 7), null)
+        assertEquals(7, card.leftMinutes)
+        assertEquals(7, card.learnedMinutes)
+    }
+
+    /** FR-30.7: a child out of time is told how to earn more — only where a learning app exists. */
+    @Test
+    fun `out of time the child is pointed at a learning game only when there is one`() {
+        assertTrue(TimeView.learnToEarn(report(daily = 0, enabled = true, reason = "QUOTA", learningApps = true)))
+        assertFalse(TimeView.learnToEarn(report(daily = 0, enabled = true, reason = "QUOTA", learningApps = false)))
+        assertFalse("a pause is not lifted by learning", TimeView.learnToEarn(report(reason = "PAUSED", learningApps = true)))
     }
 
     @Test

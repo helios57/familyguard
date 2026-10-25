@@ -61,6 +61,7 @@ class SynchronizerTest {
         localUsedMinutes: (Input) -> Int = { 0 },
         localUsedMinutesByPackage: (Input) -> Map<String, Int> = { emptyMap() },
         localEarnedMinutes: (Input) -> Int = { 0 },
+        localLearningMinutes: (Input) -> Int = { 0 },
         onEnforced: (Input, DesiredState) -> Unit = { _, _ -> },
         onAlarm: (io.github.helios57.familyguard.alarm.AlarmSchedule) -> Unit = {},
         onAgenda: (io.github.helios57.familyguard.agenda.AgendaBlock) -> Unit = {},
@@ -76,6 +77,7 @@ class SynchronizerTest {
         localUsedMinutes = localUsedMinutes,
         localUsedMinutesByPackage = localUsedMinutesByPackage,
         localEarnedMinutes = localEarnedMinutes,
+        localLearningMinutes = localLearningMinutes,
         onEnforced = onEnforced,
         onAlarm = onAlarm,
         onAgenda = onAgenda,
@@ -339,6 +341,21 @@ class SynchronizerTest {
         assertEquals(0, result.state.earnedMinutesLeft)
         assertEquals("the attribution context is built from the input the engine really ran on",
             30, seen?.earnedSpentMinutesToday)
+    }
+
+    /**
+     * FR-30.5: a minute learned offline is spendable at once, because the phone's own count is the
+     * current one — and merged with `max`, so a phone whose ledger was cleared keeps the server's.
+     */
+    @Test
+    fun `learning the phone measured itself is spendable before the server has seen it`() {
+        answerWithQuota(limit = 0, serverUsed = 0, serverLearned = 3, limitEnabled = true)
+
+        val ahead = synchronizer(localLearningMinutes = { 10 }).sync() as SyncResult.Applied
+        assertEquals(10, ahead.state.earnedMinutesLeft)
+
+        val behind = synchronizer(localLearningMinutes = { 2 }).sync() as SyncResult.Applied
+        assertEquals("a phone that measured less keeps the server's 3", 3, behind.state.earnedMinutesLeft)
     }
 
     @Test
@@ -857,7 +874,14 @@ class SynchronizerTest {
 
     private val events = mutableListOf<String>()
 
-    private fun answerWithQuota(limit: Int, serverUsed: Int, earnedAvailable: Int = 0, serverEarnedSpent: Int = 0) {
+    private fun answerWithQuota(
+        limit: Int,
+        serverUsed: Int,
+        earnedAvailable: Int = 0,
+        serverEarnedSpent: Int = 0,
+        serverLearned: Int = 0,
+        limitEnabled: Boolean? = null,
+    ) {
         server.answerWith { request ->
             if (request.path.endsWith("/heartbeat")) {
                 HttpResponse(200, body = """{"policy_version":99,"pending_commands":2}""")
@@ -867,8 +891,12 @@ class SynchronizerTest {
                     body = policyBody(
                         inputAt(SERVER_NOW, dailyLimitMinutes = limit, usedMinutesToday = serverUsed).let {
                             it.copy(
-                                settings = it.settings.copy(earnedAvailableMinutes = earnedAvailable),
+                                settings = it.settings.copy(
+                                    earnedAvailableMinutes = earnedAvailable,
+                                    dailyLimitEnabled = limitEnabled,
+                                ),
                                 earnedSpentMinutesToday = serverEarnedSpent,
+                                learningMinutesToday = serverLearned,
                             )
                         }
                     ),

@@ -95,6 +95,8 @@ import io.github.helios57.familyguard.usage.DayAttribution
 import io.github.helios57.familyguard.usage.EncryptedSessionStore
 import io.github.helios57.familyguard.usage.EncryptedUsageStore
 import io.github.helios57.familyguard.usage.EarnedAccount
+import io.github.helios57.familyguard.usage.LearningAccount
+import io.github.helios57.familyguard.usage.LearningContext
 import io.github.helios57.familyguard.usage.ScreenOnClock
 import io.github.helios57.familyguard.usage.SessionLog
 import io.github.helios57.familyguard.usage.UncountedPackages
@@ -709,6 +711,8 @@ class ConnectionService : Service() {
             localUsedMinutesByPackage = { input -> reports.usedMinutesByPackageToday(input) },
             // FR-22: this phone's own attribution of earned time, and the state it attributes against.
             localEarnedMinutes = { input -> reports.earnedMinutesToday(input) },
+            // FR-30.5: and what it has learned today, which the server's balance leaves out.
+            localLearningMinutes = { input -> reports.learningMinutesToday(input) },
             onEnforced = { input, state -> reports.enforced(input, state) },
             dayPlans = io.github.helios57.familyguard.plan.EncryptedDayPlanStore(this),
             // FR-28: a parent's answer to "Mehr Zeit erbitten" reaches the child as a notification.
@@ -1116,6 +1120,7 @@ class ConnectionService : Service() {
     private fun reporting(api: ApiClient, policy: DeviceOwnerPolicy?, deviceId: () -> String): Reporting {
         val ledger = UsageLedger(EncryptedUsageStore(this))
         val earned = EarnedAccount.open(this)
+        val learning = LearningAccount.open(this)
         val sessions = SessionLog(EncryptedSessionStore(this))
         val power = getSystemService(PowerManager::class.java)
         val zone = PolicyZone()
@@ -1131,7 +1136,11 @@ class ConnectionService : Service() {
             wallClock = { System.currentTimeMillis() },
             monotonicClock = { SystemClock.elapsedRealtime() },
             // FR-22: each window, as credited, is attributed to earned time here.
-            onCredited = { credited -> earned.charge(credited) },
+            // FR-30.3: and the part of it spent in a learning app, to learning time.
+            onCredited = { credited ->
+                earned.charge(credited)
+                learning.credit(credited)
+            },
         )
         val digests = encryptedPreferences(this, INVENTORY_FILE)
         // Bound to the device record it was sent to, so a phone enrolled again sends its list to the
@@ -1145,6 +1154,7 @@ class ConnectionService : Service() {
             tracker = tracker,
             ledger = ledger,
             earned = earned,
+            learning = learning,
             zone = zone,
             uncounted = { input -> UncountedPackages.on(this, input) },
             usage = UsageReporter(ledger, sessions) { day, samples, sittings ->
@@ -1153,6 +1163,7 @@ class ConnectionService : Service() {
                         day = day,
                         samples = samples,
                         earned = earned.ledger.totals(day),
+                        learning = learning.ledger.totals(day),
                         sessions = sittings.map {
                             UsageSessionReport(
                                 packageName = it.packageName,
@@ -1767,7 +1778,12 @@ class ConnectionService : Service() {
      */
     private fun whyPaused(state: DesiredState): String = when (state.suspendReason) {
         EnforcementEngine.REASON_PAUSED -> getString(R.string.why_paused)
-        EnforcementEngine.REASON_QUOTA -> getString(R.string.why_quota, state.usedMinutes, state.quotaMinutes)
+        EnforcementEngine.REASON_QUOTA ->
+            if (io.github.helios57.familyguard.plan.TimeView.learnToEarn(state.suspendReason, state.learningPackages.isNotEmpty())) {
+                getString(R.string.why_quota_learn)
+            } else {
+                getString(R.string.why_quota, state.usedMinutes, state.quotaMinutes)
+            }
         EnforcementEngine.REASON_BEDTIME -> getString(R.string.why_bedtime, localClock(state.nextChangeAt))
         else -> getString(R.string.why_app)
     }
@@ -2275,6 +2291,8 @@ private class Reporting(
     private val ledger: UsageLedger,
     /** FR-22: the earned time this device has spent, and the context it is attributed with. */
     private val earned: EarnedAccount,
+    /** FR-30.3: the time this device has spent in learning apps, and the context it is credited with. */
+    private val learning: LearningAccount,
     private val zone: PolicyZone,
     /** FR-3.8: what this phone leaves out of its own count, the same set the server leaves out. */
     private val uncounted: (Input) -> Set<String>,
@@ -2345,6 +2363,18 @@ private class Reporting(
         val policyZone = DayAttribution.zoneOf(input.settings.timezone) ?: return
         val day = DayAttribution.key(wallClock(), policyZone)
         earned.context = EarnedAttribution.contextOf(input, state, uncounted(input), day)
+        // A paused or watch-only phone earns nothing: nothing is being limited, so nothing is earned.
+        learning.context = LearningContext(
+            day = day,
+            learning = state.learningPackages.toSet(),
+            enforcing = !input.settings.trackingOnly && state.suspendReason != EnforcementEngine.REASON_PAUSED,
+        )
+    }
+
+    /** The minutes this device has learned today (FR-30.3), the day's sum floored. */
+    fun learningMinutesToday(input: Input): Int {
+        val policyZone = DayAttribution.zoneOf(input.settings.timezone) ?: return 0
+        return learning.minutesToday(DayAttribution.key(wallClock(), policyZone))
     }
 
     /**

@@ -736,7 +736,9 @@ class RecoveryActivity : AppCompatActivity() {
         }
         val why = when (report.suspendReason) {
             EnforcementEngine.REASON_PAUSED -> getString(R.string.block_paused)
-            EnforcementEngine.REASON_QUOTA -> getString(R.string.block_quota)
+            // FR-30.7: out of time, a child with a learning game is told how to earn more.
+            EnforcementEngine.REASON_QUOTA ->
+                getString(if (TimeView.learnToEarn(report)) R.string.block_quota_learn else R.string.block_quota)
             EnforcementEngine.REASON_BEDTIME -> getString(R.string.block_bedtime)
             else -> null
         }
@@ -744,7 +746,8 @@ class RecoveryActivity : AppCompatActivity() {
         todayWhy.visibility = if (why == null) View.GONE else View.VISIBLE
 
         timeKinds.removeAllViews()
-        if (card.dailyMinutes > 0) {
+        // On at 0 is a limit too (FR-30.6): its rows read 0, which is what the child needs to see.
+        if (report.dailyLimitEnabled) {
             timeKinds.addView(kindRow(R.color.daily_green, R.string.kind_daily, duration(card.dailyMinutes),
                 getString(R.string.kind_daily_hint)))
             val extra = card.extraMinutes
@@ -757,7 +760,7 @@ class RecoveryActivity : AppCompatActivity() {
                 getString(if (extra < 0) R.string.kind_extra_less_hint else R.string.kind_extra_hint)))
         }
         val hasPlan = plan != null && plan.groups.isNotEmpty()
-        if (card.dailyMinutes > 0 || hasPlan || card.bonusMinutes != 0) {
+        if (report.dailyLimitEnabled || hasPlan || card.bonusMinutes != 0) {
             val bonus = card.bonusMinutes
             val expiry = card.bonusExpiry
             var hint = when {
@@ -767,6 +770,8 @@ class RecoveryActivity : AppCompatActivity() {
                 else -> getString(R.string.kind_bonus_hint)
             }
             if (report.earnedActive.isNotEmpty() && bonus > 0) hint = getString(R.string.kind_bonus_running) + " · " + hint
+            // FR-30.7: "Heute erspielt", once a learning app exists — 0 is worth saying then.
+            if (report.hasLearningApps) hint = getString(R.string.kind_bonus_learned, duration(card.learnedMinutes)) + " · " + hint
             timeKinds.addView(kindRow(R.color.earned_gold, R.string.kind_bonus,
                 if (bonus < 0) "−" + duration(-bonus) else duration(bonus), hint, debt = bonus < 0))
         }
@@ -809,6 +814,7 @@ class RecoveryActivity : AppCompatActivity() {
     }
 
     private fun ruleText(app: TodayReport.AppLine): String = when (app.label) {
+        TodayReport.Label.LEARNING -> getString(R.string.rule_learning)
         TodayReport.Label.ALWAYS_FREE -> getString(R.string.rule_always_free)
         TodayReport.Label.FREE_PREINSTALLED -> getString(R.string.rule_free_preinstalled)
         TodayReport.Label.NOT_COUNTED -> getString(R.string.rule_not_counted)

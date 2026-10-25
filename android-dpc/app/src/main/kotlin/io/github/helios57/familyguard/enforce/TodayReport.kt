@@ -28,6 +28,10 @@ data class TodayReport(
     val earnedMinutesLeft: Int = 0,
     /** BEDTIME or QUOTA while earned time is carrying it, else "". */
     val earnedActive: String = "",
+    /** The minutes learned today on this phone (FR-30.3), already part of [earnedMinutesLeft]. */
+    val learnedMinutes: Int = 0,
+    /** Whether the phone has a learning app at all — what makes "spiel ein Lernspiel" true advice. */
+    val hasLearningApps: Boolean = false,
     /** PAUSED, QUOTA or BEDTIME while that pauses every app that is not always free, else "". */
     val suspendReason: String,
     /** When [suspendReason] ends, RFC 3339, or "". */
@@ -56,6 +60,7 @@ data class TodayReport(
          */
         val label: Label
             get() = when {
+                rule == Rule.LEARNING -> Label.LEARNING
                 rule == Rule.ALWAYS_FREE -> Label.ALWAYS_FREE
                 rule == Rule.FREE_PREINSTALLED -> Label.FREE_PREINSTALLED
                 !counted -> Label.NOT_COUNTED
@@ -66,10 +71,13 @@ data class TodayReport(
             }
     }
 
-    enum class Label { ALWAYS_FREE, FREE_PREINSTALLED, NOT_COUNTED, BONUS, BLOCKED_BY_PARENT, OWN_LIMIT, COUNTS }
+    enum class Label { LEARNING, ALWAYS_FREE, FREE_PREINSTALLED, NOT_COUNTED, BONUS, BLOCKED_BY_PARENT, OWN_LIMIT, COUNTS }
 
-    /** [FREE_PREINSTALLED] is a preinstalled app nobody decided about (FR-5.10). */
-    enum class Rule { ALWAYS_FREE, FREE_PREINSTALLED, BONUS, OWN_LIMIT, COUNTS, BLOCKED_BY_PARENT }
+    /**
+     * [FREE_PREINSTALLED] is a preinstalled app nobody decided about (FR-5.10). [LEARNING] is free
+     * and earns Bonuszeit (FR-30.2).
+     */
+    enum class Rule { LEARNING, ALWAYS_FREE, FREE_PREINSTALLED, BONUS, OWN_LIMIT, COUNTS, BLOCKED_BY_PARENT }
 
     /** The server's reason names (httpapi.BlockedByRule and friends). */
     enum class Block { PAUSED, EARNED, QUOTA, BEDTIME, APP_LIMIT, BLOCKED, PENDING }
@@ -92,6 +100,7 @@ data class TodayReport(
             val suspended = state.suspendedPackages.toSet()
             val freeByDefault = state.freeByDefault.toSet()
             val bonus = state.bonusPackages.toSet()
+            val learning = state.learningPackages.toSet()
 
             val packages = usedByPackage.filterValues { it > 0 }.keys + pending
             val lines = packages.map { pkg ->
@@ -103,6 +112,7 @@ data class TodayReport(
                     ownLimitMinutes = own,
                     rule = when {
                         pkg in parentBlocked -> Rule.BLOCKED_BY_PARENT
+                        pkg in learning -> Rule.LEARNING
                         pkg in allowed -> Rule.ALWAYS_FREE
                         pkg in freeByDefault -> Rule.FREE_PREINSTALLED
                         pkg in bonus -> Rule.BONUS
@@ -125,6 +135,8 @@ data class TodayReport(
                 dailyLimitEnabled = state.dailyLimitEnabled,
                 earnedMinutesLeft = state.earnedMinutesLeft,
                 earnedActive = state.earnedActive,
+                learnedMinutes = input.learningMinutesToday,
+                hasLearningApps = learning.isNotEmpty(),
                 suspendReason = state.suspendReason,
                 nextChangeAt = if (state.suspendReason.isEmpty()) "" else state.nextChangeAt,
                 apps = lines,

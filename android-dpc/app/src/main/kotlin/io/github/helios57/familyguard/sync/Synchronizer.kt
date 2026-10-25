@@ -124,6 +124,14 @@ class Synchronizer(
      */
     private val localEarnedMinutes: (Input) -> Int = { 0 },
 
+    /**
+     * The minutes this device has learned today (FR-30.3), from its own [LearningAccount]. Merged
+     * with the server's figure for this device with `max`, like [localUsedMinutes]: the phone's is
+     * the current one — a minute learned with no signal is spendable at once — and a phone whose
+     * ledger was cleared keeps what the server already holds.
+     */
+    private val localLearningMinutes: (Input) -> Int = { 0 },
+
     /** Called with the input and the state each time the engine runs — FR-22 attributes from them. */
     private val onEnforced: (Input, DesiredState) -> Unit = { _, _ -> },
 
@@ -247,6 +255,7 @@ class Synchronizer(
                 localUsedMinutesByPackage(input),
             ),
             earnedSpentMinutesToday = maxOf(input.earnedSpentMinutesToday, localEarnedMinutes(input)),
+            learningMinutesToday = maxOf(input.learningMinutesToday, localLearningMinutes(input)),
         )
         val state = try {
             EnforcementEngine.compute(effective).also { onEnforced(effective, it) }

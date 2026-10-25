@@ -224,6 +224,12 @@ data class UsageRequest(
      */
     @SerialName("earned") val earned: Map<String, Long> = emptyMap(),
     /**
+     * FR-30.3: of [samples], the part of each package's day spent in a learning app while the phone
+     * was enforcing — cumulative and merged with GREATEST like them. The server turns it into
+     * Bonuszeit.
+     */
+    @SerialName("learning") val learning: Map<String, Long> = emptyMap(),
+    /**
      * The sittings this phone has measured and not yet delivered (FR-3.7).
      *
      * Rides along with the day totals rather than having a request of its own, because the two are

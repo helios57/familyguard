@@ -11,7 +11,8 @@ import io.github.helios57.familyguard.enforce.TodayReport
  *  - **Tageszeit** — the daily limit; it starts over at midnight.
  *  - **Extrazeit** — a parent's minutes for today (by hand, or as the answer to a request); it ends at
  *    midnight.
- *  - **Bonuszeit** — earned with tasks; it stays seven days and is spent after the other two.
+ *  - **Bonuszeit** — earned with tasks and with learning apps (FR-30); it stays seven days and is
+ *    spent after the other two.
  */
 object TimeView {
 
@@ -24,6 +25,8 @@ object TimeView {
         val bonusMinutes: Int,
         /** The credit with minutes left that runs out first, or null. */
         val bonusExpiry: DayCredit?,
+        /** Of today's Bonuszeit, what this phone learned today: "Heute erspielt" (FR-30.7). */
+        val learnedMinutes: Int = 0,
     )
 
     fun card(report: TodayReport, plan: DayPlan?): Card {
@@ -40,8 +43,20 @@ object TimeView {
             extraMinutes = report.bonusMinutes,
             bonusMinutes = bonus,
             bonusExpiry = plan?.let { DayPlanView.soonestExpiry(it.earned.credits) }?.takeIf { bonus > 0 },
+            learnedMinutes = report.learnedMinutes,
         )
     }
+
+    /**
+     * Whether a child out of time is told to play a learning game to earn more (FR-30.7). Only when
+     * the limit is what paused the apps and a learning app exists: advice that cannot be followed is
+     * worse than none, and no learning game lifts a pause or bedtime.
+     */
+    fun learnToEarn(report: TodayReport): Boolean = learnToEarn(report.suspendReason, report.hasLearningApps)
+
+    /** The same rule for the platform's blocked screen, which has the state and no report. */
+    fun learnToEarn(suspendReason: String, hasLearningApps: Boolean): Boolean =
+        suspendReason == EnforcementEngine.REASON_QUOTA && hasLearningApps
 
     /** What the "Mehr Zeit erbitten" place says and offers. */
     enum class Ask {

@@ -40,6 +40,28 @@ class TodayReportTest {
     private fun report(input: Input) =
         TodayReport.of(input, EnforcementEngine.compute(input), input.usedMinutesByPackage, setOf(launcher))
 
+    /** FR-30.7: a learning app is named as one, and the day's learning is reported beside the limit. */
+    @Test
+    fun `a learning app is named as one, and today's learning is reported`() {
+        val letters = "org.example.learn.letters"
+        val base = input(
+            limit = 0, used = 0, byPackage = mapOf(letters to 7, "com.example.game" to 0),
+            installed = listOf(App(letters), App("com.example.game")),
+        )
+        val learning = base.copy(
+            settings = base.settings.copy(dailyLimitEnabled = true, learningPrefixes = listOf("org.example.learn.")),
+            learningMinutesToday = 7,
+        )
+        val r = report(learning)
+        val line = r.apps.single { it.packageName == letters }
+        assertEquals(TodayReport.Rule.LEARNING, line.rule)
+        assertEquals(TodayReport.Label.LEARNING, line.label)
+        assertNull("a learning app is never paused by the limit", line.blocked)
+        assertEquals(7, r.learnedMinutes)
+        assertTrue(r.hasLearningApps)
+        assertFalse("a family with no learning apps has none", report(base).hasLearningApps)
+    }
+
     @Test
     fun `a spent daily limit pauses what counts and names the limit as the reason`() {
         val r = report(input(
