@@ -20,8 +20,10 @@ data class TodayReport(
     val limitMinutes: Int,
     /** Today's adjustment: + extra, − taken away (FR-3.11, FR-21). */
     val bonusMinutes: Int,
-    /** The plain daily limit, 0 for none — the one number that says whether there is a limit at all. */
+    /** The plain daily limit; 0 with [dailyLimitEnabled] is a day with no time of its own. */
     val dailyLimitMinutes: Int,
+    /** Whether a daily limit is in force at all (FR-30). */
+    val dailyLimitEnabled: Boolean = dailyLimitMinutes > 0,
     /** Earned time left today (FR-22), negative for an overdraft. */
     val earnedMinutesLeft: Int = 0,
     /** BEDTIME or QUOTA while earned time is carrying it, else "". */
@@ -120,6 +122,7 @@ data class TodayReport(
                 limitMinutes = state.quotaMinutes,
                 bonusMinutes = state.bonusMinutes,
                 dailyLimitMinutes = state.dailyLimitMinutes,
+                dailyLimitEnabled = state.dailyLimitEnabled,
                 earnedMinutesLeft = state.earnedMinutesLeft,
                 earnedActive = state.earnedActive,
                 suspendReason = state.suspendReason,

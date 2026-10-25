@@ -2,6 +2,7 @@ package io.github.helios57.familyguard.status
 
 import android.content.Context
 import io.github.helios57.familyguard.R
+import io.github.helios57.familyguard.enforce.EnforcementEngine
 import io.github.helios57.familyguard.enroll.EncryptedCredentialStore
 import io.github.helios57.familyguard.policy.DeviceOwnerPolicy
 import io.github.helios57.familyguard.recovery.AndroidRecoveryStore
@@ -79,7 +80,7 @@ fun deviceStatusFacts(
         screenTimeTodayMillis = screenTime,
         screenTimeUnavailableReason = runCatching { reader.unavailableReason() }
             .getOrDefault(UNKNOWN_USAGE_REASON),
-        quotaMinutes = cached?.settings?.dailyLimitMinutes ?: 0,
+        quotaMinutes = cached?.settings?.takeIf { EnforcementEngine.limitOn(it) }?.dailyLimitMinutes ?: 0,
         usageAccess = runCatching { UsageAccess.granted(app) }.getOrNull(),
         unreportedRecoveryAttempts = stores
             ?.let { runCatching { RecoveryJournal(it.journal) { }.outstanding().size }.getOrNull() }

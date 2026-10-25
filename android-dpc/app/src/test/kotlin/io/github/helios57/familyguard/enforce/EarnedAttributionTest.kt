@@ -107,6 +107,16 @@ class EarnedAttributionTest {
     }
 
     @Test
+    fun `a learning app is never charged, and a limit switched on at 0 is a budget of 0`() {
+        val c = engineContext(
+            Settings(timezone = "Europe/Zurich", dailyLimitMinutes = 0, dailyLimitEnabled = true, learningPrefixes = listOf(GAME)),
+        )
+        assertTrue("FR-30: a learning app earns time, it never spends any", GAME in c.exempt)
+        assertEquals(0L, c.budgetLeftMs)
+        assertEquals(Long.MAX_VALUE, engineContext(Settings(timezone = "Europe/Zurich", dailyLimitMinutes = 0)).budgetLeftMs)
+    }
+
+    @Test
     fun `the context knows bedtime while earned time is covering it, and a pause`() {
         val bed = Settings(timezone = "Europe/Zurich", bedtimeEnabled = true, bedtimeStart = "21:00", bedtimeEnd = "07:00",
             earnedAvailableMinutes = 30)

@@ -28,7 +28,7 @@ object TimeView {
 
     fun card(report: TodayReport, plan: DayPlan?): Card {
         val bonus = report.earnedMinutesLeft
-        val left = if (report.dailyLimitMinutes > 0) {
+        val left = if (report.dailyLimitEnabled) {
             maxOf(0, report.limitMinutes - report.usedMinutes) + maxOf(0, bonus)
         } else {
             null
@@ -55,7 +55,7 @@ object TimeView {
     }
 
     fun ask(report: TodayReport?, plan: DayPlan?): Ask {
-        if (report == null || report.dailyLimitMinutes <= 0) return Ask.HIDDEN
+        if (report == null || !report.dailyLimitEnabled) return Ask.HIDDEN
         if (report.suspendReason == EnforcementEngine.REASON_PAUSED || report.suspendReason == EnforcementEngine.REASON_BEDTIME) {
             return Ask.HIDDEN
         }

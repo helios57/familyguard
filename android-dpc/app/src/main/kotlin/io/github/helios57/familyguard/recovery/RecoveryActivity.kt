@@ -727,7 +727,7 @@ class RecoveryActivity : AppCompatActivity() {
         todaySummary.text = getString(R.string.time_used, duration(card.usedMinutes))
         // One scale: the day's time plus today's Extrazeit, so a bar at its end is a day at its end.
         // A limit of 0 with a daily limit set is no time left, which draws as a full bar.
-        if (report.dailyLimitMinutes > 0) {
+        if (report.dailyLimitEnabled) {
             todayMeter.max = maxOf(1, report.limitMinutes)
             todayMeter.progress = if (report.limitMinutes <= 0) todayMeter.max else minOf(report.usedMinutes, report.limitMinutes)
             todayMeter.visibility = View.VISIBLE

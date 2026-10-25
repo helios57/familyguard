@@ -65,6 +65,16 @@ class TimeViewTest {
     }
 
     @Test
+    fun `a daily limit switched on at 0 is a limit, with only the Bonuszeit left and a button`() {
+        val zero = TodayReport(
+            usedMinutes = 0, limitMinutes = 0, bonusMinutes = 0, dailyLimitMinutes = 0, dailyLimitEnabled = true,
+            earnedMinutesLeft = 12, suspendReason = "", nextChangeAt = "", apps = emptyList(),
+        )
+        assertEquals(12, TimeView.card(zero, null).leftMinutes)
+        assertEquals(TimeView.Ask.OFFER, TimeView.ask(zero, plan()))
+    }
+
+    @Test
     fun `no button where Extrazeit would not open anything`() {
         assertEquals(TimeView.Ask.HIDDEN, TimeView.ask(null, plan()))
         assertEquals(TimeView.Ask.HIDDEN, TimeView.ask(report(daily = 0), plan()))

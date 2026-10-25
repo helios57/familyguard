@@ -271,9 +271,10 @@ object EnforcementEngine {
         // server wrote, so a phone offline across midnight drops yesterday's by itself. A reduction
         // never takes the day below zero, and zero with a limit is a day with no time left — never
         // a day without a limit, which is why dailyLimitMinutes travels beside the quota.
-        val limit = maxOf(0, input.settings.dailyLimitMinutes)
+        val limitOn = limitOn(input.settings)
+        val limit = if (limitOn) maxOf(0, input.settings.dailyLimitMinutes) else 0
         val bonus = if (
-            limit > 0 &&
+            limitOn &&
             input.settings.bonusMinutes != 0 &&
             input.settings.bonusDay == local.toLocalDate().toString()
         ) input.settings.bonusMinutes else 0
@@ -297,11 +298,37 @@ object EnforcementEngine {
             userRestrictions = restrictions.toList(),
             quotaMinutes = quota,
             usedMinutes = input.usedMinutesToday,
-            remainingMinutes = if (limit > 0) maxOf(0, quota - input.usedMinutesToday) else 0,
+            remainingMinutes = if (limitOn) maxOf(0, quota - input.usedMinutesToday) else 0,
             bonusMinutes = bonus,
             dailyLimitMinutes = limit,
+            dailyLimitEnabled = limitOn,
             policyVersion = input.settings.version,
         )
+
+        val allowed = sortedSetOfPackages(input.settings.allowedPackages)
+
+        val blocked = sortedSetOfPackages(input.settings.blockedPackages)
+        if (input.settings.youtubeBlocked) blocked.addAll(YOUTUBE_PACKAGES)
+        // The family list is a default for every child, and a child-level ALLOW is the exemption
+        // from it (FR-18). The carve-out is one-directional on purpose: an ALLOW does not lift a
+        // BLOCK from this child's own rules, because a household default must never overrule a
+        // decision somebody made about this child. Mirrors the Go engine line for line; the shared
+        // vectors are what keep the two honest.
+        for (pkg in sortedSetOfPackages(input.settings.familyBlockedPackages)) {
+            if (pkg !in allowed) blocked.add(pkg)
+        }
+
+        // FR-30: a learning app is one the family's prefixes name and nobody blocked. It is free —
+        // no limit, bedtime, approval hold, bonus rule or allowance of its own applies — because its
+        // minutes are what the child earns time with. Only a pause and a block stop it.
+        val learning = sortedSetOf<String>()
+        for (app in input.installed) {
+            if (isLearning(app.pkg, input.settings.learningPrefixes) && app.pkg !in blocked) learning.add(app.pkg)
+        }
+
+        // FR-22 and FR-30: the Bonuszeit left is the server's balance plus what this device learned
+        // today, less what it spent today.
+        val gold = input.settings.earnedAvailableMinutes + input.learningMinutesToday - input.earnedSpentMinutesToday
 
         // ---- tracking-only: measure, do not restrain (FR-8) ----
         //
@@ -314,8 +341,9 @@ object EnforcementEngine {
             // the Go engine line for line.
             if (!input.settings.paused) return base.copy(
                 bonusPackages = sortedSetOfPackages(input.settings.bonusPackages).toList(),
-                earnedMinutesLeft = input.settings.earnedAvailableMinutes - input.earnedSpentMinutesToday,
+                earnedMinutesLeft = gold,
                 earnedSpentMinutes = input.earnedSpentMinutesToday,
+                learningPackages = learning.toList(),
             )
             val paused = sortedSetOf<String>()
             for (app in input.installed) if (app.pkg.isNotEmpty() && app.launchable != false) paused.add(app.pkg)
@@ -323,8 +351,9 @@ object EnforcementEngine {
             return base.copy(
                 suspendReason = REASON_PAUSED, suspendedPackages = paused.toList(),
                 bonusPackages = sortedSetOfPackages(input.settings.bonusPackages).toList(),
-                earnedMinutesLeft = input.settings.earnedAvailableMinutes - input.earnedSpentMinutesToday,
+                earnedMinutesLeft = gold,
                 earnedSpentMinutes = input.earnedSpentMinutesToday,
+                learningPackages = learning.toList(),
             )
         }
 
@@ -343,7 +372,7 @@ object EnforcementEngine {
         } else {
             false
         }
-        val quotaReached = limit > 0 && input.usedMinutesToday >= quota
+        val quotaReached = limitOn && input.usedMinutesToday >= quota
 
         val wanted = when {
             input.settings.paused -> REASON_PAUSED
@@ -355,23 +384,9 @@ object EnforcementEngine {
         // phone runs on it and says what it is covering. A pause and a parent's block are not
         // covered. Mirrors the Go engine line for line.
         val bonusApps = sortedSetOfPackages(input.settings.bonusPackages)
-        val gold = input.settings.earnedAvailableMinutes - input.earnedSpentMinutesToday
         val earnedActive =
             if (gold > 0 && (wanted == REASON_BEDTIME || wanted == REASON_QUOTA)) wanted else ""
         val reason = if (earnedActive.isNotEmpty()) REASON_NONE else wanted
-
-        val allowed = sortedSetOfPackages(input.settings.allowedPackages)
-
-        val blocked = sortedSetOfPackages(input.settings.blockedPackages)
-        if (input.settings.youtubeBlocked) blocked.addAll(YOUTUBE_PACKAGES)
-        // The family list is a default for every child, and a child-level ALLOW is the exemption
-        // from it (FR-18). The carve-out is one-directional on purpose: an ALLOW does not lift a
-        // BLOCK from this child's own rules, because a household default must never overrule a
-        // decision somebody made about this child. Mirrors the Go engine line for line; the shared
-        // vectors are what keep the two honest.
-        for (pkg in sortedSetOfPackages(input.settings.familyBlockedPackages)) {
-            if (pkg !in allowed) blocked.add(pkg)
-        }
 
         val suspended = sortedSetOf<String>()
         val hidden = sortedSetOf<String>()
@@ -386,6 +401,11 @@ object EnforcementEngine {
 
         for (app in input.installed) {
             if (app.pkg.isEmpty()) continue
+            if (app.pkg in learning) {
+                // FR-21: a pause takes everything the child can open, learning apps included.
+                if (reason == REASON_PAUSED && app.launchable != false) suspended.add(app.pkg)
+                continue
+            }
             // FR-5.4: with free installation off, an app the child added after the device reported
             // its first inventory waits for a parent's decision. Any of the three answers ends the
             // wait — including LIMIT, which is why that action exists: "yes, and it counts like
@@ -440,9 +460,24 @@ object EnforcementEngine {
             earnedMinutesLeft = gold,
             earnedSpentMinutes = input.earnedSpentMinutesToday,
             earnedActive = earnedActive,
+            learningPackages = learning.toList(),
             nextChangeAt = nextChangeAt(input.settings, local, zone),
         )
     }
+
+    /**
+     * Whether [settings] carry a daily limit at all (FR-30): the explicit switch when there is one,
+     * and otherwise the rule from before it existed — a limit exactly when the minutes are above 0,
+     * so a stored 0 keeps meaning "no limit". Mirrors the Go engine's LimitOn.
+     */
+    fun limitOn(settings: Settings): Boolean = settings.dailyLimitEnabled ?: (settings.dailyLimitMinutes > 0)
+
+    /**
+     * Whether [pkg] is named by one of the family's learning prefixes (FR-30). A prefix matches from
+     * the start of the name only, and an empty one matches nothing. Mirrors the Go engine's IsLearning.
+     */
+    fun isLearning(pkg: String, prefixes: List<String>): Boolean =
+        pkg.isNotEmpty() && prefixes.any { val p = it.trim(); p.isNotEmpty() && pkg.startsWith(p) }
 
     /**
      * The earliest future instant at which [compute] would return something different: the bedtime
@@ -465,7 +500,7 @@ object EnforcementEngine {
                 }
             }
         }
-        if (settings.dailyLimitMinutes > 0) {
+        if (limitOn(settings)) {
             candidates += local.toLocalDate().plusDays(1).atStartOfDay(zone)
         }
         val next = candidates.minOrNull() ?: return ""
@@ -682,6 +717,10 @@ data class Settings(
     @SerialName("bonus_packages") val bonusPackages: List<String> = emptyList(),
     /** Earned time available today: the server's balance at the start of the day plus today's credits. */
     @SerialName("earned_available_minutes") val earnedAvailableMinutes: Int = 0,
+    /** FR-30: whether [dailyLimitMinutes] is a limit at all; null keeps "a limit exactly when above 0". */
+    @SerialName("daily_limit_enabled") val dailyLimitEnabled: Boolean? = null,
+    /** FR-30: the family's learning apps, by package-name prefix. */
+    @SerialName("learning_prefixes") val learningPrefixes: List<String> = emptyList(),
 )
 
 /**
@@ -745,6 +784,8 @@ data class Input(
     @SerialName("uncounted_packages") val uncountedPackages: List<String> = emptyList(),
     /** Earned time this device spent today, attributed as it measured (FR-22). */
     @SerialName("earned_spent_minutes_today") val earnedSpentMinutesToday: Int = 0,
+    /** FR-30: the Bonuszeit this device earned today in learning apps, whole minutes. */
+    @SerialName("learning_minutes_today") val learningMinutesToday: Int = 0,
     @SerialName("now") val now: String = "",
 )
 
@@ -806,4 +847,8 @@ data class DesiredState(
     /** BEDTIME or QUOTA while earned time is covering it, else "". */
     @SerialName("earned_active") val earnedActive: String = "",
     @SerialName("bonus_packages") val bonusPackages: List<String> = emptyList(),
+    /** FR-30: the installed learning apps this state leaves free and lets earn. */
+    @SerialName("learning_packages") val learningPackages: List<String> = emptyList(),
+    /** FR-30: whether a daily limit is in force at all; [dailyLimitMinutes] may be 0 with it on. */
+    @SerialName("daily_limit_enabled") val dailyLimitEnabled: Boolean = false,
 )

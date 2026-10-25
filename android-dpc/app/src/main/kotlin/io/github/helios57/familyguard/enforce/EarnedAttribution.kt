@@ -78,8 +78,8 @@ object EarnedAttribution {
     fun contextOf(input: Input, state: DesiredState, uncounted: Set<String>, day: String): EarnedContext {
         val exempt = input.settings.allowedPackages.toSet() + state.freeByDefault +
             EnforcementEngine.DEFAULT_CRITICAL_PACKAGES + EnforcementEngine.ALWAYS_USABLE_PACKAGES +
-            input.criticalPackages
-        val budgetLeft = if (state.dailyLimitMinutes > 0) {
+            input.criticalPackages + state.learningPackages
+        val budgetLeft = if (state.dailyLimitEnabled) {
             (state.quotaMinutes - state.usedMinutes).coerceAtLeast(0).toLong() * 60_000L
         } else {
             Long.MAX_VALUE
