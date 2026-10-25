@@ -1043,6 +1043,42 @@ decay for a week"*. Design: `docs/superpowers/specs/2026-10-25-learning-apps-ear
   page with *Lern-App · verdient Zeit* and a *Sperren* button, and lists the prefixes on Familie with
   how many installed apps each matches.
 
+### FR-31 Only contacts may call (2026-10-26)
+The owner, 2026-10-25: *"my kids should only get calls, SMS and WhatsApp messages from people in their
+address list (whitelist) — no one not in their address list should be able to call or contact them in
+any way"*, *"It's fine if the kids add it, I just don't want strangers to call them"*, and *"unsere
+(kontakt) nummer sollen immer durchkommen"*. Design:
+`docs/superpowers/specs/2026-10-25-contacts-only-blocker-design.md`.
+
+- FR-31.1 **A switch per child**, *Nur Kontakte dürfen anrufen*, off by default, set through the
+  console, the API, `fgctl` and MCP like every policy field. A phone before 0.6.47 cannot screen calls,
+  so turning it on is refused (409 `devices_outdated`, naming the phone) while any of the child's
+  phones reports such a build; a phone that has not reported its build yet does not block it.
+- FR-31.2 **A call from a stranger does not ring.** While the switch is on, the phone rejects every
+  incoming call from a number that is not one of its own contacts: no ring, no call-log entry, no
+  missed-call notification. The contacts are the phone's own, which the child may edit; FamilyGuard
+  never reads them — the platform passes only non-contacts to it. Outgoing calls are never touched,
+  and a call is let through whenever the phone cannot decide (no policy yet, no number, an error).
+- FR-31.3 **Family numbers always get through**, even when a child has deleted or never saved them:
+  one list per family, at most 10, set and read by an admin through the API, `fgctl`, MCP and the
+  console's Familie page. Stored as E.164; `079…`, `0041…` and `+41…` are accepted, a leading single
+  `0` read as Switzerland. Audited as `FAMILY_NUMBERS_UPDATED`, and every phone is woken to fetch it.
+- FR-31.4 **The protection is real or it says so.** The phone needs the call-screening role, which
+  only a person on the phone can grant: while the switch is on and the role is not held, the phone
+  shows *Anrufschutz einrichten*, which opens the system dialog. The phone reports whether it holds
+  the role; the console shows *Anrufschutz: wartet auf Freigabe am Handy* (amber) until it has been
+  held once, and *Anrufschutz aus* (red) when it was held and is not any more. From Android 14 the
+  phone also stops the child from changing default apps while the role is held, so it cannot be taken
+  away from the phone's settings.
+- FR-31.5 **What was rejected is shown.** The phone reports each rejected call (number and time),
+  re-sending until the server has it, never twice; the console's Aktivität lists *Abgewiesene Anrufe*
+  per day, and the server keeps them one year.
+- FR-31.6 **Not enforced, and said so.** Calls from a hidden number never reach a screening app; they
+  are blocked by the phone app's own *Unbekannte/private Nummern blockieren*, set once at setup, which
+  FamilyGuard cannot read (*nicht prüfbar*). SMS stay with Samsung Messages' spam filter and WhatsApp
+  with its own privacy settings, set by hand (owner, 2026-10-26: *"a) habe ich schon gemacht (bei
+  beiden) dann kann man da nichts mehr tun, das pass so"*).
+
 ---
 
 ## 4. Non-functional requirements
