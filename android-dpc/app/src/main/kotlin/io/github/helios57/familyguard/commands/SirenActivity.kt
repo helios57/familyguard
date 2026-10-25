@@ -20,8 +20,8 @@ import io.github.helios57.familyguard.R
  * at all stops it, because a person who has just found a ringing phone presses whatever is under
  * their thumb.
  *
- * It holds the display on while it is up, which is what lets [AndroidSirenDevice] read the display
- * turning off as the side key: nothing else can turn it off then. [holdingScreen] is how it says so.
+ * It holds the display on while it is visible, which is what lets [AndroidSirenDevice] read the
+ * display turning off as the side key: nothing else can turn it off then. [hold] is how it says so.
  *
  * It reads no input from its Intent. What a press does is handed over in [pressed] by the
  * [AndroidSirenDevice] that started it, in the same process — the stop itself belongs to the
@@ -35,12 +35,15 @@ class SirenActivity : Activity() {
 
     private var backCallback: OnBackInvokedCallback? = null
 
+    /** The siren this screen was shown for: a screen still closing must not speak for the next one. */
+    private var screenHold = ScreenHold()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setShowWhenLocked(true)
         setTurnScreenOn(true)
+        screenHold = hold
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        holdingScreen = true
         setContentView(R.layout.activity_siren)
         findViewById<MaterialButton>(R.id.siren_stop).setOnClickListener { press() }
         // Anywhere on the screen, not only the button: a hand grabbing a phone lands where it lands.
@@ -52,6 +55,18 @@ class SirenActivity : Activity() {
             backCallback = callback
         }
         registerReceiver(finished, IntentFilter(ACTION_FINISHED), RECEIVER_NOT_EXPORTED)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        screenHold.onStart()
+        shown?.invoke()
+    }
+
+    /** Covered or gone: the flag holds the display no longer, a moment from now (see [ScreenHold]). */
+    override fun onStop() {
+        screenHold.onStop(SystemClock.elapsedRealtime())
+        super.onStop()
     }
 
     /** Every key, before any view can consume it — volume up and down above all (FR-9.4). */
@@ -72,7 +87,6 @@ class SirenActivity : Activity() {
     }
 
     override fun onDestroy() {
-        holdingScreen = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
         }
@@ -85,13 +99,17 @@ class SirenActivity : Activity() {
         const val ACTION_FINISHED = "io.github.helios57.familyguard.SIREN_FINISHED"
 
         /**
-         * Whether this screen is up and holding the display on. Cleared only when it is destroyed —
-         * not when it stops — because the side key stops it a moment before the display-off
-         * broadcast arrives, and that broadcast is the press.
+         * Whether this screen is holding the display on. Not cleared the instant it stops, because the
+         * side key stops it a moment before the display-off broadcast arrives, and that broadcast is
+         * the press; but covered for longer — by a call's screen, say — it holds nothing, and a
+         * display timing out then is not a press.
          */
         @Volatile
-        var holdingScreen = false
-            private set
+        var hold = ScreenHold()
+
+        /** Called each time this screen comes up; [AndroidSirenDevice] drops the full-screen intent. */
+        @Volatile
+        var shown: (() -> Unit)? = null
 
         /** What a press does, set by the [AndroidSirenDevice] that showed this screen; elapsed-realtime ms. */
         @Volatile

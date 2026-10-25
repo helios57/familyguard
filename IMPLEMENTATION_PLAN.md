@@ -9557,7 +9557,7 @@ e2e `learning_test.go` (prefixes, credits, idempotence, the switch, the migratio
 (`fgctl learning-apps`, MCP), `learning_console_test.go` (a real Chrome at 360 and 1440 px: the
 Lern-Apps card, the Apps labels and Sperren, *davon erspielt*, on at 0 saved as on). Phone:
 `LearningAccountTest`, `SynchronizerTest`, `TodayReportTest`, `TimeViewTest`, `SirenKeysTest`
-(1053 unit tests). And two proofs on a real emulator with the real DPC (`tests/android/learning.sh`,
+(1053 unit tests; 1060 after the review fixes below). And two proofs on a real emulator with the real DPC (`tests/android/learning.sh`,
 `tests/android/siren.sh`), each passed on both images, API 37 and API 33 (no API 36 image exists for
 the emulator; the API 36 family phone is the owner's measurement):
 
@@ -9575,7 +9575,9 @@ the emulator; the API 36 family phone is the owner's measurement):
   read from `dumpsys audio`, never from the app, and with the focused window logged at every press.
   The shade case is checked to have the focus elsewhere before it presses, or it would prove nothing;
   below API 36 it is reported NOT MEASURED, and the script's result line says so. Repeated: 2 of 2
-  on API 37 with all three cases, 4 of 4 on API 33 with two, after `hide_error_dialogs`.
+  on API 37 with all three cases, 4 of 4 on API 33 with two, after `hide_error_dialogs`. A fourth case
+  came with the review fixes below — covered by another screen, the siren rings on through a display
+  timeout and the side key then stops it — and passed on both images.
 
 Probes, each red on its own assertion and then restored (checked with `cmp` against a saved copy):
 
@@ -9603,13 +9605,51 @@ Probes, each red on its own assertion and then restored (checked with `cmp` agai
 | the media session's volume never counts | emulator siren (API 37) | **red**: exactly the shade case, the other two green |
 | both display rules broken (grace never ends, display-off never a press) | emulator siren (API 37) | **red**: *side key: 5s after the press … started=true* |
 | `LearningAccount` credits nothing (`it > 86_400_000L`) | emulator learning (API 37) | **red**: *com.android.camera2 … suspended="true" after 7m0s* |
+| the Übersicht bar's rule back to `used >= quota` | `TestConsoleOnAtZeroMorningIsNotRed` | **red**: *nothing used: the Übersicht bar is "over"* |
+| Heute takes no learning from the phone (`0 * localLearning`) | `TodayReportReaderTest` | **red**: *expected:<10> but was:<0>* |
+| Heute sums the two learning figures | `TodayReportReaderTest` | **red**: *expected:<12> but was:<22>* |
+| the screen hold kept until destroyed (`holding = visible`, never cleared on stop) | `ScreenHoldTest` | **red**: exactly the covered case |
+| the full-screen intent kept after the Stopp screen is up | emulator siren (API 37) | **red**: *covered: the siren stopped when the display timed out on its own* |
+| the display-off rule alone broken | emulator siren (API 33) | **red**: *side key: 5s after the press … started=true* |
+| the first build that reads 0 as a limit taken as 53 | `TestOnAtZeroIsRefusedWhile…` | **red**: *expected 409, got 200* |
 
 Four probes stayed green, and each is information rather than a pass. The store's nil-prefixes probe
 first set `out = nil` inside a branch pgx never takes (it returns an empty, non-nil slice for `'{}'`),
 so it was redone as `return nil, nil`. The first `fgctl policy` probe stayed green because *off* also
 appears on the bedtime line; the assertion now reads the daily-limit line only. And each display rule
-broken **alone** leaves the side key working: with the display-off rule gone, locking the phone makes
-the platform fire the full-screen intent again, the Stopp screen turns the display on, and the
-display-on rule stops it (*siren stopped by display on*); with the display-on rule gone, display-off
-carries it. Two independent routes, so only breaking both shows the test can see a dead side key —
-that is the probe counted above. **22 probes, 22 red. Cumulative: 545.**
+broken **alone** left the side key working: with the display-off rule gone, the display going off
+made SystemUI fire the full-screen intent again and turn the display back on, and the display-on rule
+stopped it (*siren stopped by display on*). That second route was the defect below, not a feature;
+since it is gone, the display-off rule alone carries the side key, and breaking it alone is red
+(counted in the table). **29 probes, 29 red. Cumulative: 552.**
+
+**Fixed after the whole-branch review** (each test red on the defect first, then green):
+
+- **Heute ignored learning the phone did offline.** The figure came from the server's last report,
+  so a child who learned with no connection saw neither the minutes nor the opened app on Heute,
+  while the phone's own engine had already opened it. `TodayReportReader` now merges the phone's own
+  minutes in, the larger of the two, never the sum (the server's figure already holds what the phone
+  reported). `TodayReportReaderTest`.
+- **Übersicht drew every on-at-0 morning red.** Its bar used `used >= quota`, which at 0 of 0 is
+  "over"; Aktivität already had the right rule (over only past a quota, or at one above 0), and
+  Übersicht now uses it. `TestConsoleOnAtZeroMorningIsNotRed`, which also shows the same bar going
+  red after 5 counted minutes, so it reads the bar at all.
+- **A covered siren stopped itself at the first display timeout.** Found by adding the case to the
+  emulator proof: Settings started over the Stopp screen (as a call's screen would be), screen
+  timeout 15 s. Two causes, measured one at a time from the power manager's own log. The screen hold
+  lasted until the Stopp screen was destroyed, so a display going off while it was covered counted as
+  the side key (*siren stopped by display off*); it now lasts while the screen is visible and 3 s
+  after it stops (`ScreenHold`), because the side key stops it just before the display-off broadcast.
+  And SystemUI re-fires a notification's full-screen intent whenever the display goes off —
+  *Waking up from Dozing (… details=com.android.systemui:full_screen_intent)* — turning the display
+  straight back on, which the display-on rule read as a press. Once the Stopp screen is up the
+  notification is re-posted without it, silently. With both, the case rings on through the timeout
+  and the side key then stops it by the display turning on (`WAKE_REASON_POWER_BUTTON`). Green on API
+  37 (all four cases) and API 33 (three, the shade case NOT MEASURED as before). Two guesses on the
+  way were wrong and were taken out again rather than shipped: that the Stopp screen woke the display
+  itself, and that a hold should stay off for good after the first cover.
+- **On at 0 with an old phone meant no limit.** A phone before build 54 counts a limit only above 0
+  minutes, so the server now refuses on-at-0 (409 `devices_outdated`, naming the phone and its build)
+  while any of the child's phones reports an older build. Not refused: a phone that has not reported
+  a build yet (it was provisioned with the current one, and blocking on it would block every new
+  phone's parent), and an edit that does not touch the limit. `TestOnAtZeroIsRefusedWhile…`.

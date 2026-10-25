@@ -2,6 +2,7 @@ package io.github.helios57.familyguard.usage
 
 import android.content.Context
 import io.github.helios57.familyguard.enforce.EnforcementEngine
+import io.github.helios57.familyguard.enforce.Input
 import io.github.helios57.familyguard.enforce.TodayReport
 import io.github.helios57.familyguard.sync.EncryptedPolicyCache
 import java.time.OffsetDateTime
@@ -32,18 +33,33 @@ object TodayReportReader {
         val counted = UsageLedger(EncryptedUsageStore(context)).totals(day).filterKeys { it !in uncounted }
         val (localCounted, localEarned) = EarnedAccount.open(context).split(day, counted, uncounted)
 
-        // The same combination the Synchronizer uses: max, never sum, per total and per package.
+        val learned = LearningAccount.open(context).minutesToday(day)
+        val effective = effective(input, OffsetDateTime.now(zone).format(RFC3339), byPackage, localCounted, localEarned, learned)
+        return TodayReport.of(effective, EnforcementEngine.compute(effective), effective.usedMinutesByPackage, uncounted)
+    }
+
+    /**
+     * The cached input with this phone's own measurement merged in — the same combination the
+     * Synchronizer uses: max, never sum, per total and per package. Separate so it can be tested.
+     */
+    internal fun effective(
+        input: Input,
+        now: String,
+        byPackage: Map<String, Int>,
+        localCounted: Int,
+        localEarned: Int,
+        localLearning: Int,
+    ): Input {
         val merged = (input.usedMinutesByPackage.keys + byPackage.keys).associateWith {
             maxOf(input.usedMinutesByPackage[it] ?: 0, byPackage[it] ?: 0)
         }
-        val state = EnforcementEngine.compute(
-            input.copy(
-                now = OffsetDateTime.now(zone).format(RFC3339),
-                usedMinutesToday = maxOf(input.usedMinutesToday, localCounted),
-                usedMinutesByPackage = merged,
-                earnedSpentMinutesToday = maxOf(input.earnedSpentMinutesToday, localEarned),
-            ),
+        return input.copy(
+            now = now,
+            usedMinutesToday = maxOf(input.usedMinutesToday, localCounted),
+            usedMinutesByPackage = merged,
+            earnedSpentMinutesToday = maxOf(input.earnedSpentMinutesToday, localEarned),
+            // FR-30.3: what this phone learned, which offline is all there is.
+            learningMinutesToday = maxOf(input.learningMinutesToday, localLearning),
         )
-        return TodayReport.of(input, state, merged, uncounted)
     }
 }

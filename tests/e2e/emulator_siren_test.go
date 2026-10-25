@@ -1,6 +1,7 @@
 package e2e
 
-// FR-9.4 on a real Android device: a ringing siren keeps ringing untouched, and stops within seconds
+// FR-9.4 on a real Android device: a ringing siren keeps ringing untouched and through a display
+// timeout while another screen covers it, and stops within seconds
 // of a volume key, of the side key, and — from API 36 — of a volume key while the Stopp screen does
 // not hold the focus. Driven by tests/android/siren.sh; run on its own it SKIPS.
 //
@@ -109,6 +110,55 @@ func TestAnyButtonStopsTheSirenOnARealPhone(t *testing.T) {
 	ring("side key")
 	time.Sleep(3 * time.Second)
 	awaitSilence("side key", press("KEYCODE_POWER"), 5*time.Second)
+
+	// Nobody presses anything: another screen comes up over the Stopp screen without a user's leave
+	// hint (FLAG_ACTIVITY_NO_USER_ACTION, as an incoming call's screen can), the display then times
+	// out on its own, and the siren must ring on — a display going off counts only while the Stopp
+	// screen holds it on. Then the side key, which turns the display on, stops it.
+	// The emulator stays awake while plugged in and never times out, so both are lowered for this case
+	// and put back afterwards.
+	timeout := strings.TrimSpace(d.mustRun(30*time.Second, "shell", "settings", "get", "system", "screen_off_timeout"))
+	plugged := strings.TrimSpace(d.mustRun(30*time.Second, "shell", "settings", "get", "global", "stay_on_while_plugged_in"))
+	d.mustRun(30*time.Second, "shell", "settings", "put", "system", "screen_off_timeout", "15000")
+	d.mustRun(30*time.Second, "shell", "settings", "put", "global", "stay_on_while_plugged_in", "0")
+	t.Cleanup(func() {
+		d.run(30*time.Second, "shell", "settings", "put", "system", "screen_off_timeout", timeout)
+		d.run(30*time.Second, "shell", "settings", "put", "global", "stay_on_while_plugged_in", plugged)
+	})
+	// The power manager's own word for it; a missing line is "on", so a format this does not know
+	// keeps the wait below waiting and fails it, never passes it.
+	displayOn := func() bool {
+		power, _ := d.run(30*time.Second, "shell", "dumpsys", "power")
+		for _, line := range strings.Split(power, "\n") {
+			if v, ok := strings.CutPrefix(strings.TrimSpace(line), "mWakefulness="); ok {
+				return strings.TrimSpace(v) == "Awake"
+			}
+		}
+		return true
+	}
+	ring("covered, display times out")
+	time.Sleep(3 * time.Second)
+	d.mustRun(30*time.Second, "shell", "am", "start", "-f", "0x00040000", "-a", "android.settings.SETTINGS")
+	time.Sleep(2 * time.Second)
+	if f := focus(); strings.Contains(f, ".commands.SirenActivity") {
+		t.Fatalf("covered: the Stopp screen still holds the focus (%s), so this case would prove nothing", f)
+	}
+	if !ringing() {
+		t.Fatalf("covered: the siren stopped when another screen came up over it, with no key pressed")
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	for displayOn() {
+		if time.Now().After(deadline) {
+			t.Fatalf("covered: the display was still on 60 s after a 15 s timeout, so this case would prove nothing")
+		}
+		time.Sleep(time.Second)
+	}
+	time.Sleep(3 * time.Second)
+	if !ringing() {
+		t.Fatalf("covered: the siren stopped when the display timed out on its own — no key was pressed")
+	}
+	t.Logf("covered, display timed out: still ringing 3 s later")
+	awaitSilence("covered, side key", press("KEYCODE_POWER"), 5*time.Second)
 
 	// A volume key while something else holds the focus — here the notification shade, pulled down
 	// over the Stopp screen. The key never reaches the screen then; it must stop the siren anyway.

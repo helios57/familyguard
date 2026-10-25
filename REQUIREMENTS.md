@@ -447,7 +447,9 @@ The parent triggers these from the console; the device acts as soon as it receiv
   button, on either volume key, or on the side key turning the screen on or off. Two things do not
   count: the screen waking in the first 2 seconds (the siren's own full-screen launch does that), and
   the screen going off by its own timeout (the stop screen keeps it on, so only the side key turns it
-  off). From Android 16 a volume key stops it whatever holds the focus — the notification shade pulled
+  off — and once another screen covers it, a call's say, a display going off is not a press either).
+  The phone does not turn its own display back on while the siren rings: once the Stopp screen is up,
+  the notification no longer carries the full-screen launch that would. From Android 16 a volume key stops it whatever holds the focus — the notification shade pulled
   down over the Stopp screen, a system dialog, or no Stopp screen at all; below 16 that needs the
   phone maker's opt-in, and without it the shade's own Stopp button and the side key remain. `STOP_ALARM` and the 5-minute end still
   stop it as before.
@@ -1027,7 +1029,9 @@ decay for a week"*. Design: `docs/superpowers/specs/2026-10-25-learning-apps-ear
   opens it. *Mehr Zeit erbitten* (FR-28.1) and Extrazeit (FR-3.11) are offered whenever the switch is
   on. Existing policies became on exactly where the minutes were above 0, and a request that sends
   only minutes keeps the old meaning — 0 is off, more than 0 is on — so an older console cannot lock
-  a phone by accident.
+  a phone by accident. A phone before 0.6.45 reads 0 minutes as no limit at all, so turning on 0
+  minutes is refused (409 `devices_outdated`, naming the phone) while any of the child's phones
+  reports such a build; a phone that has not reported its build yet does not block it.
 - FR-30.7 **What is shown.** The phone's Heute screen says *Heute erspielt: N min* and names each
   learning app *Lern-App · verdient Zeit*; a paused counted app's screen says *Keine Zeit mehr — spiel
   ein Lernspiel, um Zeit zu verdienen* while the phone has a learning app. The console shows the

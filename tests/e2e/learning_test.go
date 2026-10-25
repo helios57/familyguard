@@ -322,3 +322,41 @@ func TestMigrationKeepsZeroAsNoLimit(t *testing.T) {
 		t.Error("a policy with 0 minutes came out of the migration with a limit of 0: every phone of it would lock")
 	}
 }
+
+// FR-30.6: "on, 0 minutes" is a limit only to a phone from 0.6.45 (build 54) on. An older phone reads
+// daily_limit_minutes 0 as no limit at all, so setting it while one of the child's phones still runs
+// such a build would give that child unlimited time while the console says 0 minutes. The server
+// refuses that, names the phone, and lets every other limit through.
+func TestOnAtZeroIsRefusedWhileAPhoneRunsABuildThatReadsZeroAsNoLimit(t *testing.T) {
+	h := newHarness(t)
+	f := enrolledFixture(t, h)
+	beat := func(code int) {
+		t.Helper()
+		h.call(http.MethodPost, "/device/heartbeat", f.deviceToken(), map[string]any{
+			"connectivity": "wifi", "app_version_name": "0.6.44", "app_version_code": code,
+		}).expect(http.StatusOK)
+	}
+	onAtZero := map[string]any{"daily_limit_enabled": true, "daily_limit_minutes": 0}
+
+	beat(53)
+	before := h.patchPolicy(f.parent.Token, f.child.ID, map[string]any{"daily_limit_minutes": 60})
+	r := h.call(http.MethodPatch, "/children/"+f.child.ID+"/policy", f.parent.Token, onAtZero).
+		expectError(http.StatusConflict, "devices_outdated")
+	if !strings.Contains(string(r.Body), f.device.Name) || !strings.Contains(string(r.Body), "0.6.45") {
+		t.Errorf("the refusal does not name the phone %q and the build it needs: %s", f.device.Name, r.Body)
+	}
+	var after policyDTO
+	h.call(http.MethodGet, "/children/"+f.child.ID+"/policy", f.parent.Token, nil).expect(http.StatusOK).decode(&after)
+	if after.DailyLimitMinutes != 60 || after.Version != before.Version {
+		t.Errorf("a refused change was stored: minutes %d version %d, was 60 version %d",
+			after.DailyLimitMinutes, after.Version, before.Version)
+	}
+
+	// Everything an old phone reads the same way still goes through: a positive limit, and 0 with
+	// the switch off, which is "no limit" on every build.
+	h.patchPolicy(f.parent.Token, f.child.ID, map[string]any{"daily_limit_minutes": 30})
+	h.patchPolicy(f.parent.Token, f.child.ID, map[string]any{"daily_limit_enabled": false, "daily_limit_minutes": 0})
+
+	beat(54)
+	h.patchPolicy(f.parent.Token, f.child.ID, onAtZero)
+}

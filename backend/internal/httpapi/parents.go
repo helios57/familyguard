@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -312,6 +314,17 @@ func (s *Server) patchPolicy(c *gin.Context) {
 		on := *req.DailyLimitMinutes > 0
 		req.DailyLimitEnabled = &on
 	}
+	if req.DailyLimitEnabled != nil || req.DailyLimitMinutes != nil {
+		if stale, err := s.phonesReadingZeroAsNoLimit(c.Request.Context(), childID, req.DailyLimitEnabled, req.DailyLimitMinutes); err != nil {
+			s.fail(c, err)
+			return
+		} else if len(stale) > 0 {
+			failWith(c, http.StatusConflict, "devices_outdated",
+				"a daily limit of 0 minutes needs FamilyGuard 0.6.45 or later on every phone, and "+
+					strings.Join(stale, ", ")+" runs an older build that reads 0 as no limit — update it first")
+			return
+		}
+	}
 	pol, err := s.store.UpdatePolicy(c.Request.Context(), childID, store.PolicyUpdate{
 		TrackingOnly:       req.TrackingOnly,
 		AllowChildInstalls: req.AllowChildInstalls,
@@ -569,4 +582,41 @@ func (s *Server) notifyChild(c *gin.Context, childID uuid.UUID, kind string) {
 		s.hub.PublishDevice(id, Event{Type: kind})
 	}
 	s.hub.PublishParents(Event{Type: kind, ChildID: childID.String()})
+}
+
+// firstBuildWithOnAtZero is the DPC build (0.6.45) from which "on, 0 minutes" is a limit (FR-30.6).
+// Before it a phone's engine counted a limit only when daily_limit_minutes > 0.
+const firstBuildWithOnAtZero = 54
+
+// phonesReadingZeroAsNoLimit names the child's phones that would read the policy this change leaves
+// behind as having no daily limit while the console shows one of 0 minutes: on with 0, and a phone
+// that reported a build older than firstBuildWithOnAtZero. A phone that has not reported its build
+// yet is not named — it was provisioned with the build the server serves now, and refusing on it
+// would block the parent of every freshly enrolled phone.
+func (s *Server) phonesReadingZeroAsNoLimit(ctx context.Context, childID uuid.UUID, enabled *bool, minutes *int) ([]string, error) {
+	pol, err := s.store.GetPolicy(ctx, childID)
+	if err != nil {
+		return nil, err
+	}
+	on, limit := pol.DailyLimitEnabled, pol.DailyLimitMinutes
+	if enabled != nil {
+		on = *enabled
+	}
+	if minutes != nil {
+		limit = *minutes
+	}
+	if !on || limit != 0 {
+		return nil, nil
+	}
+	devices, err := s.store.ListDevices(ctx, &childID, s.cfg.DeviceOfflineAfter)
+	if err != nil {
+		return nil, err
+	}
+	var stale []string
+	for _, d := range devices {
+		if code := d.State.AppVersionCode; code > 0 && code < firstBuildWithOnAtZero {
+			stale = append(stale, fmt.Sprintf("%s (%s)", d.Name, d.State.AppVersionName))
+		}
+	}
+	return stale, nil
 }

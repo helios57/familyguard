@@ -206,7 +206,8 @@ function timeMeter(desired, earned) {
   const quota = desired.quota_minutes || 0;
   const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 100;
   // Gold, not red, when the time past the limit is earned time: nothing is wrong, the child earned it.
-  const cls = used >= quota ? (earned > 0 ? 'bonus' : 'over') : '';
+  // And a day on at 0 with nothing counted is full, not over (FR-30.6) — every such morning starts so.
+  const cls = used > quota || (used >= quota && quota > 0) ? (earned > 0 ? 'bonus' : 'over') : '';
   return el('div', { class: 'meter', role: 'img', 'aria-label': fmtMinutes(used) + ' von ' + fmtMinutes(quota) },
     el('span', { class: cls, style: { width: pct + '%' } }));
 }

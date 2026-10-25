@@ -233,3 +233,32 @@ func TestConsoleDailyLimitZero(t *testing.T) {
 	b.eval(`document.querySelector('`+sw+`').click()`, nil)
 	waitPolicy(false, 0, "switching the limit off")
 }
+
+// FR-30.6 on Übersicht: on at 0 with nothing counted yet is a full bar, not a red one — every morning
+// starts there, and red is "over the limit". The same bar goes red once a counted app is used with no
+// time to pay for it, which is also what shows that this test reads the bar at all.
+func TestConsoleOnAtZeroMorningIsNotRed(t *testing.T) {
+	h := newHarness(t)
+	f := learningFixture(t, h)
+	meter := `#view .child-card .meter span`
+	cls := func(b *browser, what string) string {
+		t.Helper()
+		b.waitFor(`!!document.querySelector('`+meter+`')`, 15*time.Second, what)
+		var c string
+		b.eval(`document.querySelector('`+meter+`').className`, &c)
+		return c
+	}
+
+	b := consoleSignedIn(t, h, phoneWidth, phoneHeight)
+	if c := cls(b, "the time bar on a fresh morning"); c == "over" {
+		t.Errorf("on at 0, nothing used: the Übersicht bar is %q, want not red", c)
+	}
+
+	h.call(http.MethodPost, "/device/usage", f.deviceToken(), map[string]any{
+		"samples": map[string]int64{pkgMovies: 5 * minuteMillis},
+	}).expect(http.StatusOK)
+	b = consoleSignedIn(t, h, phoneWidth, phoneHeight)
+	if c := cls(b, "the time bar after 5 counted minutes"); c != "over" {
+		t.Errorf("on at 0, 5 counted minutes and nothing earned: the Übersicht bar is %q, want over", c)
+	}
+}

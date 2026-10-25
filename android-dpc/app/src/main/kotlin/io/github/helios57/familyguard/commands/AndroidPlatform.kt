@@ -79,7 +79,7 @@ class AndroidSirenDevice(
             val now = SystemClock.elapsedRealtime()
             val press = when (intent.action) {
                 Intent.ACTION_SCREEN_ON -> rules.onScreenOn(now)
-                Intent.ACTION_SCREEN_OFF -> rules.onScreenOff(now, SirenActivity.holdingScreen)
+                Intent.ACTION_SCREEN_OFF -> rules.onScreenOff(now, SirenActivity.hold.holding(now))
                 else -> false
             }
             if (press) pressed("display ${intent.action?.substringAfterLast('_')?.lowercase()}")
@@ -211,6 +211,18 @@ class AndroidSirenDevice(
         val rules = SirenKeys(SystemClock.elapsedRealtime())
         keys.set(rules)
         SirenActivity.pressed = { now -> if (rules.onKey(now)) pressed("a key on the Stopp screen") }
+        SirenActivity.hold = ScreenHold()
+        // The full-screen intent has done its job once the Stopp screen is up, and left in place it
+        // does harm: SystemUI re-fires it whenever the display goes off, turning the display straight
+        // back on ("Waking up from Dozing … com.android.systemui:full_screen_intent", measured on API
+        // 37). A display turning on is the side key's press, so a siren would stop at its first
+        // display timeout with nobody touching the phone. Re-posted without it, silently.
+        SirenActivity.shown = {
+            if (keys.get() === rules) {
+                builder.setFullScreenIntent(null, false).setOnlyAlertOnce(true)
+                manager.notify(SIREN_NOTIFICATION_ID, builder.build())
+            }
+        }
         if (screenWatched.compareAndSet(false, true)) {
             ContextCompat.registerReceiver(
                 context,
@@ -234,6 +246,7 @@ class AndroidSirenDevice(
     override fun hideStopControl() {
         keys.set(null)
         SirenActivity.pressed = null
+        SirenActivity.shown = null
         volumeKeys.getAndSet(null)?.let { runCatching { it.release() } }
         if (screenWatched.compareAndSet(true, false)) runCatching { context.unregisterReceiver(screen) }
         context.sendBroadcast(Intent(SirenActivity.ACTION_FINISHED).setPackage(context.packageName))

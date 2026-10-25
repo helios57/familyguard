@@ -42,3 +42,34 @@ class SirenKeys(private val startedAtMs: Long, private val graceMs: Long = 2_000
         return true
     }
 }
+
+/**
+ * Whether the Stopp screen is holding the display on — the `keptOnByUs` of [SirenKeys.onScreenOff].
+ * One per siren.
+ *
+ * While the screen is visible its `FLAG_KEEP_SCREEN_ON` holds the display, so only the side key can
+ * turn it off. Once anything covers it — a call's screen, say — the flag holds nothing, and a display
+ * going off is its own timeout. The side key itself stops the screen a moment before the display-off
+ * broadcast arrives, so it still holds for [tailMs] after [onStop] — far shorter than any display
+ * timeout a phone offers (15 s at the least).
+ */
+class ScreenHold(private val tailMs: Long = 3_000) {
+
+    private var visible = false
+
+    private var stoppedAtMs: Long? = null
+
+    @Synchronized
+    fun onStart() {
+        visible = true
+    }
+
+    @Synchronized
+    fun onStop(nowMs: Long) {
+        visible = false
+        stoppedAtMs = nowMs
+    }
+
+    @Synchronized
+    fun holding(nowMs: Long): Boolean = visible || stoppedAtMs?.let { nowMs - it < tailMs } == true
+}

@@ -58,3 +58,49 @@ class SirenKeysTest {
         assertFalse(keys.onKey(start + 7_000))
     }
 }
+
+/**
+ * When the Stopp screen holds the display on (FR-9.4): while it is visible, and a moment after it stops
+ * — the side key stops it just before the display-off broadcast arrives. Covered for longer, a display
+ * going off is its own timeout, not a press.
+ */
+class ScreenHoldTest {
+
+    @Test
+    fun neverShownHoldsNothing() {
+        assertFalse(ScreenHold().holding(nowMs = 1_000))
+    }
+
+    @Test
+    fun visibleHoldsTheDisplay() {
+        val hold = ScreenHold()
+        hold.onStart()
+        assertTrue(hold.holding(nowMs = 60_000))
+    }
+
+    @Test
+    fun justStoppedStillHoldsSoTheSideKeysDisplayOffIsAPress() {
+        val hold = ScreenHold(tailMs = 3_000)
+        hold.onStart()
+        hold.onStop(nowMs = 10_000)
+        assertTrue(hold.holding(nowMs = 12_999))
+    }
+
+    @Test
+    fun coveredLongerThanTheTailHoldsNothingSoATimeoutIsNotAPress() {
+        val hold = ScreenHold(tailMs = 3_000)
+        hold.onStart()
+        hold.onStop(nowMs = 10_000)
+        assertFalse(hold.holding(nowMs = 25_000))
+        assertFalse(SirenKeys(startedAtMs = 0).onScreenOff(25_000, hold.holding(25_000)))
+    }
+
+    @Test
+    fun shownAgainHoldsAgain() {
+        val hold = ScreenHold(tailMs = 3_000)
+        hold.onStart()
+        hold.onStop(nowMs = 10_000)
+        hold.onStart()
+        assertTrue(hold.holding(nowMs = 60_000))
+    }
+}
