@@ -439,6 +439,13 @@ The parent triggers these from the console; the device acts as soon as it receiv
 - FR-9.2 Commands issued while a device is offline are queued and delivered when it reconnects, or
   expire with a visible status.
 - FR-9.3 The console shows each command's state: queued, delivered, acknowledged, failed, expired.
+- FR-9.4 **Any button stops the siren** (2026-10-25). The owner: *"Wenn das Handy klingelt
+  (suchfunkion) soll es aufhören zu klingeln wenn der ein Knopf betätigt wird"*. While `TRIGGER_ALARM`
+  rings, the phone shows a full-screen *Stopp* over the lock screen, and the siren stops on that
+  button, on either volume key, or on the side key turning the screen on or off. Two things do not
+  count: the screen waking in the first 2 seconds (the siren's own full-screen launch does that), and
+  the screen going off by its own timeout (the stop screen keeps it on, so only the side key turns it
+  off). `STOP_ALARM` and the 5-minute end still stop it as before.
 
 ### FR-10 Telemetry
 The device periodically reports: battery level, charging state, screen state, connectivity, OS
@@ -982,6 +989,46 @@ so a parent signed in with Google once a day.
 - FR-29.5 Removing a parent ends their sign-ins with them, and a role change applies to the next
   request (FR-20). A sign-in that has been ended or idle for longer than the audit retention is
   deleted; until then it is kept, unlisted, so its last use stays answerable.
+
+### FR-30 Learning apps earn time (2026-10-25)
+The owner, 2026-10-25: *"all the apps under <prefix>.\* (there should be 5 at the moment and there will
+be more) do add extra time when used. and the default time should be 0 for the moment, so the kids
+have to play the learning-games to get time for movies"*, then: *"like bonus-time, it should not
+decay for a week"*. Design: `docs/superpowers/specs/2026-10-25-learning-apps-earn-time-design.md`.
+
+- FR-30.1 **Learning apps are a family setting**: a list of package-name prefixes, empty by default,
+  at most 10 of at most 100 characters, each a package-name prefix (letters, digits, `_`, dots). A
+  package is a learning app when its name starts with one. Set by an admin through the API, `fgctl`,
+  MCP and the console's Familie page; readable by every parent role and API key. Audited as
+  `LEARNING_APPS_UPDATED`, and every phone of the family is woken to fetch it.
+- FR-30.2 **A learning app is always free**, for every child: no daily limit, bedtime, approval hold
+  (FR-5.4), bonus rule (FR-22) or allowance of its own (FR-5.8) applies to it, and its minutes are
+  never Tageszeit, Extrazeit or Bonuszeit. Only a block — the child's own or the family's (FR-18) —
+  and a pause (FR-21) stop it; a blocked learning app is no learning app and earns nothing.
+- FR-30.3 **Its minutes earn Bonuszeit**, one for one, credited to the day they were played on: the
+  counted foreground time of all learning apps of a device's day, floored to whole minutes over the
+  day (three apps at 40 s each earn 2). The phone counts a minute only while it is enforcing — not
+  paused and not in watch-only mode (FR-8) — and only while the package is a learning app, so setting
+  a prefix earns nothing for the past. A device reports its count with its day totals and the server
+  keeps the larger of what it has and what it is sent, so a re-sent report never doubles a credit and
+  a credit, once reported, never shrinks. A profile's credit for a day is the sum over its devices.
+- FR-30.4 **It is Bonuszeit like any other** (FR-22): one balance with the task credits, valid seven
+  days counting the day earned, spent oldest first, on any counted app once the day's time is used up.
+- FR-30.5 **The phone knows first.** Its engine adds its own count for today to the balance the server
+  sent, which leaves this device's today out, so a minute learned offline is spendable at the next
+  evaluation. Two phones of one profile may differ until both have synced, as in FR-22.4.
+- FR-30.6 **A daily limit of 0 is a limit.** A policy carries an explicit switch beside the minutes:
+  off is *Kein Tageslimit*; on with 0 minutes pauses every counted app until Extrazeit or Bonuszeit
+  opens it. *Mehr Zeit erbitten* (FR-28.1) and Extrazeit (FR-3.11) are offered whenever the switch is
+  on. Existing policies became on exactly where the minutes were above 0, and a request that sends
+  only minutes keeps the old meaning — 0 is off, more than 0 is on — so an older console cannot lock
+  a phone by accident.
+- FR-30.7 **What is shown.** The phone's Heute screen says *Heute erspielt: N min* and names each
+  learning app *Lern-App · verdient Zeit*; a paused counted app's screen says *Keine Zeit mehr — spiel
+  ein Lernspiel, um Zeit zu verdienen* while the phone has a learning app. The console shows the
+  learned minutes inside the gold Bonuszeit as *davon erspielt*, labels each learning app on the Apps
+  page with *Lern-App · verdient Zeit* and a *Sperren* button, and lists the prefixes on Familie with
+  how many installed apps each matches.
 
 ---
 
