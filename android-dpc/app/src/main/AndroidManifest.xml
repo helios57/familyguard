@@ -477,6 +477,19 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:theme="@style/Theme.FamilyGuard" />
+        <!--
+          The siren's Stopp screen (FR-9.4): over the lock screen, display on, and any button stops the
+          ringing. Not exported; ConnectionService's siren starts it, directly and as the notification's
+          full-screen intent.
+        -->
+        <activity
+            android:name=".commands.SirenActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.FamilyGuard" />
     </application>
 
 </manifest>

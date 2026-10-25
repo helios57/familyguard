@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The siren's Stopp screen (FR-9.4). Read by somebody who has just found a screaming phone under a
+  cushion: what this is, one button as large as a thumb can want, and the line that says any button
+  works. The whole screen is clickable as well. MaterialButton for the reason activity_alarm.xml
+  gives: a plain Activity's inflater does not theme <Button>.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/siren_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?attr/colorSurface"
+    android:clickable="true"
+    android:focusable="false"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="32dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="@string/siren_title"
+        android:textAppearance="?attr/textAppearanceHeadlineSmall"
+        android:textColor="?attr/colorOnSurface" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="48dp"
+        android:gravity="center"
+        android:text="@string/siren_screen_hint"
+        android:textAppearance="?attr/textAppearanceBodyLarge"
+        android:textColor="?attr/colorOnSurfaceVariant" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/siren_stop"
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:text="@string/siren_screen_stop"
+        android:textSize="36sp"
+        android:textStyle="bold" />
+</LinearLayout>

@@ -25,6 +25,8 @@
     <string name="siren_title">FamilyGuard is ringing this phone</string>
     <string name="siren_text">Someone asked this phone to ring so it can be found. It stops by itself after five minutes.</string>
     <string name="siren_stop">Stop ringing</string>
+    <string name="siren_screen_stop">Stop</string>
+    <string name="siren_screen_hint">Press any button to stop the ringing.</string>
     <string name="usage_access_title">Screen time is not being measured</string>
     <string name="usage_access_text">FamilyGuard needs Usage access to see how long apps are used. Without it, screen time reads as zero and daily limits never apply. Tap to open the setting, then turn FamilyGuard on.</string>
 

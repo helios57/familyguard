@@ -4,7 +4,10 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
@@ -17,15 +20,18 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import io.github.helios57.familyguard.R
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -50,6 +56,29 @@ class AndroidSirenDevice(
     private val audio: AudioManager? = context.getSystemService(AudioManager::class.java)
 
     private val ringtone = AtomicReference<Ringtone?>(null)
+
+    /** The press rules for the siren now ringing (FR-9.4); null while nothing is. */
+    private val keys = AtomicReference<SirenKeys?>(null)
+
+    private val screenWatched = AtomicBoolean(false)
+
+    /**
+     * The side key, which no app is told about directly: with the display off a press turns it on,
+     * and with the Stopp screen holding it on a press is the only thing that turns it off. Which of
+     * those is a press is [SirenKeys]'s decision.
+     */
+    private val screen = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val rules = keys.get() ?: return
+            val now = SystemClock.elapsedRealtime()
+            val press = when (intent.action) {
+                Intent.ACTION_SCREEN_ON -> rules.onScreenOn(now)
+                Intent.ACTION_SCREEN_OFF -> rules.onScreenOff(now, SirenActivity.holdingScreen)
+                else -> false
+            }
+            if (press) pressed("display ${intent.action?.substringAfterLast('_')?.lowercase()}")
+        }
+    }
 
     override fun startTone() {
         // Stopped first: `start()` is only reached when the controller believes nothing is playing,
@@ -161,11 +190,56 @@ class AndroidSirenDevice(
         // Tapping the body does the same thing. A person reaching for a screaming phone taps the
         // notification, not the smaller button inside it.
         builder.setContentIntent(stopIntent)
+        // FR-9.4: the Stopp screen, where any button stops the ringing. As the full-screen intent it
+        // takes over a locked or dark phone; on a phone in use the platform shows the heads-up
+        // instead, so it is also started directly below.
+        val screenIntent = Intent(context, SirenActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        builder.setFullScreenIntent(
+            PendingIntent.getActivity(
+                context, 0, screenIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            ),
+            true,
+        )
+        builder.setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+
+        val rules = SirenKeys(SystemClock.elapsedRealtime())
+        keys.set(rules)
+        SirenActivity.pressed = { now -> if (rules.onKey(now)) pressed("a key on the Stopp screen") }
+        if (screenWatched.compareAndSet(false, true)) {
+            ContextCompat.registerReceiver(
+                context,
+                screen,
+                IntentFilter().apply {
+                    addAction(Intent.ACTION_SCREEN_ON)
+                    addAction(Intent.ACTION_SCREEN_OFF)
+                },
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+        }
         manager.notify(SIREN_NOTIFICATION_ID, builder.build())
+        // A device owner may start an activity from the background. If the platform refuses anyway,
+        // the full-screen intent and the notification's button are still there, so this is logged
+        // rather than thrown.
+        runCatching { context.startActivity(screenIntent) }
+            .onFailure { Log.w(TAG, "the Stopp screen did not open directly: ${it.message}") }
     }
 
     override fun hideStopControl() {
+        keys.set(null)
+        SirenActivity.pressed = null
+        if (screenWatched.compareAndSet(true, false)) runCatching { context.unregisterReceiver(screen) }
+        context.sendBroadcast(Intent(SirenActivity.ACTION_FINISHED).setPackage(context.packageName))
         context.getSystemService(NotificationManager::class.java)?.cancel(SIREN_NOTIFICATION_ID)
+    }
+
+    /**
+     * A button was pressed on a ringing phone: the same stop as the notification's button, sent to
+     * the service that holds the playing tone — which then calls [hideStopControl].
+     */
+    private fun pressed(what: String) {
+        Log.i(TAG, "siren stopped by $what")
+        val intent = stopIntent ?: return
+        runCatching { intent.send() }.onFailure { Log.e(TAG, "the stop did not reach the service: ${it.message}") }
     }
 
     private fun vibrator(): Vibrator? =
@@ -181,6 +255,8 @@ class AndroidSirenDevice(
         val PATTERN = longArrayOf(0, 800, 400)
 
         const val SIREN_CHANNEL = "family-guard-siren"
+
+        const val TAG = "FamilyGuard/Siren"
 
         /** 1, 2 and 3 belong to ConnectionService's own notifications. */
         const val SIREN_NOTIFICATION_ID = 4

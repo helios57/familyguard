@@ -79,6 +79,8 @@
     <string name="siren_title">FamilyGuard lässt dieses Handy klingeln</string>
     <string name="siren_text">Jemand hat dieses Handy klingeln lassen, damit es gefunden wird. Es hört nach fünf Minuten von selbst auf.</string>
     <string name="siren_stop">Klingeln stoppen</string>
+    <string name="siren_screen_stop">Stopp</string>
+    <string name="siren_screen_hint">Drück irgendeine Taste, dann hört es auf.</string>
     <string name="usage_access_title">Die Bildschirmzeit wird nicht gemessen</string>
     <string name="usage_access_text">FamilyGuard braucht den Nutzungsdatenzugriff, um zu sehen, wie lange Apps benutzt werden. Ohne ihn zeigt die Bildschirmzeit null und Tageslimits greifen nie. Tippe, um die Einstellung zu öffnen, und schalte FamilyGuard ein.</string>
     <string name="recovery_title">Dieses Handy entsperren</string>
