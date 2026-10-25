@@ -998,8 +998,8 @@ decay for a week"*. Design: `docs/superpowers/specs/2026-10-25-learning-apps-ear
 
 - FR-30.1 **Learning apps are a family setting**: a list of package-name prefixes, empty by default,
   at most 10 of at most 100 characters, each a package-name prefix (letters, digits, `_`, dots). A
-  package is a learning app when its name starts with one. Set by an admin through the API, `fgctl`,
-  MCP and the console's Familie page; readable by every parent role and API key. Audited as
+  package is a learning app when its name starts with one. Set and read by an admin through the API,
+  `fgctl`, MCP and the console's Familie page; a guardian neither reads nor sets it (FR-20.1). Audited as
   `LEARNING_APPS_UPDATED`, and every phone of the family is woken to fetch it.
 - FR-30.2 **A learning app is always free**, for every child: no daily limit, bedtime, approval hold
   (FR-5.4), bonus rule (FR-22) or allowance of its own (FR-5.8) applies to it, and its minutes are

@@ -384,3 +384,32 @@ func (s *Store) EarnedSpentByDay(ctx context.Context, childID uuid.UUID, since s
 	}
 	return out, rows.Err()
 }
+
+// LearningCredits is what a profile's phones learned, per day since since (FR-30.3, FR-30.4): each
+// device's day floored to whole minutes as the phone floors it, then summed over the devices. One
+// (device, day) can be left out — the phone adds its own live count for today (FR-30.5), so the
+// balance it is sent must not already hold it. uuid.Nil leaves nothing out.
+func (s *Store) LearningCredits(ctx context.Context, childID uuid.UUID, since string, excludeDevice uuid.UUID, excludeDay string) ([]earned.Credit, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT to_char(day, 'YYYY-MM-DD'), SUM(minutes)::int FROM (
+		     SELECT u.day, u.device_id, (SUM(u.learning_ms)::bigint / 60000) AS minutes
+		       FROM usage_samples u JOIN devices d ON d.id = u.device_id
+		      WHERE d.child_id = $1 AND u.day >= $2::date
+		        AND NOT (u.device_id = $3 AND to_char(u.day, 'YYYY-MM-DD') = $4)
+		      GROUP BY u.day, u.device_id) per_device
+		  WHERE minutes > 0
+		  GROUP BY day ORDER BY day`, childID, since, excludeDevice, excludeDay)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []earned.Credit{}
+	for rows.Next() {
+		var c earned.Credit
+		if err := rows.Scan(&c.Day, &c.Minutes); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}

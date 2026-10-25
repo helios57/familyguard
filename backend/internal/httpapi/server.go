@@ -269,6 +269,9 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.GET("/family/blocked-packages", admins, s.listFamilyBlocklist)
 	p.PUT("/family/blocked-packages", admins, s.putFamilyBlocklist)
 	p.DELETE("/family/blocked-packages", admins, s.deleteFamilyBlocklist)
+	// FR-30.1: the prefixes that make an app a learning app, for every child at once.
+	p.GET("/family/learning-prefixes", admins, s.getLearningPrefixes)
+	p.PUT("/family/learning-prefixes", admins, s.putLearningPrefixes)
 	p.GET("/parents", admins, s.listParents)
 	// requireInteractiveParent, here and on /api-keys below: these are the routes that hand out or
 	// take away a credential, and an API key that can mint one outlives its own revocation.

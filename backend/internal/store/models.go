@@ -245,7 +245,8 @@ type DeviceState struct {
 	ReportedAdFilterReason *string `json:"-"`
 }
 
-// Policy is a child's governance settings. DailyLimitMinutes of 0 means "no quota".
+// Policy is a child's governance settings. DailyLimitEnabled says whether there is a daily limit at
+// all and DailyLimitMinutes how large it is, so 0 minutes switched on is a real limit (FR-30.6).
 type Policy struct {
 	ChildID            uuid.UUID `json:"child_id"`
 	TrackingOnly       bool      `json:"tracking_only"`
@@ -260,6 +261,7 @@ type Policy struct {
 	AllowUninstall    bool `json:"allow_uninstall"`
 	YouTubeBlocked    bool `json:"youtube_blocked"`
 	DailyLimitMinutes int  `json:"daily_limit_minutes"`
+	DailyLimitEnabled bool `json:"daily_limit_enabled"`
 	// Paused is a parent's or guardian's pause (FR-21), and PausedAt when it began.
 	Paused         bool       `json:"paused"`
 	PausedAt       *time.Time `json:"paused_at"`

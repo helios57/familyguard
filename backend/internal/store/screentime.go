@@ -83,16 +83,19 @@ func (s *Store) HomePackages(ctx context.Context, deviceID uuid.UUID) ([]string,
 
 // DayLimits is the limit that applied to a child on one day (FR-3.9).
 type DayLimits struct {
-	Day               string         `json:"day"`
-	DailyLimitMinutes int            `json:"daily_limit_minutes"`
-	BonusMinutes      int            `json:"bonus_minutes"`
-	AppLimits         map[string]int `json:"app_limits"`
-	UpdatedAt         time.Time      `json:"updated_at"`
+	Day               string `json:"day"`
+	DailyLimitMinutes int    `json:"daily_limit_minutes"`
+	// LimitEnabled is whether the day had a daily limit at all (FR-30.6); for a day recorded before
+	// the switch existed, whether its minutes were above 0, which is what they meant then.
+	LimitEnabled bool           `json:"limit_enabled"`
+	BonusMinutes int            `json:"bonus_minutes"`
+	AppLimits    map[string]int `json:"app_limits"`
+	UpdatedAt    time.Time      `json:"updated_at"`
 }
 
 // RecordDayLimits writes the limits in force on a day. Called while the day is current; the last
 // write of a day is the value the day ends with.
-func (s *Store) RecordDayLimits(ctx context.Context, childID uuid.UUID, day string, dailyLimit, bonus int, appLimits map[string]int) error {
+func (s *Store) RecordDayLimits(ctx context.Context, childID uuid.UUID, day string, limitEnabled bool, dailyLimit, bonus int, appLimits map[string]int) error {
 	if appLimits == nil {
 		appLimits = map[string]int{}
 	}
@@ -101,12 +104,12 @@ func (s *Store) RecordDayLimits(ctx context.Context, childID uuid.UUID, day stri
 		return err
 	}
 	_, err = s.pool.Exec(ctx,
-		`INSERT INTO day_limits (child_id, day, daily_limit_minutes, bonus_minutes, app_limits)
-		 VALUES ($1, $2::date, $3, $4, $5)
+		`INSERT INTO day_limits (child_id, day, daily_limit_minutes, bonus_minutes, app_limits, limit_enabled)
+		 VALUES ($1, $2::date, $3, $4, $5, $6)
 		 ON CONFLICT (child_id, day) DO UPDATE
 		   SET daily_limit_minutes = EXCLUDED.daily_limit_minutes, bonus_minutes = EXCLUDED.bonus_minutes,
-		       app_limits = EXCLUDED.app_limits, updated_at = NOW()`,
-		childID, day, dailyLimit, bonus, encoded)
+		       app_limits = EXCLUDED.app_limits, limit_enabled = EXCLUDED.limit_enabled, updated_at = NOW()`,
+		childID, day, dailyLimit, bonus, encoded, limitEnabled)
 	return err
 }
 
@@ -117,9 +120,10 @@ func (s *Store) GetDayLimits(ctx context.Context, childID uuid.UUID, day string)
 	var raw []byte
 	var date time.Time
 	err := s.pool.QueryRow(ctx,
-		`SELECT day, daily_limit_minutes, bonus_minutes, app_limits, updated_at FROM day_limits
+		`SELECT day, daily_limit_minutes, COALESCE(limit_enabled, daily_limit_minutes > 0), bonus_minutes,
+		        app_limits, updated_at FROM day_limits
 		  WHERE child_id = $1 AND day = $2::date`, childID, day).
-		Scan(&date, &d.DailyLimitMinutes, &d.BonusMinutes, &raw, &d.UpdatedAt)
+		Scan(&date, &d.DailyLimitMinutes, &d.LimitEnabled, &d.BonusMinutes, &raw, &d.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

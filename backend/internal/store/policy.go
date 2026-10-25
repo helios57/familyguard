@@ -10,7 +10,7 @@ import (
 
 const policyCols = `child_id, tracking_only, allow_child_installs, allow_debugging, allow_uninstall,
 	youtube_blocked, daily_limit_minutes, bedtime_enabled, bedtime_start, bedtime_end, dns_host,
-	ad_filter, ad_filter_list_url, timezone, version, updated_at, paused, paused_at`
+	ad_filter, ad_filter_list_url, timezone, version, updated_at, paused, paused_at, daily_limit_enabled`
 
 // NormalizeDomain folds a hostname to the stored form: lowercase, no trailing dot, no scheme, no
 // path. Both add and remove go through it, which is what makes removal actually remove — a rule
@@ -40,6 +40,7 @@ type PolicyUpdate struct {
 	AllowUninstall     *bool
 	YouTubeBlocked     *bool
 	DailyLimitMinutes  *int
+	DailyLimitEnabled  *bool
 	BedtimeEnabled     *bool
 	BedtimeStart       *string
 	BedtimeEnd         *string
@@ -67,13 +68,14 @@ func (s *Store) UpdatePolicy(ctx context.Context, childID uuid.UUID, u PolicyUpd
 		     ad_filter            = COALESCE($12, ad_filter),
 		     ad_filter_list_url   = COALESCE($13, ad_filter_list_url),
 		     timezone             = COALESCE($14, timezone),
+		     daily_limit_enabled  = COALESCE($15, daily_limit_enabled),
 		     version              = version + 1,
 		     updated_at           = NOW()
 		  WHERE child_id = $1
 		 RETURNING `+policyCols,
 		childID, u.TrackingOnly, u.AllowChildInstalls, u.AllowDebugging, u.AllowUninstall,
 		u.YouTubeBlocked, u.DailyLimitMinutes, u.BedtimeEnabled, u.BedtimeStart, u.BedtimeEnd,
-		u.DNSHost, u.AdFilter, u.AdFilterListURL, u.Timezone))
+		u.DNSHost, u.AdFilter, u.AdFilterListURL, u.Timezone, u.DailyLimitEnabled))
 }
 
 // SetPaused pauses or unpauses a child's phones (FR-21) and bumps the version, so every phone
@@ -199,7 +201,7 @@ func scanPolicy(row pgx.Row) (*Policy, error) {
 	if err := row.Scan(&p.ChildID, &p.TrackingOnly, &p.AllowChildInstalls, &p.AllowDebugging,
 		&p.AllowUninstall, &p.YouTubeBlocked, &p.DailyLimitMinutes, &p.BedtimeEnabled,
 		&p.BedtimeStart, &p.BedtimeEnd, &p.DNSHost, &p.AdFilter, &p.AdFilterListURL,
-		&p.Timezone, &p.Version, &p.UpdatedAt, &p.Paused, &p.PausedAt); err != nil {
+		&p.Timezone, &p.Version, &p.UpdatedAt, &p.Paused, &p.PausedAt, &p.DailyLimitEnabled); err != nil {
 		return nil, mapErr(err)
 	}
 	return &p, nil

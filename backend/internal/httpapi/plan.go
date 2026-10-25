@@ -167,6 +167,9 @@ type todayView struct {
 	// many more the child may send today.
 	TimeRequests     []store.TimeRequest `json:"time_requests"`
 	TimeRequestsLeft int                 `json:"time_requests_left"`
+	// LearnedTodayMinutes is what the profile's phones learned today, summed over them (FR-30.3).
+	// Already part of Earned.AvailableMinutes; shown on its own as "davon erspielt".
+	LearnedTodayMinutes int `json:"learned_today_minutes"`
 }
 
 // weekdayBit is a day's bit in plan_groups.weekdays: Monday 1 … Sunday 64.
@@ -237,6 +240,15 @@ func (s *Server) today(ctx context.Context, childID uuid.UUID) (*todayView, erro
 		return nil, err
 	}
 	view.TimeRequestsLeft = max(0, store.MaxTimeRequestsPerDay-len(view.TimeRequests))
+	learned, err := s.store.LearningCredits(ctx, childID, day, uuid.Nil, "")
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range learned {
+		if l.Day == day {
+			view.LearnedTodayMinutes += l.Minutes
+		}
+	}
 	return view, nil
 }
 

@@ -15,7 +15,7 @@ import (
 // cumulative for the day, so a reboot or a counter reset must never be able to lower a total the
 // server already saw — that would hand the child a way to earn screen time back by rebooting
 // (FR-3.2).
-func (s *Store) RecordUsage(ctx context.Context, deviceID uuid.UUID, day string, samples, earned map[string]int64) error {
+func (s *Store) RecordUsage(ctx context.Context, deviceID uuid.UUID, day string, samples, earned, learning map[string]int64) error {
 	if len(samples) == 0 {
 		return nil
 	}
@@ -27,15 +27,20 @@ func (s *Store) RecordUsage(ctx context.Context, deviceID uuid.UUID, day string,
 			// FR-22: the earned part of a package's day, cumulative and merged like the total. It can
 			// never exceed the total it is a part of, whatever a device sends.
 			gold := min(max(earned[pkg], 0), ms)
+			// FR-30.3: the learning part, cumulative and bounded the same way. GREATEST is what makes
+			// a re-sent report harmless and a credit, once reported, permanent.
+			learned := min(max(learning[pkg], 0), ms)
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO usage_samples (device_id, day, package_name, foreground_ms, earned_ms)
-				 VALUES ($1, $2::date, $3, $4, $5)
+				`INSERT INTO usage_samples (device_id, day, package_name, foreground_ms, earned_ms, learning_ms)
+				 VALUES ($1, $2::date, $3, $4, $5, $6)
 				 ON CONFLICT (device_id, day, package_name) DO UPDATE
 				   SET foreground_ms = GREATEST(usage_samples.foreground_ms, EXCLUDED.foreground_ms),
 				       earned_ms     = LEAST(GREATEST(usage_samples.earned_ms, EXCLUDED.earned_ms),
 				                             GREATEST(usage_samples.foreground_ms, EXCLUDED.foreground_ms)),
+				       learning_ms   = LEAST(GREATEST(usage_samples.learning_ms, EXCLUDED.learning_ms),
+				                             GREATEST(usage_samples.foreground_ms, EXCLUDED.foreground_ms)),
 				       updated_at    = NOW()`,
-				deviceID, day, pkg, ms, gold); err != nil {
+				deviceID, day, pkg, ms, gold, learned); err != nil {
 				return err
 			}
 		}
@@ -398,4 +403,17 @@ func (s *Store) UsageSessionsEverReported(ctx context.Context, deviceID uuid.UUI
 	err := s.pool.QueryRow(ctx,
 		`SELECT EXISTS (SELECT 1 FROM usage_sessions WHERE device_id = $1)`, deviceID).Scan(&exists)
 	return exists, err
+}
+
+// LearningMinutesForDay is what one device learned on one day (FR-30.3): the learning time of all
+// its packages summed, then floored to whole minutes, so three apps at 40 s each earn 2.
+func (s *Store) LearningMinutesForDay(ctx context.Context, deviceID uuid.UUID, day string) (int, error) {
+	var ms int64
+	err := s.pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(learning_ms), 0)::bigint FROM usage_samples WHERE device_id = $1 AND day = $2::date`,
+		deviceID, day).Scan(&ms)
+	if err != nil {
+		return 0, err
+	}
+	return int(ms / 60000), nil
 }

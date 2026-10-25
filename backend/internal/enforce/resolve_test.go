@@ -45,6 +45,34 @@ type fakeSource struct {
 	credits     []earned.Credit
 	spentByDay  map[string]int
 	sinceAsked  string
+	// FR-30.
+	prefixes        []string
+	learnedToday    int
+	learningCredits []earned.Credit
+	excludedDevice  uuid.UUID // the device the resolver asked the store to leave out of the learning credits
+	excludedDay     string
+}
+
+func (f *fakeSource) LearningPrefixes(context.Context) ([]string, error) {
+	if err := f.fail["prefixes"]; err != nil {
+		return nil, err
+	}
+	return f.prefixes, nil
+}
+
+func (f *fakeSource) LearningCredits(_ context.Context, _ uuid.UUID, _ string, excludeDevice uuid.UUID, excludeDay string) ([]earned.Credit, error) {
+	f.excludedDevice, f.excludedDay = excludeDevice, excludeDay
+	if err := f.fail["learning"]; err != nil {
+		return nil, err
+	}
+	return f.learningCredits, nil
+}
+
+func (f *fakeSource) LearningMinutesForDay(context.Context, uuid.UUID, string) (int, error) {
+	if err := f.fail["learned"]; err != nil {
+		return 0, err
+	}
+	return f.learnedToday, nil
 }
 
 func (f *fakeSource) EarnedCredits(_ context.Context, _ uuid.UUID, since string) ([]earned.Credit, error) {
@@ -229,6 +257,33 @@ func TestEarnedTimeReachesTheEngine(t *testing.T) {
 	}
 	if f.sinceAsked != "2026-07-02" {
 		t.Errorf("credits read since %q, want 2026-07-02 — two validity periods back", f.sinceAsked)
+	}
+}
+
+// FR-30.5: the phone adds its own learning of today, so the balance it is sent must leave exactly
+// that out — this device, this day — and carry the rest: other days, other phones.
+func TestLearningReachesTheEngineWithoutThisDevicesToday(t *testing.T) {
+	f := baseSource()
+	f.policy.DailyLimitMinutes, f.policy.DailyLimitEnabled = 0, true
+	f.prefixes = []string{"org.example.learn."}
+	f.learnedToday = 12
+	f.learningCredits = []earned.Credit{{Day: "2026-07-15", Minutes: 8}}
+	f.credits = []earned.Credit{{Day: "2026-07-14", Minutes: 30}}
+
+	got, in := resolve(t, f, time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC))
+
+	if f.excludedDevice != f.device.ID || f.excludedDay != "2026-07-16" {
+		t.Errorf("learning credits leave out %s on %q; want this device (%s) on today", f.excludedDevice, f.excludedDay, f.device.ID)
+	}
+	if in.Settings.EarnedAvailableMinutes != 38 || in.LearningMinutesToday != 12 {
+		t.Errorf("available %d, learned today %d; want 38 (30 tasks + 8 learned yesterday) and 12",
+			in.Settings.EarnedAvailableMinutes, in.LearningMinutesToday)
+	}
+	if !slices.Equal(in.Settings.LearningPrefixes, f.prefixes) || in.Settings.DailyLimitEnabled == nil || !*in.Settings.DailyLimitEnabled {
+		t.Errorf("settings carry prefixes %v and switch %v", in.Settings.LearningPrefixes, in.Settings.DailyLimitEnabled)
+	}
+	if got.EarnedMinutesLeft != 50 {
+		t.Errorf("left %d, want 50: the engine adds today's 12 to the 38 it was sent", got.EarnedMinutesLeft)
 	}
 }
 

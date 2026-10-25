@@ -153,6 +153,9 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 	h.call(http.MethodDelete, "/family/blocked-packages?package_name=com.example.familyblocked", parent.Token, nil).
 		expect(http.StatusNoContent)
 	byParent("FAMILY_BLOCKLIST_CLEARED", "family", "")
+	// FR-30.1: the learning prefixes, through the same fan-out helper.
+	h.putLearningPrefixes(parent.Token, learnPrefix).expect(http.StatusOK)
+	byParent("LEARNING_APPS_UPDATED", "family", "")
 
 	h.call(http.MethodPut, "/children/"+child.ID+"/app-rules", parent.Token,
 		map[string]any{"package_name": pkgGame, "action": "BLOCK"}).expect(http.StatusOK)

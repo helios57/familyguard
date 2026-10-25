@@ -303,3 +303,66 @@ func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
+
+// LearningPrefixes is the family's list of package-name prefixes that make an app a learning app
+// (FR-30.1), never nil.
+func (s *Store) LearningPrefixes(ctx context.Context) ([]string, error) {
+	var out []string
+	err := s.pool.QueryRow(ctx, `SELECT learning_prefixes FROM families ORDER BY created_at LIMIT 1`).Scan(&out)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []string{}
+	}
+	return out, nil
+}
+
+// SetLearningPrefixes replaces the family's learning prefixes and bumps every policy version in the
+// same transaction, so a phone that reconnects on its own picks the change up even if the push is
+// lost. Validation is the caller's; the list is stored as given.
+func (s *Store) SetLearningPrefixes(ctx context.Context, prefixes []string) error {
+	if prefixes == nil {
+		prefixes = []string{}
+	}
+	return mapErr(s.tx(ctx, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `UPDATE families SET learning_prefixes = $1`, prefixes)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return bumpEveryPolicy(ctx, tx)
+	}))
+}
+
+// LearningPrefixMatches is, per prefix, how many distinct packages installed on the family's phones
+// it names — what the console shows beside each prefix so a typo reads as 0 rather than as nothing.
+func (s *Store) LearningPrefixMatches(ctx context.Context, prefixes []string) (map[string]int, error) {
+	out := map[string]int{}
+	if len(prefixes) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT p, COUNT(DISTINCT i.package_name)::int
+		   FROM unnest($1::text[]) AS p
+		   LEFT JOIN installed_apps i ON starts_with(i.package_name, p) AND i.removed_at IS NULL
+		  GROUP BY p`, prefixes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p string
+		var n int
+		if err := rows.Scan(&p, &n); err != nil {
+			return nil, err
+		}
+		out[p] = n
+	}
+	return out, rows.Err()
+}

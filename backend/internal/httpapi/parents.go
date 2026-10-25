@@ -240,19 +240,23 @@ func (s *Server) getPolicy(c *gin.Context) {
 // it alone. A console that sent the whole object back would otherwise revert a change another
 // parent made between the read and the write.
 type patchPolicyRequest struct {
-	TrackingOnly       *bool   `json:"tracking_only"`
-	AllowChildInstalls *bool   `json:"allow_child_installs"`
-	AllowDebugging     *bool   `json:"allow_debugging"`
-	AllowUninstall     *bool   `json:"allow_uninstall"`
-	YouTubeBlocked     *bool   `json:"youtube_blocked"`
-	DailyLimitMinutes  *int    `json:"daily_limit_minutes"`
-	BedtimeEnabled     *bool   `json:"bedtime_enabled"`
-	BedtimeStart       *string `json:"bedtime_start"`
-	BedtimeEnd         *string `json:"bedtime_end"`
-	DNSHost            *string `json:"dns_host"`
-	AdFilter           *bool   `json:"ad_filter"`
-	AdFilterListURL    *string `json:"ad_filter_list_url"`
-	Timezone           *string `json:"timezone"`
+	TrackingOnly       *bool `json:"tracking_only"`
+	AllowChildInstalls *bool `json:"allow_child_installs"`
+	AllowDebugging     *bool `json:"allow_debugging"`
+	AllowUninstall     *bool `json:"allow_uninstall"`
+	YouTubeBlocked     *bool `json:"youtube_blocked"`
+	DailyLimitMinutes  *int  `json:"daily_limit_minutes"`
+	// DailyLimitEnabled says whether there is a daily limit at all (FR-30.6). Omitted with minutes
+	// given, it follows them as it always did — 0 off, more than 0 on — so a console or fgctl that
+	// predates the switch cannot lock a phone by sending 0. Only the switch says "on, 0 minutes".
+	DailyLimitEnabled *bool   `json:"daily_limit_enabled"`
+	BedtimeEnabled    *bool   `json:"bedtime_enabled"`
+	BedtimeStart      *string `json:"bedtime_start"`
+	BedtimeEnd        *string `json:"bedtime_end"`
+	DNSHost           *string `json:"dns_host"`
+	AdFilter          *bool   `json:"ad_filter"`
+	AdFilterListURL   *string `json:"ad_filter_list_url"`
+	Timezone          *string `json:"timezone"`
 }
 
 func (s *Server) patchPolicy(c *gin.Context) {
@@ -304,6 +308,10 @@ func (s *Server) patchPolicy(c *gin.Context) {
 		return
 	}
 
+	if req.DailyLimitEnabled == nil && req.DailyLimitMinutes != nil {
+		on := *req.DailyLimitMinutes > 0
+		req.DailyLimitEnabled = &on
+	}
 	pol, err := s.store.UpdatePolicy(c.Request.Context(), childID, store.PolicyUpdate{
 		TrackingOnly:       req.TrackingOnly,
 		AllowChildInstalls: req.AllowChildInstalls,
@@ -311,6 +319,7 @@ func (s *Server) patchPolicy(c *gin.Context) {
 		AllowUninstall:     req.AllowUninstall,
 		YouTubeBlocked:     req.YouTubeBlocked,
 		DailyLimitMinutes:  req.DailyLimitMinutes,
+		DailyLimitEnabled:  req.DailyLimitEnabled,
 		BedtimeEnabled:     req.BedtimeEnabled,
 		BedtimeStart:       req.BedtimeStart,
 		BedtimeEnd:         req.BedtimeEnd,

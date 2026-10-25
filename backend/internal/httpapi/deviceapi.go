@@ -527,6 +527,10 @@ type usageRequest struct {
 	// Earned is, of Samples, the part of each package's day the phone paid from earned time (FR-22),
 	// cumulative like it.
 	Earned map[string]int64 `json:"earned"`
+	// Learning is, of Samples, the part of each package's day the phone counted as learning
+	// (FR-30.3): while the package was a learning app and the phone was enforcing. Cumulative like
+	// it; absent from a phone that predates learning apps, which then earns nothing.
+	Learning map[string]int64 `json:"learning"`
 	// Sessions is what ran WHEN (FR-3.7), and it rides the same request as the day totals on
 	// purpose: they are two views of one measurement the phone already made, and a second endpoint
 	// would give them two different clocks, two retry states and two ways to disagree.
@@ -593,7 +597,7 @@ func (s *Server) deviceUsageReport(c *gin.Context) {
 		return
 	}
 
-	if err := s.store.RecordUsage(c.Request.Context(), dev.ID, day, req.Samples, req.Earned); err != nil {
+	if err := s.store.RecordUsage(c.Request.Context(), dev.ID, day, req.Samples, req.Earned, req.Learning); err != nil {
 		s.fail(c, err)
 		return
 	}

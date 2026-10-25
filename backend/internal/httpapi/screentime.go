@@ -38,7 +38,7 @@ func (s *Server) recordDayLimits(ctx context.Context, childID uuid.UUID, pol *st
 	if err != nil {
 		return err
 	}
-	return s.store.RecordDayLimits(ctx, childID, day, pol.DailyLimitMinutes, bonus, ownLimits(rules))
+	return s.store.RecordDayLimits(ctx, childID, day, pol.DailyLimitEnabled, pol.DailyLimitMinutes, bonus, ownLimits(rules))
 }
 
 // ownLimits is each app's own daily allowance: LIMIT rules with minutes set.
@@ -82,7 +82,7 @@ func (s *Server) grantBonus(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
-	if pol.DailyLimitMinutes <= 0 {
+	if !pol.DailyLimitEnabled {
 		failWith(c, http.StatusConflict, "no_daily_limit",
 			"this child has no daily limit, so there is no time to add to or take from")
 		return
@@ -156,9 +156,12 @@ type screenTime struct {
 	ExemptMinutes int `json:"exempt_minutes"`
 	// DailyLimitMinutes and BonusMinutes are what applied on the day; LimitRecorded is false for a
 	// day before anything recorded them, which the console says rather than guessing.
-	DailyLimitMinutes int  `json:"daily_limit_minutes"`
-	BonusMinutes      int  `json:"bonus_minutes"`
-	LimitRecorded     bool `json:"limit_recorded"`
+	DailyLimitMinutes int `json:"daily_limit_minutes"`
+	// LimitEnabled is whether the day had a daily limit at all (FR-30.6): 0 minutes switched on is a
+	// limit, 0 minutes switched off is none.
+	LimitEnabled  bool `json:"limit_enabled"`
+	BonusMinutes  int  `json:"bonus_minutes"`
+	LimitRecorded bool `json:"limit_recorded"`
 	// SuspendReason is QUOTA or BEDTIME while that is in force now (today only).
 	SuspendReason string `json:"suspend_reason"`
 	IsToday       bool   `json:"is_today"`
@@ -209,6 +212,7 @@ func (s *Server) describeDay(ctx context.Context, dev *store.Device, pol *store.
 		counted = func(sample store.UsageSample) bool { return !slices.Contains(in.UncountedPackages, sample.PackageName) }
 		limits = ownLimits(rules)
 		st.DailyLimitMinutes = pol.DailyLimitMinutes
+		st.LimitEnabled = pol.DailyLimitEnabled
 		st.BonusMinutes = ds.BonusMinutes
 		st.LimitRecorded = true
 		st.SuspendReason = ds.SuspendReason
@@ -220,6 +224,7 @@ func (s *Server) describeDay(ctx context.Context, dev *store.Device, pol *store.
 			return nil, st, err
 		default:
 			st.DailyLimitMinutes = recorded.DailyLimitMinutes
+			st.LimitEnabled = recorded.LimitEnabled
 			st.BonusMinutes = recorded.BonusMinutes
 			st.LimitRecorded = true
 			limits = recorded.AppLimits

@@ -45,6 +45,9 @@ type Source interface {
 	UsageSplitForDay(ctx context.Context, deviceID uuid.UUID, day string, uncounted []string) (budget, earned int, err error)
 	EarnedCredits(ctx context.Context, childID uuid.UUID, since string) ([]earned.Credit, error)
 	EarnedSpentByDay(ctx context.Context, childID uuid.UUID, since string) (map[string]int, error)
+	LearningPrefixes(ctx context.Context) ([]string, error)
+	LearningCredits(ctx context.Context, childID uuid.UUID, since string, excludeDevice uuid.UUID, excludeDay string) ([]earned.Credit, error)
+	LearningMinutesForDay(ctx context.Context, deviceID uuid.UUID, day string) (int, error)
 	HomePackages(ctx context.Context, deviceID uuid.UUID) ([]string, error)
 	BonusMinutes(ctx context.Context, childID uuid.UUID, day string) (int, error)
 	UsageMinutesByPackageForDay(ctx context.Context, deviceID uuid.UUID, day string) (map[string]int, error)
@@ -166,9 +169,19 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 		return nil, nil, fmt.Errorf("home packages: %w", err)
 	}
 	notUse := store.SortedUnique(home, policy.PlatformUncountedPackages, r.ownPackages)
-	balance, err := r.Balance(ctx, dev.ChildID, day)
+	// FR-30.5: the balance this phone is sent leaves out what it learned today, because its engine
+	// adds its own live count — which is what makes a minute learned offline spendable at once.
+	balance, err := r.balance(ctx, dev.ChildID, day, deviceID)
 	if err != nil {
 		return nil, nil, err
+	}
+	learnedToday, err := r.src.LearningMinutesForDay(ctx, deviceID, day)
+	if err != nil {
+		return nil, nil, fmt.Errorf("learning today: %w", err)
+	}
+	learningPrefixes, err := r.src.LearningPrefixes(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("learning prefixes: %w", err)
 	}
 	bonus, err := r.src.BonusMinutes(ctx, dev.ChildID, day)
 	if err != nil {
@@ -212,6 +225,7 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 			AllowUninstall:        pol.AllowUninstall,
 			YouTubeBlocked:        pol.YouTubeBlocked,
 			DailyLimitMinutes:     pol.DailyLimitMinutes,
+			DailyLimitEnabled:     &pol.DailyLimitEnabled,
 			Paused:                pol.Paused,
 			BonusMinutes:          bonus,
 			BonusDay:              bonusDay,
@@ -233,11 +247,14 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 			// FR-22: the apps that run only on earned time, and the balance at the start of today.
 			BonusPackages:          bonusApps,
 			EarnedAvailableMinutes: balance.AvailableToday,
-			BlockedDomains:         domains,
-			ManagedApps:            r.managedApps(managed),
+			// FR-30: the family's learning apps, and what this phone has learned today.
+			LearningPrefixes: learningPrefixes,
+			BlockedDomains:   domains,
+			ManagedApps:      r.managedApps(managed),
 		},
 		Installed:            installedApps(apps),
 		UsedMinutesByPackage: usedByPackage,
+		LearningMinutesToday: learnedToday,
 		ParentLock:           dev.Locked,
 		// The device's own resolved packages (its actual dialer, launcher and IMEs) *plus* the
 		// family's always-usable list, unioned here rather than left to the engine.
@@ -320,9 +337,15 @@ func splitRules(rules []store.AppRule) (blocked, allowed []string, limited []pol
 	return blocked, allowed, limited, bonus
 }
 
-// Balance is a profile's earned-time balance at the start of day (FR-22), from its credits and its
-// phones' reported spending over the look-back the balance needs.
+// Balance is a profile's earned-time balance at the start of day (FR-22), from its credits — the
+// confirmed tasks and every phone's learning (FR-30.4) — and its phones' reported spending over the
+// look-back the balance needs.
 func (r *Resolver) Balance(ctx context.Context, childID uuid.UUID, day string) (earned.Balance, error) {
+	return r.balance(ctx, childID, day, uuid.Nil)
+}
+
+// balance is Balance with one device's learning of day left out: the device that will add it itself.
+func (r *Resolver) balance(ctx context.Context, childID uuid.UUID, day string, excludeDevice uuid.UUID) (earned.Balance, error) {
 	start, err := time.Parse(time.DateOnly, day)
 	if err != nil {
 		return earned.Balance{}, fmt.Errorf("%w: day %q", policy.ErrInvalidInput, day)
@@ -332,6 +355,11 @@ func (r *Resolver) Balance(ctx context.Context, childID uuid.UUID, day string) (
 	if err != nil {
 		return earned.Balance{}, fmt.Errorf("earned credits: %w", err)
 	}
+	learned, err := r.src.LearningCredits(ctx, childID, since, excludeDevice, day)
+	if err != nil {
+		return earned.Balance{}, fmt.Errorf("learning credits: %w", err)
+	}
+	credits = append(credits, learned...)
 	spent, err := r.src.EarnedSpentByDay(ctx, childID, since)
 	if err != nil {
 		return earned.Balance{}, fmt.Errorf("earned spending: %w", err)

@@ -54,7 +54,7 @@ func (s *Server) deviceRequestTime(c *gin.Context) {
 		s.fail(c, err)
 		return
 	}
-	if pol.DailyLimitMinutes <= 0 {
+	if !pol.DailyLimitEnabled {
 		failWith(c, http.StatusConflict, "no_daily_limit", "this profile has no daily limit, so there is no time to ask for")
 		return
 	}
@@ -141,7 +141,7 @@ func (s *Server) decideTimeRequest(c *gin.Context) {
 		return
 	}
 	grant := decision == "grant"
-	if grant && pol.DailyLimitMinutes <= 0 {
+	if grant && !pol.DailyLimitEnabled {
 		failWith(c, http.StatusConflict, "no_daily_limit",
 			"this child has no daily limit any more, so there is no time to add")
 		return
