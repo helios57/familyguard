@@ -672,7 +672,7 @@ func Compute(in Input) (DesiredState, error) {
 		}
 	}
 
-	// FR-30: a learning app is one the family's prefixes name and nobody blocked. It is free — no
+	// FR-30.2: a learning app is one the family's prefixes name and nobody blocked. It is free — no
 	// limit, bedtime, approval hold, bonus rule or allowance of its own applies — because its
 	// minutes are what the child earns time with. Only a pause and a block stop it.
 	learning := newSet(nil)
@@ -683,7 +683,7 @@ func Compute(in Input) (DesiredState, error) {
 	}
 	out.LearningPackages = learning.sorted()
 
-	// FR-22 and FR-30: the Bonuszeit left is the server's balance plus what this device learned
+	// FR-22 and FR-30.5: the Bonuszeit left is the server's balance plus what this device learned
 	// today, less what it spent today.
 	gold := in.Settings.EarnedAvailableMinutes + in.LearningMinutesToday - in.EarnedSpentMinutesToday
 
@@ -898,7 +898,7 @@ func LimitExemptPackages(in Input) ([]string, error) {
 	return candidates.sorted(), nil
 }
 
-// LimitOn is whether the settings carry a daily limit at all (FR-30): the explicit switch when there
+// LimitOn is whether the settings carry a daily limit at all (FR-30.6): the explicit switch when there
 // is one, and otherwise the rule from before it existed — a limit exactly when the minutes are above
 // 0, so a stored 0 keeps meaning "no limit".
 func LimitOn(s Settings) bool {
