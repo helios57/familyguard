@@ -331,6 +331,9 @@ func allCollections(childID, deviceID string) []collection {
 		// on Google Play, and the console's catalog sheet iterates both.
 		{"/family/managed-apps", "managed_apps", "FamilyManagedPackages", stageFresh},
 		{"/play-sources", "sources", "ListPlaySources", stageFresh},
+		// FR-30.1: a new family has no learning apps; the console's Familie page and the phone's
+		// engine both iterate the list.
+		{"/family/learning-prefixes", "prefixes", "LearningPrefixes", stageFresh},
 		{"/device/commands", "commands", "PendingCommands", stageEnrolled},
 	}
 }
@@ -384,6 +387,9 @@ var collectionsCoveredElsewhere = map[string]string{
 		"policy.DefaultCriticalPackages and policy.YouTubePackages do. NFR-5 is about invented " +
 		"families, children and devices; a policy default that a parent can see, edit and " +
 		"permanently delete is none of those",
+	"LearningCredits": "never serialised as itself: like EarnedCredits it feeds earned.Compute, whose " +
+		"credits reach a client as today's earned.credits (never nil), and the today view's " +
+		"learned_today_minutes, which is a sum and cannot be null",
 	"FamilyBlockedPackageNames": "the same list in the shape the engine consumes; it arrives " +
 		"inside the policy response as input.settings.family_blocked_packages, which section 7 " +
 		"scans for nulls along with every other array in that tree",
