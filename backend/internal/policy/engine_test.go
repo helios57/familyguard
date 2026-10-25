@@ -109,6 +109,7 @@ func TestVectorsCoverTheEnforcementRequirements(t *testing.T) {
 		"FR-5.10", // preinstalled apps a child can open are free by default
 		"FR-21",   // pause, and a signed adjustment to today's time
 		"FR-22",   // earned time (Bonuszeit) and bonus apps
+		"FR-30",   // learning apps earn time, and a daily limit of 0 that is a limit
 		"FR-6.2",  // per-child filtering endpoint
 		"FR-6.4",  // domain removal restores access
 		"FR-6.6",  // the on-device ad filter, and the list url that gates it

@@ -18,6 +18,7 @@ func TestOnlyWhatTheLimitPausesCountsAgainstIt(t *testing.T) {
 	s.LimitedPackages = []AppLimit{{PackageName: "org.jellyfin.mobile"}, {PackageName: "com.example.own", Minutes: 20}}
 	s.BonusPackages = []string{"com.example.bonus"}
 	s.CountedSystemPackages = []string{"com.android.chrome"}
+	s.LearningPrefixes = []string{"org.example.learn."}
 	in := Input{
 		Settings: s,
 		Installed: append(baseInstalled(),
@@ -30,6 +31,7 @@ func TestOnlyWhatTheLimitPausesCountsAgainstIt(t *testing.T) {
 			App{Package: "com.android.chrome", System: true, Launchable: &yes},
 			App{Package: "com.sec.android.gallery3d", System: true, Launchable: &yes},
 			App{Package: "com.example.service", System: true, Launchable: &no},
+			App{Package: "org.example.learn.letters", NewSinceBaseline: true},
 		),
 		CriticalPackages: []string{"com.oem.dialer"},
 		Now:              "2026-08-17T15:00:00+02:00",
@@ -47,6 +49,7 @@ func TestOnlyWhatTheLimitPausesCountsAgainstIt(t *testing.T) {
 		"com.sec.android.gallery3d",        // FR-5.10: preinstalled and free by default
 		"com.example.service",              // nothing the child can open, nothing the limit pauses
 		"com.oem.dialer",                   // the phone's own critical packages
+		"org.example.learn.letters",        // FR-30: a learning app costs no time, it earns it
 	}, append(DefaultCriticalPackages, AlwaysUsablePackages...)...) {
 		if !slices.Contains(got, p) {
 			t.Errorf("%s is never paused by the daily limit, so its minutes must not count against it; exempt = %v", p, got)
@@ -84,6 +87,8 @@ func TestWhatCountsDoesNotDependOnTheMoment(t *testing.T) {
 			func(in *Input) { in.Settings.BedtimeEnabled = !in.Settings.BedtimeEnabled },
 			func(in *Input) { in.Settings.EarnedAvailableMinutes = 120 },
 			func(in *Input) { in.Settings.DailyLimitMinutes = 0 },
+			func(in *Input) { off := false; in.Settings.DailyLimitEnabled = &off },
+			func(in *Input) { in.LearningMinutesToday = 90 },
 			func(in *Input) { in.Settings.TrackingOnly = !in.Settings.TrackingOnly },
 			func(in *Input) { in.ParentLock = !in.ParentLock },
 		} {

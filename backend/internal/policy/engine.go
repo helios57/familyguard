@@ -355,6 +355,14 @@ type Settings struct {
 	// balance at the start of the day plus what was earned since (FR-22). The phone subtracts its own
 	// spending today, so the balance runs out correctly while it is offline.
 	EarnedAvailableMinutes int `json:"earned_available_minutes"`
+
+	// DailyLimitEnabled says whether DailyLimitMinutes is a limit at all (FR-30): on with 0 minutes
+	// is a day with nothing but Extrazeit and Bonuszeit to spend. nil is an input written before
+	// the switch existed, and keeps the old meaning — a limit exactly when the minutes are above 0.
+	DailyLimitEnabled *bool `json:"daily_limit_enabled,omitempty"`
+	// LearningPrefixes are the family's learning apps (FR-30): a package whose name starts with one
+	// is always free and earns Bonuszeit minute for minute while it is used, unless it is blocked.
+	LearningPrefixes []string `json:"learning_prefixes"`
 }
 
 // ManagedApp is one entry of that set: which application, which exact build, and everything the
@@ -438,6 +446,10 @@ type Input struct {
 	// bonus app, inside bedtime, or past the daily budget — and UsedMinutesToday leaves those minutes
 	// out, so no minute is paid for twice.
 	EarnedSpentMinutesToday int `json:"earned_spent_minutes_today"`
+	// LearningMinutesToday is the Bonuszeit this device earned today in learning apps (FR-30), whole
+	// minutes. The server leaves this device's own today out of EarnedAvailableMinutes, so the
+	// phone's live count is what makes an offline minute of learning spendable at once.
+	LearningMinutesToday int `json:"learning_minutes_today"`
 	// Now is the instant to evaluate, RFC 3339 with an offset.
 	Now string `json:"now"`
 }
@@ -508,6 +520,12 @@ type DesiredState struct {
 	// BonusPackages is passed through, sorted and never nil, so a screen can say "nur mit
 	// Bonuszeit" about an app without holding the rules.
 	BonusPackages []string `json:"bonus_packages"`
+	// LearningPackages are the installed learning apps (FR-30) this state leaves free and lets earn:
+	// matched by a prefix and not blocked, sorted and never nil.
+	LearningPackages []string `json:"learning_packages"`
+	// DailyLimitEnabled is whether a daily limit is in force at all; DailyLimitMinutes may be 0
+	// with it on.
+	DailyLimitEnabled bool `json:"daily_limit_enabled"`
 
 	// FreeByDefault lists the preinstalled apps this state leaves usable because nothing was
 	// decided about them (FR-5.10), sorted and never nil. Reported so a console and the phone can
@@ -617,18 +635,57 @@ func Compute(in Input) (DesiredState, error) {
 	// stranger does not care what the enforcement mode is set to.
 	out.Locked = in.ParentLock
 
-	limit := max(0, in.Settings.DailyLimitMinutes)
+	limitOn := LimitOn(in.Settings)
+	limit := 0
+	if limitOn {
+		limit = max(0, in.Settings.DailyLimitMinutes)
+	}
 	quota := limit
-	if limit > 0 && in.Settings.BonusMinutes != 0 && in.Settings.BonusDay == local.Format("2006-01-02") {
+	if limitOn && in.Settings.BonusMinutes != 0 && in.Settings.BonusDay == local.Format("2006-01-02") {
 		out.BonusMinutes = in.Settings.BonusMinutes
 		quota = max(0, limit+in.Settings.BonusMinutes)
 	}
 	out.DailyLimitMinutes = limit
+	out.DailyLimitEnabled = limitOn
 	out.QuotaMinutes = quota
 	out.UsedMinutes = in.UsedMinutesToday
-	if limit > 0 {
+	if limitOn {
 		out.RemainingMinutes = max(0, quota-in.UsedMinutesToday)
 	}
+
+	blocked := newSet(in.Settings.BlockedPackages)
+	if in.Settings.YouTubeBlocked {
+		blocked.addAll(YouTubePackages)
+	}
+	allowed := newSet(in.Settings.AllowedPackages)
+	// The family list is a default for every child, and a child-level ALLOW is the exemption from
+	// it (FR-18). One child needing an app the family generally does not want is a real situation,
+	// and the alternative — deleting the family entry — would unblock it for everybody.
+	//
+	// The carve-out is deliberately one-directional: an ALLOW does not lift a BLOCK from this
+	// child's own app_rules, and that asymmetry is the point. A family entry is a default somebody
+	// set for the household; a child's own BLOCK is a decision somebody made about this child, and
+	// a default must never be able to overrule it.
+	for _, p := range in.Settings.FamilyBlockedPackages {
+		if !allowed.has(p) {
+			blocked.add(p)
+		}
+	}
+
+	// FR-30: a learning app is one the family's prefixes name and nobody blocked. It is free — no
+	// limit, bedtime, approval hold, bonus rule or allowance of its own applies — because its
+	// minutes are what the child earns time with. Only a pause and a block stop it.
+	learning := newSet(nil)
+	for _, app := range in.Installed {
+		if IsLearning(app.Package, in.Settings.LearningPrefixes) && !blocked.has(app.Package) {
+			learning.add(app.Package)
+		}
+	}
+	out.LearningPackages = learning.sorted()
+
+	// FR-22 and FR-30: the Bonuszeit left is the server's balance plus what this device learned
+	// today, less what it spent today.
+	gold := in.Settings.EarnedAvailableMinutes + in.LearningMinutesToday - in.EarnedSpentMinutesToday
 
 	// ---- tracking-only: measure, do not restrain (FR-8) ----
 	//
@@ -658,7 +715,7 @@ func Compute(in Input) (DesiredState, error) {
 		out.PendingApproval = []string{}
 		out.FreeByDefault = []string{}
 		out.BonusPackages = newSet(in.Settings.BonusPackages).sorted()
-		out.EarnedMinutesLeft = in.Settings.EarnedAvailableMinutes - in.EarnedSpentMinutesToday
+		out.EarnedMinutesLeft = gold
 		out.EarnedSpentMinutes = in.EarnedSpentMinutesToday
 		out.NextChangeAt = ""
 		return out, nil
@@ -683,7 +740,7 @@ func Compute(in Input) (DesiredState, error) {
 		}
 	}
 
-	quotaReached := limit > 0 && in.UsedMinutesToday >= quota
+	quotaReached := limitOn && in.UsedMinutesToday >= quota
 
 	switch {
 	case in.Settings.Paused:
@@ -699,7 +756,6 @@ func Compute(in Input) (DesiredState, error) {
 	// FR-22: earned time. While there is some, a spent budget and bedtime suspend nothing — the phone
 	// runs on it, and says what it is covering. A pause and a parent's block are not covered.
 	bonus := newSet(in.Settings.BonusPackages)
-	gold := in.Settings.EarnedAvailableMinutes - in.EarnedSpentMinutesToday
 	out.EarnedMinutesLeft = gold
 	out.EarnedSpentMinutes = in.EarnedSpentMinutesToday
 	out.BonusPackages = bonus.sorted()
@@ -714,26 +770,6 @@ func Compute(in Input) (DesiredState, error) {
 	free := newSet(nil)
 	countedSystem := newSet(in.Settings.CountedSystemPackages)
 
-	allowed := newSet(in.Settings.AllowedPackages)
-
-	blocked := newSet(in.Settings.BlockedPackages)
-	if in.Settings.YouTubeBlocked {
-		blocked.addAll(YouTubePackages)
-	}
-	// The family list is a default for every child, and a child-level ALLOW is the exemption from
-	// it (FR-18). One child needing an app the family generally does not want is a real situation,
-	// and the alternative — deleting the family entry — would unblock it for everybody.
-	//
-	// The carve-out is deliberately one-directional: an ALLOW does not lift a BLOCK from this
-	// child's own app_rules, and that asymmetry is the point. A family entry is a default somebody
-	// set for the household; a child's own BLOCK is a decision somebody made about this child, and
-	// a default must never be able to overrule it.
-	for _, p := range in.Settings.FamilyBlockedPackages {
-		if !allowed.has(p) {
-			blocked.add(p)
-		}
-	}
-
 	// A blocked app is suspended and hidden (FR-5.2), whether or not it is currently installed:
 	// the DPC applies the list, and an app that is installed later must already be covered.
 	for _, p := range blocked.sorted() {
@@ -743,6 +779,13 @@ func Compute(in Input) (DesiredState, error) {
 
 	for _, app := range in.Installed {
 		if app.Package == "" {
+			continue
+		}
+		if learning.has(app.Package) {
+			// FR-21: a pause takes everything the child can open, learning apps included.
+			if out.SuspendReason == ReasonPaused && app.canBeOpened() {
+				suspended.add(app.Package)
+			}
 			continue
 		}
 		// FR-5.4: with free-installation off, an app the child added after enrollment waits for a
@@ -828,6 +871,9 @@ func LimitExemptPackages(in Input) ([]string, error) {
 	probe.Settings.Paused = false
 	probe.Settings.BedtimeEnabled = false
 	probe.Settings.DailyLimitMinutes = 1
+	on := true
+	probe.Settings.DailyLimitEnabled = &on
+	probe.LearningMinutesToday = 0
 	probe.Settings.BonusMinutes = 0
 	probe.Settings.EarnedAvailableMinutes = 0
 	probe.UsedMinutesToday = 1
@@ -852,6 +898,31 @@ func LimitExemptPackages(in Input) ([]string, error) {
 	return candidates.sorted(), nil
 }
 
+// LimitOn is whether the settings carry a daily limit at all (FR-30): the explicit switch when there
+// is one, and otherwise the rule from before it existed — a limit exactly when the minutes are above
+// 0, so a stored 0 keeps meaning "no limit".
+func LimitOn(s Settings) bool {
+	if s.DailyLimitEnabled != nil {
+		return *s.DailyLimitEnabled
+	}
+	return s.DailyLimitMinutes > 0
+}
+
+// IsLearning is whether pkg is named by one of the family's learning prefixes (FR-30). A prefix
+// matches from the start of the name only, and an empty one matches nothing — an empty prefix
+// would otherwise make every app on the phone a learning app.
+func IsLearning(pkg string, prefixes []string) bool {
+	if pkg == "" {
+		return false
+	}
+	for _, p := range prefixes {
+		if p = strings.TrimSpace(p); p != "" && strings.HasPrefix(pkg, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // nextChangeAt is the earliest future instant at which Compute would return something different:
 // the bedtime edge, or local midnight when a quota is set and the counter resets.
 func nextChangeAt(s Settings, local time.Time, loc *time.Location) string {
@@ -868,7 +939,7 @@ func nextChangeAt(s Settings, local time.Time, loc *time.Location) string {
 			}
 		}
 	}
-	if s.DailyLimitMinutes > 0 {
+	if LimitOn(s) {
 		candidates = append(candidates, nextMidnight(local, loc))
 	}
 	if len(candidates) == 0 {

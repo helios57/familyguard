@@ -4235,6 +4235,998 @@
         "suspend_reason": "",
         "suspended_packages": []
       }
+    },
+    {
+      "name": "daily limit: switched on at 0 minutes, every counted app is paused",
+      "requirements": [
+        "FR-30",
+        "FR-3.4"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "daily_limit_enabled": true,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 0,
+        "earned_spent_minutes_today": 0,
+        "learning_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00"
+      },
+      "expect": {
+        "suspend_reason": "QUOTA",
+        "suspended_packages": [
+          "com.example.movies",
+          "org.example.learn.letters"
+        ],
+        "daily_limit_enabled": true,
+        "daily_limit_minutes": 0,
+        "quota_minutes": 0,
+        "remaining_minutes": 0,
+        "next_change_at": "2026-10-26T00:00:00+01:00",
+        "learning_packages": []
+      }
+    },
+    {
+      "name": "daily limit: 0 minutes with no switch is still no limit",
+      "requirements": [
+        "FR-30",
+        "FR-3.4"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 500,
+        "earned_spent_minutes_today": 0,
+        "learning_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "daily_limit_enabled": false,
+        "next_change_at": ""
+      }
+    },
+    {
+      "name": "daily limit: switched off, the minutes are not a limit",
+      "requirements": [
+        "FR-30",
+        "FR-3.4"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "daily_limit_enabled": false,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 90,
+        "earned_spent_minutes_today": 0,
+        "learning_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "daily_limit_enabled": false,
+        "remaining_minutes": 0,
+        "daily_limit_minutes": 0,
+        "next_change_at": ""
+      }
+    },
+    {
+      "name": "daily limit: minutes with no switch are a limit, as before",
+      "requirements": [
+        "FR-30",
+        "FR-3.4"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 60,
+        "earned_spent_minutes_today": 0,
+        "learning_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00"
+      },
+      "expect": {
+        "suspend_reason": "QUOTA",
+        "daily_limit_enabled": true,
+        "remaining_minutes": 0
+      }
+    },
+    {
+      "name": "learning apps: free at a limit of 0, and listed",
+      "requirements": [
+        "FR-30"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "daily_limit_enabled": true,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [
+            "org.example.learn."
+          ],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 0,
+        "earned_spent_minutes_today": 0,
+        "learning_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00"
+      },
+      "expect": {
+        "suspend_reason": "QUOTA",
+        "suspended_packages": [
+          "com.example.movies"
+        ],
+        "learning_packages": [
+          "org.example.learn.letters"
+        ],
+        "earned_minutes_left": 0,
+        "earned_active": ""
+      }
+    },
+    {
+      "name": "learning apps: a child's block wins, and the app is no learning app",
+      "requirements": [
+        "FR-30",
+        "FR-5.2"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "daily_limit_enabled": true,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [
+            "org.example.learn.letters"
+          ],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [
+            "org.example.learn."
+          ],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 0,
+        "earned_spent_minutes_today": 0,
+        "learning_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00"
+      },
+      "expect": {
+        "suspended_packages": [
+          "com.example.movies",
+          "org.example.learn.letters"
+        ],
+        "hidden_packages": [
+          "org.example.learn.letters"
+        ],
+        "learning_packages": []
+      }
+    },
+    {
+      "name": "learning apps: the family blocklist wins too",
+      "requirements": [
+        "FR-30",
+        "FR-18"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "daily_limit_enabled": true,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [
+            "org.example.learn."
+          ],
+          "earned_available_minutes": 0,
+          "family_blocked_packages": [
+            "org.example.learn.letters"
+          ]
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 0,
+        "earned_spent_minutes_today": 0,
+        "learning_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00"
+      },
+      "expect": {
+        "suspended_packages": [
+          "com.example.movies",
+          "org.example.learn.letters"
+        ],
+        "hidden_packages": [
+          "org.example.learn.letters"
+        ],
+        "learning_packages": []
+      }
+    },
+    {
+      "name": "learning apps: a pause takes them like everything else",
+      "requirements": [
+        "FR-30",
+        "FR-21"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "daily_limit_enabled": true,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [
+            "org.example.learn."
+          ],
+          "earned_available_minutes": 0,
+          "paused": true
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 0,
+        "earned_spent_minutes_today": 0,
+        "learning_minutes_today": 30,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00"
+      },
+      "expect": {
+        "suspend_reason": "PAUSED",
+        "suspended_packages": [
+          "com.example.movies",
+          "org.example.learn.letters"
+        ],
+        "learning_packages": [
+          "org.example.learn.letters"
+        ]
+      }
+    },
+    {
+      "name": "learning apps: bedtime does not pause them",
+      "requirements": [
+        "FR-30",
+        "FR-4.1"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "daily_limit_enabled": false,
+          "bedtime_enabled": true,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [
+            "org.example.learn."
+          ],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 0,
+        "earned_spent_minutes_today": 0,
+        "learning_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T22:00:00+01:00"
+      },
+      "expect": {
+        "suspend_reason": "BEDTIME",
+        "suspended_packages": [
+          "com.example.movies"
+        ],
+        "learning_packages": [
+          "org.example.learn.letters"
+        ]
+      }
+    },
+    {
+      "name": "learning apps: minutes learned today open the counted apps",
+      "requirements": [
+        "FR-30",
+        "FR-22"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "daily_limit_enabled": true,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [
+            "org.example.learn."
+          ],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 0,
+        "earned_spent_minutes_today": 0,
+        "learning_minutes_today": 10,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "earned_active": "QUOTA",
+        "suspended_packages": [],
+        "earned_minutes_left": 10,
+        "earned_spent_minutes": 0
+      }
+    },
+    {
+      "name": "learning apps: learned minutes add to the balance from the server",
+      "requirements": [
+        "FR-30",
+        "FR-22"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "daily_limit_enabled": true,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [
+            "org.example.learn."
+          ],
+          "earned_available_minutes": 20
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 0,
+        "earned_spent_minutes_today": 10,
+        "learning_minutes_today": 15,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "earned_active": "QUOTA",
+        "earned_minutes_left": 25,
+        "earned_spent_minutes": 10
+      }
+    },
+    {
+      "name": "learning apps: learned minutes spent, the limit is back",
+      "requirements": [
+        "FR-30",
+        "FR-22"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "daily_limit_enabled": true,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [
+            "org.example.learn."
+          ],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 0,
+        "earned_spent_minutes_today": 10,
+        "learning_minutes_today": 10,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00"
+      },
+      "expect": {
+        "suspend_reason": "QUOTA",
+        "earned_active": "",
+        "suspended_packages": [
+          "com.example.movies"
+        ],
+        "earned_minutes_left": 0
+      }
+    },
+    {
+      "name": "learning apps: a bonus rule, an own allowance and a pending wait do not apply to them",
+      "requirements": [
+        "FR-30",
+        "FR-5.4",
+        "FR-5.8",
+        "FR-22"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": false,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 60,
+          "daily_limit_enabled": true,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [
+            "org.example.learn."
+          ],
+          "earned_available_minutes": 0,
+          "limited_packages": [
+            {
+              "package_name": "org.example.learn.letters",
+              "minutes": 5
+            }
+          ],
+          "bonus_packages": [
+            "org.example.learn.numbers"
+          ]
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": true,
+            "launchable": true
+          },
+          {
+            "package": "org.example.learn.numbers",
+            "system": false,
+            "new_since_baseline": true,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 10,
+        "earned_spent_minutes_today": 0,
+        "learning_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00",
+        "used_minutes_by_package": {
+          "org.example.learn.letters": 30
+        }
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "pending_approval": [],
+        "bonus_packages": [
+          "org.example.learn.numbers"
+        ],
+        "learning_packages": [
+          "org.example.learn.letters",
+          "org.example.learn.numbers"
+        ]
+      }
+    },
+    {
+      "name": "learning apps: the prefix must match from the start of the package name",
+      "requirements": [
+        "FR-30"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": false,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "daily_limit_enabled": true,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [
+            "org.example.learn."
+          ],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.org.example.learn.fake",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 0,
+        "earned_spent_minutes_today": 0,
+        "learning_minutes_today": 0,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00"
+      },
+      "expect": {
+        "suspended_packages": [
+          "com.example.movies",
+          "com.org.example.learn.fake"
+        ],
+        "learning_packages": [
+          "org.example.learn.letters"
+        ]
+      }
+    },
+    {
+      "name": "learning apps: tracking-only restrains nothing and still lists them",
+      "requirements": [
+        "FR-30",
+        "FR-8"
+      ],
+      "input": {
+        "settings": {
+          "tracking_only": true,
+          "allow_child_installs": true,
+          "allow_debugging": false,
+          "youtube_blocked": false,
+          "daily_limit_minutes": 0,
+          "daily_limit_enabled": true,
+          "bedtime_enabled": false,
+          "bedtime_start": "21:00",
+          "bedtime_end": "07:00",
+          "dns_host": "dns.example-family.net",
+          "timezone": "Europe/Zurich",
+          "version": 7,
+          "blocked_packages": [],
+          "allowed_packages": [],
+          "blocked_domains": [],
+          "learning_prefixes": [
+            "org.example.learn."
+          ],
+          "earned_available_minutes": 0
+        },
+        "installed": [
+          {
+            "package": "org.example.learn.letters",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.example.movies",
+            "system": false,
+            "new_since_baseline": false,
+            "launchable": true
+          },
+          {
+            "package": "com.android.dialer",
+            "system": true,
+            "new_since_baseline": false,
+            "launchable": true
+          }
+        ],
+        "used_minutes_today": 0,
+        "earned_spent_minutes_today": 0,
+        "learning_minutes_today": 4,
+        "parent_lock": false,
+        "critical_packages": [],
+        "now": "2026-10-25T14:00:00+01:00"
+      },
+      "expect": {
+        "suspend_reason": "",
+        "suspended_packages": [],
+        "learning_packages": [
+          "org.example.learn.letters"
+        ],
+        "earned_minutes_left": 4
+      }
     }
   ]
 }
