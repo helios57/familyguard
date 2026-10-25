@@ -83,7 +83,8 @@ func TestLearningTimeOpensACountedAppOfflineOnARealPhone(t *testing.T) {
 	d.run(30*time.Second, "shell", "input", "keyevent", "KEYCODE_HOME")
 	t.Logf("in %s for %s, offline", learn, time.Since(learnedFrom).Round(time.Second))
 
-	// The phone's own poll (every 5 min while the screen is on) turns the learned minutes into Bonuszeit.
+	// The phone's own poll (every 5 min while the screen is on, sooner when time runs out) turns the
+	// learned minutes into Bonuszeit.
 	d.awaitSuspended(t, target, "false", 7*time.Minute)
 	t.Logf("%s opened %s after learning began, with no network", target, time.Since(learnedFrom).Round(time.Second))
 
@@ -94,8 +95,18 @@ func TestLearningTimeOpensACountedAppOfflineOnARealPhone(t *testing.T) {
 	if top, _ := d.run(30*time.Second, "shell", "dumpsys", "activity", "activities"); !containsResumed(top, target) {
 		t.Fatalf("the counted app %s did not come to the front, so nothing is being spent: %s", target, resumedLine(top))
 	}
+	// On time: the two learned minutes, plus at most one minute for the floored count and a little
+	// for the suspension to land. The poll used to wait a fixed five minutes, so the app ran on for up
+	// to three minutes past what was learned and the child was shown a debt (a family phone,
+	// 2026-10-25: 26 earned, 30 spent).
+	const learned = 2 * time.Minute
 	d.awaitSuspended(t, target, "true", 10*time.Minute)
-	t.Logf("%s paused again %s after it was opened", target, time.Since(spentFrom).Round(time.Second))
+	spent := time.Since(spentFrom)
+	t.Logf("%s paused again %s after it was opened", target, spent.Round(time.Second))
+	if limit := learned + time.Minute + 30*time.Second; spent > limit {
+		t.Fatalf("%s ran %s on %s learned: the phone noticed the time was gone %s late",
+			target, spent.Round(time.Second), learned, (spent - learned).Round(time.Second))
+	}
 }
 
 // containsResumed is whether `dumpsys activity activities` names pkg as the resumed activity.

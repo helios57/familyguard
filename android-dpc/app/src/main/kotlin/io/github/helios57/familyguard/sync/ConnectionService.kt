@@ -111,6 +111,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -361,6 +362,12 @@ class ConnectionService : Service() {
 
     /** `elapsedRealtime` when the screen last went off, or null while it is on. */
     @Volatile private var screenOffAtElapsed: Long? = null
+
+    /** The state last enforced: what paces the screen-on poll ([PollPacing]). */
+    @Volatile private var pacedBy: DesiredState? = null
+
+    /** Wakes the poll's wait when a state is applied elsewhere, so the poll can come sooner than planned. */
+    private val repace = Channel<Unit>(Channel.CONFLATED)
 
     /** The running stream, so a phone going PASSIVE can close it. Null before the loop is up. */
     @Volatile private var stream: EventStream? = null
@@ -900,11 +907,20 @@ class ConnectionService : Service() {
      *
      * While the screen is off there is nothing to measure and nothing to enforce, so the loop waits
      * on [Reporting.awaitScreenOn] rather than ticking and finding zero (NFR-10).
+     *
+     * The wait is the cadence, or less when the day's minutes or the Bonuszeit run out sooner
+     * ([PollPacing]): a tick that comes late lets an app run on time that is not there, and with
+     * earned time that is charged as a debt. A state applied elsewhere (a sync, an alarm) re-plans
+     * the wait from the same start, so it can only bring the tick forward, never push it back.
      */
     private suspend fun pollWhileAwake(synchronizer: Synchronizer, reports: Reporting) {
         while (true) {
             reports.awaitScreenOn()
-            delay(POLL_INTERVAL_MILLIS)
+            val since = SystemClock.elapsedRealtime()
+            while (true) {
+                val wait = since + PollPacing.nextMillis(pacedBy, POLL_INTERVAL_MILLIS) - SystemClock.elapsedRealtime()
+                if (wait <= 0 || withTimeoutOrNull(wait) { repace.receive() } == null) break
+            }
             if (!reports.screenIsOn()) continue
             syncLock.withLock { held ->
                 withContext(Dispatchers.IO) {
@@ -914,6 +930,7 @@ class ConnectionService : Service() {
                         if (result.state.suspendReason.isNotEmpty()) {
                             Log.i(TAG, "poll: ${result.state.suspendReason} in effect — ${result.outcome}")
                         }
+                        pacedBy = result.state
                         // Re-booked from here too: the quota's midnight edge only exists while a
                         // daily limit is set, so a policy that gains one between two server events
                         // would otherwise have no wake-up until the next one arrived.
@@ -1201,6 +1218,8 @@ class ConnectionService : Service() {
      * exactly what the log line would show, correctly, at the moment it stopped being true.
      */
     private fun applied(state: DesiredState, why: String) {
+        pacedBy = state
+        repace.trySend(Unit)
         describe(state)
         pausedNotice(state)
         val decision = book(state, why)

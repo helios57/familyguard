@@ -791,6 +791,10 @@ bedtime, then the daily budget.
   in earned time does not also count against the budget. Nothing is charged while there is no earned
   time left or the profile is in watch-only mode: nothing could pay, and a charge would only become a
   debt against minutes not yet earned (measured on a family phone in watch-only mode, 2026-09-27).
+  Time running out is noticed on time: with the screen on the phone re-checks every five minutes,
+  and sooner when the day's minutes or the Bonuszeit end sooner, so an app is paused within a minute
+  of the time being gone. A fixed five minutes let a film run up to four minutes past the balance,
+  and the child was shown a debt (a family phone, 2026-10-25: 26 minutes earned, 30 spent).
 - FR-22.6 **Bonus apps** are the fifth answer on the Apps page, *Bonus-App* (rule `BONUS`): suspended whenever no
   earned time is left, whatever the hour — the console says *Paused — no earned time left* (reason
   `EARNED`) — and usable while there is some, even in bedtime or past the limit.

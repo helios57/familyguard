@@ -9653,3 +9653,41 @@ since it is gone, the display-off rule alone carries the side key, and breaking 
   while any of the child's phones reports an older build. Not refused: a phone that has not reported
   a build yet (it was provisioned with the current one, and blocking on it would block every new
   phone's parent), and an edit that does not touch the limit. `TestOnAtZeroIsRefusedWhile…`.
+
+## Phase 61 — time running out is noticed on time (0.6.46, FR-22.5)
+
+Found on a family phone the evening 0.6.45 went live. The child learned 26 minutes, watched a film
+on them, and the phone showed a Bonuszeit of −4: 30 minutes had been spent. The server's figures were
+right (26 learned, 30 paid from earned time); the phone had let the film run past the balance twice,
+by about two minutes and then by four. The screen-on poll, the only thing that measures between two
+server events, waited a fixed five minutes, so time that ran out inside those five minutes was
+noticed up to five minutes late, and every minute of that was charged as earned time.
+
+Phase 60's own emulator proof had shown it and passed: two learned minutes, and the counted app was
+paused again only 5m1s after it was opened. The assertion allowed ten minutes, so a delay of three
+read as success.
+
+**The fix.** `PollPacing.nextMillis` gives the wait after a tick from the state that tick enforced:
+the cadence, or the minutes until the Bonuszeit or the day's minutes run out, whichever is sooner. A
+state applied elsewhere (a sync, an alarm) re-plans the wait from the same start, so it can bring the
+tick forward and never push it back. The minutes are whole and floored, so the tick lands at or just
+before the end; the overrun is under a minute, which the floored balance does not show as a debt.
+
+Checked the same evening, and not a defect: on the day the limit went to 0, Extrazeit granted in
+the evening was partly taken by counted use from that morning (33 minutes of a film before the
+update), because Extrazeit raises the day's limit and the day's use counts against it. Minutes paid
+from Bonuszeit were left out of that use, as FR-22.5 says.
+
+### 61.1 — tests and calibration
+
+`PollPacingTest` (10: earned time covering a spent limit, bedtime, a bonus app, the day's minutes,
+the sooner of two, and five cases that keep the cadence; 1070 unit tests). The emulator learning
+proof now bounds the spend phase: the counted app must be paused again within the learned minutes
+plus 1m30s. Green on API 37 (3m3s on 2 learned minutes) and API 33 (3m2s).
+
+| probe | test | result |
+|---|---|---|
+| the pacing stubbed to the fixed cadence (`= every`) | `PollPacingTest` | **red**: exactly the five run-out cases |
+| the pacing returns the cadence again (`return every`) | emulator learning (API 37) | **red**: *ran 5m2s on 2m0s learned: … 3m2s late* |
+
+**2 probes, 2 red. Cumulative: 554.**
