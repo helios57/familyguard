@@ -179,7 +179,7 @@ function screenTimeSummary(dev, screen) {
   if (!screen.limit_recorded) {
     parts.push(el('p', { class: 'muted', text: 'Gezählte Bildschirmzeit: ' + fmtMinutes(used)
       + '. Das Limit an diesem Tag wurde nicht aufgezeichnet — Tage vor dieser Funktion haben keins.' }));
-  } else if ((screen.daily_limit_minutes || 0) > 0) {
+  } else if (screen.limit_enabled) {
     // Tageszeit and Extrazeit fill the bar; Bonuszeit is said beside it in gold and never makes the
     // bar red — a child spending what they earned is not over anything.
     const earned = screen.earned_minutes || 0;
@@ -191,14 +191,20 @@ function screenTimeSummary(dev, screen) {
           + (bonus > 0 ? ' (' + fmtMinutes(screen.daily_limit_minutes) + ' Tageszeit + ' + fmtMinutes(bonus) + ' Extrazeit)' : '')
           + (bonus < 0 ? ' (' + fmtMinutes(screen.daily_limit_minutes) + ' Tageszeit − ' + fmtMinutes(-bonus) + ')' : '') })),
       el('div', { class: 'meter', role: 'img', 'aria-label': fmtMinutes(used) + ' von ' + fmtMinutes(limit) },
-        el('span', { class: used >= limit ? (earned > 0 ? 'bonus' : 'over') : '', style: { width: pct + '%' } })),
+        // Red is "over the limit". A day on at 0 with nothing counted is full, not over (FR-30.6).
+        el('span', { class: used > limit || (used >= limit && limit > 0) ? (earned > 0 ? 'bonus' : 'over') : '', style: { width: pct + '%' } })),
       earned > 0 ? el('p', { class: 'earned', 'data-screen': 'earned', text: '+ ' + fmtMinutes(earned) + ' mit Bonuszeit' }) : null));
   } else {
     parts.push(el('p', { class: 'muted', text: 'Gezählte Bildschirmzeit: ' + fmtMinutes(used) + ' (kein Tageslimit).' }));
   }
+  // FR-30.7: what the learning games earned that day, in gold beside the Bonuszeit it became.
+  const learned = screen.learned_minutes || 0;
+  if (learned > 0) {
+    parts.push(el('p', { class: 'earned', 'data-screen': 'learned', text: 'Bonuszeit: davon erspielt ' + fmtMinutes(learned) + ' mit Lern-Apps' }));
+  }
   // Apps the limit never pauses do not spend it either (FR-5.8): their time is said, not counted.
   if (screen.exempt_minutes > 0) {
-    parts.push(el('p', { class: 'muted', 'data-screen': 'exempt', text: 'Immer freie Apps: ' + fmtMinutes(screen.exempt_minutes) + ', zählt nicht zum Tageslimit.' }));
+    parts.push(el('p', { class: 'muted', 'data-screen': 'exempt', text: (learned > 0 ? 'Immer freie Apps und Lern-Apps: ' : 'Immer freie Apps: ') + fmtMinutes(screen.exempt_minutes) + ', zählt nicht zum Tageslimit.' }));
   }
   if (screen.uncounted_minutes > 0) {
     parts.push(el('p', { class: 'muted', text: 'Startbildschirm und System: ' + fmtMinutes(screen.uncounted_minutes) + ', nicht gezählt.' }));
@@ -253,7 +259,9 @@ function appUsageTable(apps, screen) {
 
 /** What governs an app, and why it is paused if it is (FR-3.10). */
 function appStatusText(a, screen) {
-  const rule = a.exempt ? (a.rule === 'ALLOW' ? 'Immer frei' : a.free_by_default ? 'Immer frei (vorinstalliert)' : 'Immer nutzbar')
+  // A learning app's other rules are overridden (FR-30.2); only a block wins over it.
+  const rule = a.learning && a.rule !== 'BLOCK' ? 'Lern-App · verdient Zeit'
+    : a.exempt ? (a.rule === 'ALLOW' ? 'Immer frei' : a.free_by_default ? 'Immer frei (vorinstalliert)' : 'Immer nutzbar')
       + ', zählt nicht zum Tageslimit'
     : a.counted === false ? 'Nicht gezählt (Startbildschirm / System)'
     : a.rule === 'ALLOW' ? 'Immer frei'

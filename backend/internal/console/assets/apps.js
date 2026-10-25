@@ -39,10 +39,14 @@ async function loadApps() {
       : Promise.resolve({ apps: [] })));
   // The same envelope as Übersicht — `pending_approval` lives inside `desired`, and read a level too
   // high it is undefined, which is an empty queue that looks exactly like nothing waiting.
-  const desired = await Promise.all(list.map((d) =>
+  const envelopes = await Promise.all(list.map((d) =>
     d.enrolled
-      ? api('/devices/' + d.id + '/desired-state').then((r) => (r && r.desired) || null).catch(() => null)
+      ? api('/devices/' + d.id + '/desired-state').catch(() => null)
       : Promise.resolve(null)));
+  const desired = envelopes.map((r) => (r && r.desired) || null);
+  // The family's learning prefixes as the engine received them (FR-30.1): what names an app a
+  // learning app even once a block has taken it out of `learning_packages`.
+  const learningPrefixes = [...new Set(envelopes.flatMap((r) => (r && r.input && r.input.settings && r.input.settings.learning_prefixes) || []))];
 
   /* One row per package, not per install, and COUNTED rather than first-wins: with two phones
      "hidden" is not one fact. An app the phone has stopped reporting keeps its row (the server stamps
@@ -83,7 +87,10 @@ async function loadApps() {
   // "suspended and has no rule" — those come apart at bedtime, when every app is suspended.
   const pending = new Set();
   const free = new Set();
+  // Learning apps (FR-30.2), from the same authority: the prefixes as the engine applied them.
+  const learning = new Set();
   for (const st of desired) {
+    for (const pkg of ((st && st.learning_packages) || [])) learning.add(pkg);
     for (const pkg of ((st && st.pending_approval) || [])) pending.add(pkg);
     // Preinstalled apps nobody decided about that stay usable at any hour (FR-5.10).
     for (const pkg of ((st && st.free_by_default) || [])) free.add(pkg);
@@ -93,6 +100,8 @@ async function loadApps() {
     ruleFor,
     pending,
     free,
+    learning,
+    learningPrefixes,
     // The queue as the server reported it, kept apart from `pending`, which is edited in place as a
     // parent answers: taking an answer back has to know whether the app was waiting before.
     pendingAtLoad: new Set(pending),
@@ -104,6 +113,11 @@ async function loadApps() {
     play: { configured: play.configured === true, account: play.account || '', sources: play.sources || [] },
     blocklist: blocklist.packages || [],
   };
+}
+
+/* Mirrors policy.IsLearning: a prefix matches from the start of the name, and an empty one never. */
+function learningPrefixed(pkg, data) {
+  return data.learningPrefixes.some((p) => p.trim() !== '' && pkg.startsWith(p.trim()));
 }
 
 function sortApps(a, b) {
@@ -193,10 +207,10 @@ function renderApps(data) {
    * end in `refresh()` — nine requests per tap — and a parent working through a queue met "too many
    * requests" a dozen apps in. The rule is what was just sent; the re-read happens once, when the
    * tapping stops. */
-  const setRule = async (app, category, minutes) => {
+  const setRule = async (app, category, minutes, label) => {
     const pkg = app.package_name;
     const c = CATEGORIES.find((x) => x.key === category);
-    const landed = await tried(category === null ? 'Wartet wieder auf eine Entscheidung' : c.done, () =>
+    const landed = await tried(label || (category === null ? 'Wartet wieder auf eine Entscheidung' : c.done), () =>
       category === null
         ? api('/children/' + state.childId + '/app-rules?package_name=' + encodeURIComponent(pkg), { method: 'DELETE' })
         : api('/children/' + state.childId + '/app-rules', {
@@ -263,6 +277,31 @@ function renderApps(data) {
               ? el('small', { text: 'Gerade auf dem Handy pausiert.' })
               : null;
     const chipClass = cat === null ? (data.pending.has(app.package_name) ? 'warn' : '') : CATEGORIES.find((c) => c.key === cat).cls;
+    // FR-30.2: a learning app is free and earns Bonuszeit whatever its rule says, so the rule chip,
+    // whose every answer but one would be overridden, gives way to the label and that one answer.
+    if (data.learning.has(app.package_name) || (cat === 'BLOCK' && learningPrefixed(app.package_name, data))) {
+      const blocked = cat === 'BLOCK';
+      return el('li', { 'data-package': app.package_name, 'data-learning': '' },
+        appMark(app),
+        el('span', { class: 'label' },
+          el('b', { text: app.label || app.package_name }),
+          el('small', { text: app.package_name + (app.system_app ? ' · System' : '') }),
+          el('small', { class: blocked ? '' : 'learning-note', text: blocked
+            ? 'Lern-App — für dieses Kind gesperrt, verdient keine Zeit'
+            : 'Lern-App · verdient Zeit' }),
+          forget(app)),
+        blocked
+          ? el('button', {
+            class: 'btn btn-soft', type: 'button', 'data-rule': 'none', text: 'Entsperren',
+            'aria-label': (app.label || app.package_name) + ' entsperren',
+            onclick: () => setRule(app, null, 0, 'Wieder Lern-App'),
+          })
+          : el('button', {
+            class: 'btn btn-danger', type: 'button', 'data-rule': 'BLOCK', text: 'Sperren',
+            'aria-label': (app.label || app.package_name) + ' sperren',
+            onclick: () => setRule(app, 'BLOCK', 0),
+          }));
+    }
     return el('li', { 'data-package': app.package_name },
       appMark(app),
       el('span', { class: 'label' },

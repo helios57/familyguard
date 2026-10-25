@@ -141,6 +141,9 @@ type appRow struct {
 	// FreeByDefault is true for a preinstalled app with no rule that stays usable whatever the
 	// time (FR-5.10). Today only, from the same computation as Blocked.
 	FreeByDefault bool `json:"free_by_default"`
+	// Learning is true for a learning app (FR-30.2): today the resolver's answer, another day
+	// whether the row earned anything.
+	Learning bool `json:"learning"`
 }
 
 // screenTime is the day's counted use against the limit that applied (FR-3.9).
@@ -148,8 +151,11 @@ type screenTime struct {
 	// CountedMinutes is the time that counts against the day's limit; EarnedMinutes is the time paid
 	// from Bonuszeit on top of it, which does not (FR-22.5). Before 0.6.35 a minute of Bonuszeit was
 	// counted here too, and a child spending earned time drew a red "over the limit" bar.
-	CountedMinutes   int `json:"counted_minutes"`
-	EarnedMinutes    int `json:"earned_minutes"`
+	CountedMinutes int `json:"counted_minutes"`
+	EarnedMinutes  int `json:"earned_minutes"`
+	// LearnedMinutes is the time spent in learning apps that day, the part of Bonuszeit it earned
+	// (FR-30.3), floored once for the day as the credit is.
+	LearnedMinutes   int `json:"learned_minutes"`
 	UncountedMinutes int `json:"uncounted_minutes"`
 	// ExemptMinutes is the time on apps the daily limit never pauses (FR-5.8): shown, not counted,
 	// and not part of UncountedMinutes, which is the time that was not use at all.
@@ -232,7 +238,7 @@ func (s *Server) describeDay(ctx context.Context, dev *store.Device, pol *store.
 	}
 
 	rows := make([]appRow, 0, len(samples))
-	var countedMs, uncountedMs, exemptMs, earnedMs int64
+	var countedMs, uncountedMs, exemptMs, earnedMs, learnedMs int64
 	for _, sample := range samples {
 		row := appRow{
 			UsageSample:  sample,
@@ -241,6 +247,8 @@ func (s *Server) describeDay(ctx context.Context, dev *store.Device, pol *store.
 			Rule:         ruleOf[sample.PackageName],
 		}
 		row.Exempt = !row.Counted && !slices.Contains(notUse, sample.PackageName)
+		row.Learning = sample.LearningMs > 0
+		learnedMs += sample.LearningMs
 		switch {
 		case row.Counted:
 			countedMs += sample.ForegroundMs - min(sample.EarnedMs, sample.ForegroundMs)
@@ -253,11 +261,13 @@ func (s *Server) describeDay(ctx context.Context, dev *store.Device, pol *store.
 		if desired != nil {
 			row.Blocked = blockedReason(desired, sample.PackageName, row.LimitMinutes, sample.ForegroundMs)
 			row.FreeByDefault = slices.Contains(desired.FreeByDefault, sample.PackageName)
+			row.Learning = slices.Contains(desired.LearningPackages, sample.PackageName)
 		}
 		rows = append(rows, row)
 	}
 	st.CountedMinutes = int(countedMs / 60000)
 	st.EarnedMinutes = int(earnedMs / 60000)
+	st.LearnedMinutes = int(learnedMs / 60000)
 	st.UncountedMinutes = int(uncountedMs / 60000)
 	st.ExemptMinutes = int(exemptMs / 60000)
 	return rows, st, nil

@@ -7,7 +7,7 @@
 
 async function loadFamily() {
   const isPrimary = state.parent && state.parent.role === 'PRIMARY_ADMIN';
-  const [parents, keys, cli, holidays, signIns] = await Promise.all([
+  const [parents, keys, cli, holidays, signIns, learning] = await Promise.all([
     api('/parents'),
     // Only a primary admin may list keys, so anyone else gets a 403 rather than an empty list. The
     // catch keeps the whole page from failing on a call the reader was never entitled to make.
@@ -20,17 +20,19 @@ async function loadFamily() {
       .catch(() => ({ hosted: false })),
     api('/family/holidays'),
     api('/sign-ins'),
+    // Admins only (FR-30.1); tolerated as absent so the rest of the page still draws.
+    isAdmin() ? api('/family/learning-prefixes').catch(() => null) : Promise.resolve(null),
   ]);
   return {
     parents: parents.parents || [], keys: keys && (keys.api_keys || []), isPrimary, cli,
-    holidays: holidays.holidays || [], signIns: signIns.sign_ins || [],
+    holidays: holidays.holidays || [], signIns: signIns.sign_ins || [], learning,
   };
 }
 
 function renderFamily(data) {
   return [el('div', { class: 'cols' },
     el('div', { class: 'col' }, peopleCard(data), childrenCard(), youCard(data)),
-    el('div', { class: 'col' }, holidaysCard(data), apiKeysCard(data), cliCard(data.cli)))];
+    el('div', { class: 'col' }, learningCard(data), holidaysCard(data), apiKeysCard(data), cliCard(data.cli)))];
 }
 
 VIEWS.family = {
@@ -231,6 +233,45 @@ function holidaysCard(data) {
           class: 'btn btn-quiet btn-danger', type: 'button', text: 'Entfernen', 'data-holiday': 'remove',
           onclick: () => restructure(() => draft.holidays.splice(i, 1)),
         })))),
+    el('div', { class: 'row' }, el('span'), save));
+}
+
+/* ---- learning apps (FR-30) ------------------------------------------------ */
+
+/* The family's learning apps, named by the start of their package name: every app under a prefix is
+ * free and earns Bonuszeit while it is used — the way a day with no time of its own (FR-30.6) gets
+ * time at all. Each prefix says how many installed apps it names, so a typo reads as "0 Apps" rather
+ * than as a learning game that quietly earns nothing. */
+function learningCard(data) {
+  if (!data.learning) return null;
+  const prefixes = data.learning.prefixes || [];
+  const matches = data.learning.matches || {};
+  const input = el('textarea', {
+    rows: '3', 'data-learning': 'input', 'aria-label': 'Präfixe, eines pro Zeile',
+    autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', placeholder: 'z. B. org.example.learn.',
+  });
+  input.value = prefixes.join('\n');
+  const save = el('button', { class: 'btn btn-primary', type: 'button', text: 'Lern-Apps speichern', 'data-learning': 'save', disabled: true });
+  input.addEventListener('input', () => { save.disabled = false; });
+  save.addEventListener('click', async () => {
+    const body = { prefixes: input.value.split(/[\s,]+/).map((p) => p.trim()).filter(Boolean) };
+    const saved = await act('Lern-Apps gespeichert', () => api('/family/learning-prefixes', { method: 'PUT', body }));
+    if (!saved) return;
+    if (state.dataView === 'family') state.data.learning = saved;
+    redraw();
+  });
+  const count = (n) => (n === 1 ? '1 App' : n + ' Apps');
+  return el('div', { class: 'card learning-card' },
+    el('div', { class: 'card-head' }, el('h2', { text: 'Lern-Apps' })),
+    help('Lern-Apps sind immer frei und verdienen Bonuszeit, solange sie offen sind.',
+      'Jede App, deren Paketname so beginnt, zählt — auch eine, die später dazukommt. Eine Minute Lernen gibt eine Minute Bonuszeit, die 7 Tage bleibt. Für ein Kind gesperrt, verdient eine Lern-App nichts.'),
+    prefixes.length
+      ? el('ul', { class: 'list' }, prefixes.map((p) => el('li', { 'data-learning-prefix': p },
+        el('span', { class: 'label' }, el('b', { text: p })),
+        el('span', { class: 'chip ' + ((matches[p] || 0) > 0 ? 'gold' : 'warn'), text: count(matches[p] || 0) }))))
+      : el('p', { class: 'muted', text: 'Noch keine Lern-Apps.' }),
+    el('label', { for: 'learning-prefixes', text: 'Präfixe, eines pro Zeile' }),
+    Object.assign(input, { id: 'learning-prefixes' }),
     el('div', { class: 'row' }, el('span'), save));
 }
 

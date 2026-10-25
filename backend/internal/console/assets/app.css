@@ -718,6 +718,12 @@ div.device-row > .btn { flex: 1 1 100%; }
 .pending-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; width: 100%; }
 .applist li.pending { flex-wrap: wrap; }
 .applist li.pending .label { flex: 1 1 10rem; }
+/* FR-30.7: a learning app's label is the gold of the Bonuszeit it earns, and its one answer sits
+   where the rule chip would. */
+.applist li[data-learning] > .btn { flex: 0 0 auto; min-height: var(--tap); }
+.applist li .learning-note { color: var(--gold); font-weight: 600; }
+.learning-card .list b { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.learning-card textarea { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* ---- activity ----------------------------------------------------------- */
 

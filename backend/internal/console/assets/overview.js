@@ -100,7 +100,13 @@ function childStatus(child, devices, today) {
 
 /* Over today's quota with a limit in force: whatever runs now is paid from earned time. */
 function onEarnedTime(desired) {
-  return !!desired && (desired.daily_limit_minutes || 0) > 0 && (desired.used_minutes || 0) >= (desired.quota_minutes || 0);
+  return limitOn(desired) && (desired.used_minutes || 0) >= (desired.quota_minutes || 0);
+}
+
+/* Whether a daily limit is in force (FR-30.6): the switch, never the minutes — on with 0 minutes is
+   a limit, a day with no time of its own. */
+function limitOn(desired) {
+  return !!desired && !!desired.daily_limit_enabled;
 }
 
 function earnedLeft(today) {
@@ -136,7 +142,7 @@ function timeBlock(enrolled, today) {
   for (const { dev, desired } of known) {
     const used = desired.used_minutes || 0;
     const name = known.length > 1 ? dev.name + ': ' : '';
-    if ((desired.daily_limit_minutes || 0) <= 0) {
+    if (!limitOn(desired)) {
       block.append(el('p', { class: 'time-left', 'data-left': '' },
         el('small', { text: name + fmtMinutes(used) + ' benutzt · kein Tageslimit' })));
       continue;
@@ -148,9 +154,13 @@ function timeBlock(enrolled, today) {
         el('small', { text: fmtMinutes(used) + ' benutzt' })),
       timeMeter(desired, bonusLeft));
   }
-  const limited = known.map((k) => k.desired).find((d) => (d.daily_limit_minutes || 0) > 0);
+  const limited = known.map((k) => k.desired).find(limitOn);
   const hasPlan = !!(today && today.groups && today.groups.length);
-  if (!limited && !hasPlan && !bonusLeft) return block;
+  // FR-30.7: what the learning games earned today, inside the Bonuszeit. Shown at 0 too once the
+  // phone has a learning app: "nothing learned yet" is the news on a day with no time of its own.
+  const learned = (today && today.learned_today_minutes) || 0;
+  const learning = learned > 0 || known.some((k) => ((k.desired && k.desired.learning_packages) || []).length > 0);
+  if (!limited && !hasPlan && !bonusLeft && !learning) return block;
 
   const rows = [];
   const kind = (key, cls, term, value, hint) => rows.push(
@@ -171,7 +181,8 @@ function timeBlock(enrolled, today) {
       : next && bonusLeft > 0
         // "bis" when all of it ends that day; "davon nur bis" only when part of it ends sooner.
         ? (next.minutes >= bonusLeft ? 'bleibt bis ' : fmtMinutes(next.minutes) + ' davon nur bis ') + fmtDayDe(next.expires_on)
-        : 'für erledigte Aufgaben, bleibt 7 Tage');
+        : 'für erledigte Aufgaben und Lernspiele, bleibt 7 Tage');
+  if (learning) kind('learned', 'bonus', 'davon erspielt', fmtMinutes(learned), 'heute mit Lern-Apps');
   block.append(el('dl', { class: 'time-kinds' }, rows));
   return block;
 }
@@ -180,8 +191,7 @@ function timeBlock(enrolled, today) {
    Extrazeit)". The child's card says the kinds of time apart; this is the phone's own count. */
 function guardianToday(desired) {
   const used = desired.used_minutes || 0;
-  const limit = desired.daily_limit_minutes || 0;
-  if (limit <= 0) return 'Heute ' + fmtMinutes(used) + ' benutzt (kein Tageslimit)';
+  if (!limitOn(desired)) return 'Heute ' + fmtMinutes(used) + ' benutzt (kein Tageslimit)';
   const extra = desired.bonus_minutes || 0;
   return 'Heute ' + fmtMinutes(used) + ' von ' + fmtMinutes(desired.quota_minutes || 0) + ' benutzt'
     + (extra > 0 ? ' (mit ' + fmtMinutes(extra) + ' Extrazeit)' : '')
@@ -214,7 +224,7 @@ function childCard(profile) {
       el('span', { class: 'chip ' + status.cls, 'data-state': status.word, text: status.word })));
 
   // Whether there is a limit comes from the plain limit, never from the quota (FR-21).
-  const hasLimit = enrolled.some(({ desired }) => desired && (desired.daily_limit_minutes || 0) > 0);
+  const hasLimit = enrolled.some(({ desired }) => limitOn(desired));
   const time = timeBlock(enrolled, today);
   if (time) card.append(time);
 

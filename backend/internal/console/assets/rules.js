@@ -129,6 +129,41 @@ function policySwitch(p, key, title, hint, invert) {
     el('span', { class: 'switch-label' }, title, hint ? el('small', { text: hint }) : null), input);
 }
 
+/* FR-30.6: the daily limit is a switch with its minutes beside it. Off is "Kein Tageslimit"; on with
+   0 minutes is a day with no time of its own, which Extrazeit and Bonuszeit — the learning games'
+   minutes — open. Every minutes save sends the switch along: to the API a save of the minutes alone
+   at 0 means off, the meaning an older console relies on, so leaving it out would turn "on, 0" into
+   "no limit" the moment a parent typed the 0. */
+function dailyLimitControl(p) {
+  const on = !!p.daily_limit_enabled;
+  const minutes = el('div', { 'data-quota': '', hidden: !on },
+    el('label', { for: 'quota', text: 'Tageszeit: Minuten pro Tag (0 = nur Extrazeit und Bonuszeit)' }),
+    el('input', {
+      id: 'quota', type: 'number', min: '0', max: '1440', inputmode: 'numeric', value: p.daily_limit_minutes,
+      onchange: (e) => {
+        const n = Math.max(0, Number(e.target.value) || 0);
+        savePolicy({ daily_limit_enabled: true, daily_limit_minutes: n }, 'Tageszeit ' + fmtMinutes(n));
+      },
+    }));
+  const input = el('input', {
+    type: 'checkbox', checked: on, 'data-policy': 'daily_limit_enabled',
+    onchange: (e) => {
+      const n = Math.max(0, Number(document.getElementById('quota').value) || 0);
+      minutes.hidden = !e.target.checked;
+      savePolicy({ daily_limit_enabled: e.target.checked, daily_limit_minutes: n },
+        e.target.checked ? 'Tageslimit an, ' + fmtMinutes(n) : 'Kein Tageslimit');
+    },
+  });
+  return el('div', { class: 'stack' },
+    el('label', { class: 'switch' },
+      el('span', { class: 'switch-label' }, 'Tageslimit',
+        el('small', { text: on
+          ? 'An: gezählte Apps pausieren, wenn die Zeit aufgebraucht ist.'
+          : 'Kein Tageslimit — gezählte Apps laufen, solange keine Schlafenszeit ist.' })),
+      input),
+    minutes);
+}
+
 function screenTimeCard(data) {
   const p = data.policy;
   return el('div', { class: 'card' },
@@ -139,11 +174,7 @@ function screenTimeCard(data) {
         el('input', { id: 'bt-start', type: 'time', value: p.bedtime_start, onchange: (e) => savePolicy({ bedtime_start: e.target.value }, 'Schlafenszeit ab ' + e.target.value) })),
       el('div', {}, el('label', { for: 'bt-end', text: 'Endet' }),
         el('input', { id: 'bt-end', type: 'time', value: p.bedtime_end, onchange: (e) => savePolicy({ bedtime_end: e.target.value }, 'Schlafenszeit bis ' + e.target.value) }))),
-    el('div', {}, el('label', { for: 'quota', text: 'Tageszeit: Bildschirmzeit pro Tag (Minuten, 0 = kein Limit)' }),
-      el('input', {
-        id: 'quota', type: 'number', min: '0', max: '1440', inputmode: 'numeric', value: p.daily_limit_minutes,
-        onchange: (e) => savePolicy({ daily_limit_minutes: Number(e.target.value) }, 'Tageszeit ' + fmtMinutes(Number(e.target.value))),
-      })),
+    dailyLimitControl(p),
     timeKindsHelp(),
     // Editable, not prose: this is the zone every other time on the page is measured against —
     // bedtime, the daily reset and therefore the quota.
