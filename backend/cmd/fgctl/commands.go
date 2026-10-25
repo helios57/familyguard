@@ -62,6 +62,7 @@ func commands() []command {
 		{"send", "<device-id> <TYPE>", "queue any command in the server's set", true, cmdSend},
 		{"apps", "", "the APKs this deployment hosts", true, cmdApps},
 		{"blocklist", "", "the family-wide blocked packages", true, cmdBlocklist},
+		{"learning-apps", "[--set prefix,prefix | --clear]", "the package prefixes whose apps are free and earn Bonuszeit", true, cmdLearningApps},
 		{"usage", "<device-id>", "reported screen time", true, cmdUsage},
 		{"locations", "<device-id>", "reported locations", true, cmdLocations},
 		{"live", "<device-id> [--start [--minutes N] | --stop]", "Live: the phone stays connected and reports its position every 10 s (default 30 min)", true, cmdLive},
@@ -433,7 +434,13 @@ func cmdPolicy(ctx context.Context, env *environment, args []string) error {
 		fmt.Fprintf(w, "child\t%s\n", pol.ChildID)
 		fmt.Fprintf(w, "version\t%d (updated %s)\n", pol.Version, ago(&pol.UpdatedAt))
 		fmt.Fprintf(w, "tracking only\t%v\n", pol.TrackingOnly)
-		fmt.Fprintf(w, "daily limit\t%d minutes\n", pol.DailyLimitMinutes)
+		// Off and on-at-0 are opposite rules (FR-30.6): off is no limit, on at 0 is no time until
+		// some is earned. One line for both would hide which one the phone is applying.
+		if pol.DailyLimitEnabled {
+			fmt.Fprintf(w, "daily limit\t%d minutes\n", pol.DailyLimitMinutes)
+		} else {
+			fmt.Fprintf(w, "daily limit\toff\n")
+		}
 		bedtime := "off"
 		if pol.BedtimeEnabled {
 			bedtime = pol.BedtimeStart + " – " + pol.BedtimeEnd
@@ -528,6 +535,41 @@ func cmdBlocklist(ctx context.Context, env *environment, _ []string) error {
 		fmt.Fprintln(w, "PACKAGE\tSOURCE")
 		for _, p := range body.Packages {
 			fmt.Fprintf(w, "%v\t%v\n", p["package_name"], p["source"])
+		}
+	})
+}
+
+// cmdLearningApps reads or replaces the family's learning prefixes (FR-30.1).
+func cmdLearningApps(ctx context.Context, env *environment, args []string) error {
+	var body struct {
+		Prefixes []string       `json:"prefixes"`
+		Matches  map[string]int `json:"matches"`
+	}
+	switch {
+	case len(args) == 0:
+		if err := env.client.Get(ctx, "/api/v1/family/learning-prefixes", &body); err != nil {
+			return err
+		}
+	case len(args) == 2 && args[0] == "--set", len(args) == 1 && args[0] == "--clear":
+		prefixes := []string{}
+		if args[0] == "--set" {
+			prefixes = strings.Split(args[1], ",")
+		}
+		if err := env.client.Do(ctx, http.MethodPut, "/api/v1/family/learning-prefixes",
+			map[string]any{"prefixes": prefixes}, &body); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("usage: fgctl learning-apps [--set prefix,prefix | --clear]")
+	}
+	return env.emit(body, func(w *tabwriter.Writer) {
+		if len(body.Prefixes) == 0 {
+			fmt.Fprintln(w, "no learning apps")
+			return
+		}
+		fmt.Fprintln(w, "PREFIX\tINSTALLED APPS")
+		for _, p := range body.Prefixes {
+			fmt.Fprintf(w, "%s\t%d\n", p, body.Matches[p])
 		}
 	})
 }

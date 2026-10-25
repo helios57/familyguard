@@ -555,6 +555,17 @@ func registerTools(server *mcp.Server, client *fgclient.Client) {
 			return body.Packages, nil
 		})
 
+	add(server, client, "get_learning_apps",
+		"The family's learning apps: the package prefixes whose apps are free and earn Bonuszeit, and how "+
+			"many installed apps each one matches (0 is usually a typo).",
+		func(ctx context.Context, c *fgclient.Client, _ emptyArgs) (any, error) {
+			var body map[string]any
+			if err := c.Get(ctx, "/api/v1/family/learning-prefixes", &body); err != nil {
+				return nil, err
+			}
+			return body, nil
+		})
+
 	add(server, client, "get_usage",
 		"Screen time a device has reported. Empty means nothing was reported, which is a "+
 			"measurement that was not taken rather than a child who used nothing.",

@@ -38,7 +38,8 @@ type updateChildArgs struct {
 // Every field optional and a pointer: only what is sent changes, exactly as the console's switches do.
 type policyArgs struct {
 	ChildID            string  `json:"child_id" jsonschema:"the child's UUID, as returned by list_children"`
-	DailyLimitMinutes  *int    `json:"daily_limit_minutes,omitempty" jsonschema:"Tageszeit: screen time per day in minutes, 0 to 1440; 0 is no limit. It starts over at midnight"`
+	DailyLimitMinutes  *int    `json:"daily_limit_minutes,omitempty" jsonschema:"Tageszeit: screen time per day in minutes, 0 to 1440. It starts over at midnight. Sent without daily_limit_enabled, 0 switches the limit off and more than 0 on"`
+	DailyLimitEnabled  *bool   `json:"daily_limit_enabled,omitempty" jsonschema:"whether there is a daily limit at all; true with daily_limit_minutes 0 means no time except what is earned (Bonuszeit from learning apps and tasks) or given (Extrazeit)"`
 	BedtimeEnabled     *bool   `json:"bedtime_enabled,omitempty" jsonschema:"true pauses apps over night between bedtime_start and bedtime_end; calls always work"`
 	BedtimeStart       *string `json:"bedtime_start,omitempty" jsonschema:"HH:MM, such as 21:00"`
 	BedtimeEnd         *string `json:"bedtime_end,omitempty" jsonschema:"HH:MM, such as 06:30"`
@@ -78,6 +79,10 @@ type familyBlockArgs struct {
 	Blocked     bool   `json:"blocked" jsonschema:"true: nobody in the family may have it; false takes it off the list"`
 	Label       string `json:"label,omitempty" jsonschema:"the app's name, for the list"`
 	Reason      string `json:"reason,omitempty" jsonschema:"why, for the list"`
+}
+
+type learningAppsArgs struct {
+	Prefixes []string `json:"prefixes" jsonschema:"the package-name prefixes, such as org.example.learn.; an empty list means no learning apps. At most 10"`
 }
 
 type addDeviceArgs struct {
@@ -197,8 +202,9 @@ func registerConsoleTools(server *mcp.Server, client *fgclient.Client) {
 		func(ctx context.Context, c *fgclient.Client, in policyArgs) (any, error) {
 			body := map[string]any{}
 			for key, value := range map[string]any{
-				"daily_limit_minutes": in.DailyLimitMinutes, "bedtime_enabled": in.BedtimeEnabled,
-				"bedtime_start": in.BedtimeStart, "bedtime_end": in.BedtimeEnd, "timezone": in.Timezone,
+				"daily_limit_minutes": in.DailyLimitMinutes, "daily_limit_enabled": in.DailyLimitEnabled,
+				"bedtime_enabled": in.BedtimeEnabled,
+				"bedtime_start":   in.BedtimeStart, "bedtime_end": in.BedtimeEnd, "timezone": in.Timezone,
 				"youtube_blocked": in.YouTubeBlocked, "allow_child_installs": in.AllowChildInstalls,
 				"allow_uninstall": in.AllowUninstall, "allow_debugging": in.AllowDebugging,
 				"tracking_only": in.TrackingOnly, "ad_filter": in.AdFilter,
@@ -296,6 +302,18 @@ func registerConsoleTools(server *mcp.Server, client *fgclient.Client) {
 			}
 			return doJSON(ctx, c, "PUT", path, map[string]string{
 				"package_name": in.PackageName, "label": in.Label, "reason": in.Reason})
+		})
+
+	add(server, client, "set_learning_apps",
+		"Replace the family's learning apps (FR-30): every app whose package starts with one of these "+
+			"prefixes is always usable and its minutes earn Bonuszeit, valid for 7 days, on every child. "+
+			"get_learning_apps shows the list and how many installed apps each prefix matches.",
+		func(ctx context.Context, c *fgclient.Client, in learningAppsArgs) (any, error) {
+			prefixes := in.Prefixes
+			if prefixes == nil {
+				prefixes = []string{}
+			}
+			return doJSON(ctx, c, "PUT", "/api/v1/family/learning-prefixes", map[string]any{"prefixes": prefixes})
 		})
 
 	// ---- phones -----------------------------------------------------------------------------
