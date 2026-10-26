@@ -7,10 +7,14 @@ import io.github.helios57.familyguard.enforce.InvalidPolicyInput
 import io.github.helios57.familyguard.net.ApiClient
 import io.github.helios57.familyguard.net.ApiException
 import io.github.helios57.familyguard.net.HeartbeatRequest
+import io.github.helios57.familyguard.net.RejectedCallReport
+import io.github.helios57.familyguard.net.RejectedCallsRequest
 import io.github.helios57.familyguard.recovery.RecoveryMode
 import io.github.helios57.familyguard.recovery.releasedState
 import java.io.IOException
+import java.time.Instant
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 /** Whether the policy that was enforced came from the server just now, or from the last sync. */
@@ -151,6 +155,9 @@ class Synchronizer(
 
     /** FR-26.3: where to register for push, or null when the server sends none. */
     private val onPush: (io.github.helios57.familyguard.push.PushOptions?) -> Unit = {},
+
+    /** FR-31.5: the rejected calls waiting to be reported, delivered after each heartbeat. */
+    private val rejectedCalls: io.github.helios57.familyguard.calls.RejectedCallLog? = null,
 ) {
 
     /** Per package, the larger of the two. See [localUsedMinutesByPackage] for why it is a max. */
@@ -272,7 +279,7 @@ class Synchronizer(
         if (outcome.ok) cache.recordApplied(state.policyVersion)
 
         val pending = try {
-            heartbeat()
+            heartbeat().also { deliverRejectedCalls() }
         } catch (e: ApiException) {
             if (!e.retryable) return SyncResult.Refused(e)
             0
@@ -339,11 +346,52 @@ class Synchronizer(
                 homePackages = t.homePackages,
                 energy = t.energy,
                 pushToken = t.pushToken,
+                callScreening = t.callScreening,
             )
         ).pendingCommands
     }
 
+    /**
+     * FR-31.5: the rejected-call queue, in reports of at most [CALLS_PER_REPORT] — the server's own
+     * ceiling. Only after a heartbeat that worked, so a link that just refused stays quiet.
+     *
+     * A 200 removes exactly the calls it carried, whatever `accepted` says: that counts NEW rows, so
+     * a re-send after a lost response answers 0 and is delivered all the same. A 400 also removes
+     * them. Every field is built here and the ids are UUIDs, so the server refusing one as malformed
+     * means it never will accept it, and keeping it would block every call rejected after it. Any
+     * other failure keeps the queue for the next sync and costs the sync nothing.
+     */
+    private fun deliverRejectedCalls() {
+        val log = rejectedCalls ?: return
+        while (true) {
+            val batch = log.pending().take(CALLS_PER_REPORT)
+            if (batch.isEmpty()) return
+            try {
+                api.reportRejectedCalls(
+                    RejectedCallsRequest(
+                        batch.map {
+                            RejectedCallReport(
+                                id = it.id,
+                                number = it.number.take(MAX_NUMBER),
+                                at = OffsetDateTime.ofInstant(Instant.ofEpochMilli(it.atMillis), ZoneOffset.UTC).format(RFC3339),
+                            )
+                        },
+                    ),
+                )
+            } catch (e: ApiException) {
+                if (e.status != 400) return
+            } catch (_: IOException) {
+                return
+            }
+            log.acknowledge(batch.map { it.id })
+        }
+    }
+
     private companion object {
+        /** The server's `maxRejectedCallsPerReport` and `maxRejectedCallNumber`. */
+        const val CALLS_PER_REPORT = 100
+        const val MAX_NUMBER = 64
+
         /**
          * The format the engine parses and the Go side emits. Spelled out rather than left to
          * `OffsetDateTime.toString()`, which drops the seconds field whenever it is zero — legal
@@ -418,6 +466,8 @@ data class DeviceTelemetry(
      */
     val adFilterRules: Int? = null,
     val adFilterFetchedAt: String? = null,
+    /** FR-31.4: whether the call-screening role is held; null while the parent's switch is off. */
+    val callScreening: Boolean? = null,
     val adFilterRunning: Boolean? = null,
     /** Why no tunnel is running, or "" when there is nothing to explain (FR-6.11). */
     val adFilterReason: String? = null,

@@ -502,6 +502,7 @@ class ConnectionService : Service() {
         if (intent?.action == ACTION_MODE_CHECK) reevaluate("alarm")
         if (intent?.action == ACTION_PUSH) onWake("push")
         if (intent?.action == ACTION_PUSH_TOKEN) onWake("token")
+        if (intent?.action == ACTION_CALL_GUARD) onWake("call-guard")
 
         if (job?.isActive != true) {
             job = scope.launch { connect() }
@@ -701,6 +702,7 @@ class ConnectionService : Service() {
                 managedApps = managedAppApplier(api, policy),
                 filter = policy?.let { filterApplier(this, it.alwaysOnVpn) },
                 supportText = { state -> whyPaused(state) },
+                callGuard = callGuardApplier(),
             ),
             recovery = RecoveryMode(recoveryStore.mode),
             telemetry = {
@@ -733,6 +735,7 @@ class ConnectionService : Service() {
             onLive = { until -> if (liveUntil.getAndSet(until) != until) reevaluate("live") },
             // FR-26.3: start, keep or stop Firebase; a new token is sent with a sync of its own.
             onPush = { options -> PushRegistrar.configure(this, options) { onWake("token") } },
+            rejectedCalls = io.github.helios57.familyguard.calls.CallGuardService.rejectedCalls(this),
         )
         journal = recoveryJournal
         // Published before the first sync, so an alarm that fires during it waits on `syncLock`
@@ -1627,6 +1630,23 @@ class ConnectionService : Service() {
             "" to 0L
         }
 
+    /**
+     * FR-31.4: the call guard's restriction and setup prompt, or null on a phone this app does not
+     * own (there is no restriction to set, and the role means nothing without the switch's sync).
+     */
+    private fun callGuardApplier(): io.github.helios57.familyguard.calls.CallGuardApplier? {
+        val dpm = getSystemService(android.app.admin.DevicePolicyManager::class.java) ?: return null
+        val users = getSystemService(android.os.UserManager::class.java) ?: return null
+        if (!dpm.isDeviceOwnerApp(packageName)) return null
+        val admin = android.content.ComponentName(packageName, io.github.helios57.familyguard.policy.DpmRestrictionGateway.ADMIN_RECEIVER)
+        return io.github.helios57.familyguard.calls.CallGuardApplier(
+            gateway = io.github.helios57.familyguard.policy.DpmRestrictionGateway(dpm, admin, users),
+            sdk = android.os.Build.VERSION.SDK_INT,
+            roleHeld = { io.github.helios57.familyguard.calls.CallGuardSetup.roleHeld(this) },
+            setupPrompt = { show -> io.github.helios57.familyguard.calls.CallGuardSetup.prompt(this, show) },
+        )
+    }
+
     private fun telemetry(): DeviceTelemetry {
         val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val update = androidUpdateReport(this).pending(runningVersionCode(this))
@@ -1684,6 +1704,12 @@ class ConnectionService : Service() {
             homePackages = CriticalPackages.homeScreen(this),
             energy = EnergyMeter.process.report(),
             pushToken = PushRegistrar.reportedToken(this),
+            // FR-31.4: the role, read now — a person can take it away in Settings below Android 14 —
+            // and only while the parent's switch is on, where its absence means something.
+            callScreening = io.github.helios57.familyguard.calls.CallGuard.reported(
+                switchOn = runCatching { EncryptedPolicyCache(this).load()?.settings?.callsContactsOnly }.getOrNull() == true,
+                roleHeld = io.github.helios57.familyguard.calls.CallGuardSetup.roleHeld(this),
+            ),
             connectivity = when {
                 capabilities == null -> "none"
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
@@ -2226,6 +2252,9 @@ class ConnectionService : Service() {
 
         /** FR-26.3: a new push token; sync so the heartbeat carries it. */
         const val ACTION_PUSH_TOKEN = "io.github.helios57.familyguard.PUSH_TOKEN"
+
+        /** FR-31.4: the call-screening role dialog closed; sync so the console sees the answer. */
+        const val ACTION_CALL_GUARD = "io.github.helios57.familyguard.CALL_GUARD"
 
         /** Starts the service for one of the wake-ups above. */
         fun wake(context: Context, action: String) {

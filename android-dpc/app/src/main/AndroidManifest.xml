@@ -460,6 +460,26 @@
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
         </receiver>
+        <!--
+          FR-31.2. The call-screening service. Telecom binds it only while FamilyGuard holds the
+          call-screening role, which a person on the phone grants once (FR-31.4); the permission on
+          the service means nothing but the system can bind it. It is asked only about calls from
+          numbers that are not contacts, and answers whether they may ring.
+        -->
+        <service
+            android:name=".calls.CallGuardService"
+            android:exported="true"
+            android:permission="android.permission.BIND_SCREENING_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.CallScreeningService" />
+            </intent-filter>
+        </service>
+        <!-- FR-31.4. Opens the system's call-screening role dialog from the setup notification. -->
+        <activity
+            android:name=".calls.CallGuardSetupActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.FamilyGuard.Invisible" />
         <service
             android:name=".alarm.AlarmRingService"
             android:exported="false"

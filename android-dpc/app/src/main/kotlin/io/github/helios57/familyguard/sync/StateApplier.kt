@@ -410,6 +410,7 @@ fun deviceApplier(
     managedApps: StateApplier? = null,
     filter: StateApplier? = null,
     supportText: ((DesiredState) -> String)? = null,
+    callGuard: StateApplier? = null,
 ): StateApplier {
     if (policy == null) return NoDeviceOwnerApplier
     return CompositeApplier(
@@ -427,6 +428,9 @@ fun deviceApplier(
             // it in the phone's language. The recovery release passes none: it is lifting pauses,
             // and the next sync writes the message for whatever state follows.
             supportText?.let { add("support" to SupportMessageApplier(policy.supportMessage, it)) }
+            // FR-31.4. Silent like the rest, so before the lock. The recovery release passes none: a
+            // parent unlocking a phone in an emergency has not asked for the call guard to change.
+            callGuard?.let { add("calls" to it) }
             add("lock" to LockApplier(policy.lock))
         }
     )

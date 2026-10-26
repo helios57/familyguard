@@ -870,6 +870,95 @@ class SynchronizerTest {
         assertEquals(0L, cache.contact)
     }
 
+    // ---- FR-31: rejected calls and the call-screening role ---------------------------------
+
+    private class CallMemory : io.github.helios57.familyguard.calls.RejectedCallStore {
+        var calls: List<io.github.helios57.familyguard.calls.RejectedCall> = emptyList()
+        override fun load() = calls
+        override fun save(calls: List<io.github.helios57.familyguard.calls.RejectedCall>) { this.calls = calls }
+    }
+
+    private fun callLog(store: CallMemory): io.github.helios57.familyguard.calls.RejectedCallLog {
+        var n = 0
+        return io.github.helios57.familyguard.calls.RejectedCallLog(store) { "call-${++n}" }
+    }
+
+    private fun answerCalls(status: Int, body: String = """{"accepted":0}""") {
+        server.answerWith { request ->
+            when {
+                request.path.endsWith("/heartbeat") -> HttpResponse(200, body = """{"policy_version":99,"pending_commands":0}""")
+                request.path.endsWith("/rejected-calls") -> HttpResponse(status, reason = "x", body = body)
+                else -> HttpResponse(200, body = policyBody())
+            }
+        }
+    }
+
+    @Test
+    fun `rejected calls reach the server with their id, number and time, and leave the queue`() {
+        answerCalls(200, """{"accepted":1}""")
+        val store = CallMemory()
+        callLog(store).add("+15550199", 1_793_000_000_000L)
+
+        Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY }, now = { DEVICE_NOW }, rejectedCalls = callLog(store)).sync()
+
+        val body = server.requests.last { it.path.endsWith("/rejected-calls") }.body
+        assertEquals("""{"calls":[{"id":"call-1","number":"+15550199","at":"2026-10-26T07:33:20Z"}]}""", body)
+        assertTrue("an acknowledged call is still queued: ${store.calls}", store.calls.isEmpty())
+    }
+
+    @Test
+    fun `a re-send the server already had still empties the queue`() {
+        // accepted counts NEW rows: 0 on a re-send after a lost response, and the call is delivered.
+        answerCalls(200, """{"accepted":0}""")
+        val store = CallMemory()
+        callLog(store).add("+15550199", 1_000L)
+        Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY }, now = { DEVICE_NOW }, rejectedCalls = callLog(store)).sync()
+        assertTrue(store.calls.isEmpty())
+    }
+
+    @Test
+    fun `a server that is down keeps the calls for the next sync`() {
+        answerCalls(503)
+        val store = CallMemory()
+        callLog(store).add("+15550199", 1_000L)
+        val result = Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY }, now = { DEVICE_NOW }, rejectedCalls = callLog(store)).sync()
+        assertTrue("an upload failure cost the sync: $result", result is SyncResult.Applied)
+        assertEquals(1, store.calls.size)
+    }
+
+    @Test
+    fun `more calls than one report holds go in several reports`() {
+        answerCalls(200)
+        val store = CallMemory()
+        val log = callLog(store)
+        repeat(230) { log.add("+1555${it}", it.toLong()) }
+        Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY }, now = { DEVICE_NOW }, rejectedCalls = log).sync()
+        val reports = server.requests.filter { it.path.endsWith("/rejected-calls") }
+        assertEquals(3, reports.size)
+        assertTrue(reports.all { Regex("\"id\"").findAll(it.body).count() <= 100 })
+        assertTrue(store.calls.isEmpty())
+    }
+
+    @Test
+    fun `a report the server refuses as malformed is dropped rather than blocking every later call`() {
+        answerCalls(400, """{"error":"invalid_input"}""")
+        val store = CallMemory()
+        callLog(store).add("+15550199", 1_000L)
+        Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY }, now = { DEVICE_NOW }, rejectedCalls = callLog(store)).sync()
+        assertTrue(store.calls.isEmpty())
+    }
+
+    @Test
+    fun `the heartbeat carries call_screening only when the phone reports it`() {
+        Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY.copy(callScreening = false) }, now = { DEVICE_NOW }).sync()
+        val body = server.requests.last { it.path.endsWith("/heartbeat") }.body
+        assertTrue("no call_screening in $body", body.contains("\"call_screening\":false"))
+
+        Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY }, now = { DEVICE_NOW }).sync()
+        val without = server.requests.last { it.path.endsWith("/heartbeat") }.body
+        assertFalse("switch off and the role was reported: $without", without.contains("call_screening"))
+    }
+
     // ---- fixtures ---------------------------------------------------------------------------
 
     private val events = mutableListOf<String>()

@@ -310,4 +310,6 @@
     <string name="answer_granted_text">Your parents said yes. It counts until midnight.</string>
     <string name="answer_declined_title">No extra time</string>
     <string name="answer_declined_text">Your parents said no this time.</string>
+    <string name="call_guard_setup_title">Set up call protection</string>
+    <string name="call_guard_setup_text">Your parents turned on: only contacts may call. Tap and choose FamilyGuard as the call-screening app, once.</string>
 </resources>

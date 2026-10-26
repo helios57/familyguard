@@ -86,6 +86,19 @@ class RestrictionKeysMatchThePlatformTest {
      * whole file exists to make impossible. Reflection over the object's own fields is what closes
      * it: the list above cannot silently fall behind the constants it covers.
      */
+    /**
+     * FR-31.4's key lives outside the engine — it is set by the call guard, never by a desired state —
+     * so the reflection below cannot see it, and it is bound here on its own.
+     */
+    @Test
+    fun `the call guard's key is the platform's own`() {
+        assertEquals(
+            UserManager.DISALLOW_CONFIG_DEFAULT_APPS,
+            io.github.helios57.familyguard.calls.CallGuardRestriction.KEY,
+        )
+        assertTrue(UserManager.DISALLOW_CONFIG_DEFAULT_APPS.isNotEmpty())
+    }
+
     @Test
     fun `no restriction constant escapes the binding`() {
         val declared = EnforcementEngine::class.java.declaredFields

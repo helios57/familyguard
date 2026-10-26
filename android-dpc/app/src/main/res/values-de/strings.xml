@@ -219,4 +219,6 @@
     <string name="answer_granted_text">Deine Eltern haben Ja gesagt. Sie gilt bis Mitternacht.</string>
     <string name="answer_declined_title">Keine Extrazeit</string>
     <string name="answer_declined_text">Deine Eltern haben diesmal Nein gesagt.</string>
+    <string name="call_guard_setup_title">Anrufschutz einrichten</string>
+    <string name="call_guard_setup_text">Deine Eltern haben eingeschaltet: Nur Kontakte dürfen anrufen. Tippe und wähle einmal FamilyGuard als App zur Anrufprüfung.</string>
 </resources>

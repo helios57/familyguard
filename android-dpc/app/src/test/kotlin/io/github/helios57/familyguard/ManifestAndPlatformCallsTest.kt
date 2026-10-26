@@ -142,6 +142,10 @@ class ManifestAndPlatformCallsTest {
             // which Play services hands over a push (FR-26.3); it starts the non-exported
             // PushWakeService and nothing else.
             "com.google.android.c2dm.permission.SEND" to "Google Play services only",
+            // Signature-level, held by the platform. Telecom binds the CallScreeningService only
+            // while this app holds the call-screening role (FR-31.2); like the VpnService it must be
+            // exported to be bound at all, and this permission keeps that to the system.
+            "android.permission.BIND_SCREENING_SERVICE" to "platform only",
         )
 
         val components = componentsIn(merged)

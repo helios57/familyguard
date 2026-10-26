@@ -88,6 +88,19 @@ data class PolicyResponse(
 )
 
 @Serializable
+data class RejectedCallReport(
+    @SerialName("id") val id: String,
+    @SerialName("number") val number: String,
+    @SerialName("at") val at: String,
+)
+
+@Serializable
+data class RejectedCallsRequest(@SerialName("calls") val calls: List<RejectedCallReport>)
+
+@Serializable
+data class RejectedCallsResponse(@SerialName("accepted") val accepted: Int = 0)
+
+@Serializable
 data class HeartbeatRequest(
     @SerialName("battery_level") val batteryLevel: Int? = null,
     @SerialName("charging") val charging: Boolean? = null,
@@ -145,6 +158,8 @@ data class HeartbeatRequest(
     @SerialName("ad_filter_rules") val adFilterRules: Int? = null,
     @SerialName("ad_filter_fetched_at") val adFilterFetchedAt: String? = null,
     @SerialName("ad_filter_running") val adFilterRunning: Boolean? = null,
+    /** FR-31.4: whether this phone holds the call-screening role. Null while the switch is off. */
+    @SerialName("call_screening") val callScreening: Boolean? = null,
     /**
      * Why no tunnel is running, in this phone's own words (FR-6.11). "" is nothing to explain and
      * clears the line; null is a build that does not report it and leaves what the server has.
@@ -406,6 +421,11 @@ class ApiClient(
     fun reportInventory(request: InventoryRequest): Int =
         post("/api/v1/device/inventory", json.encodeToString(InventoryRequest.serializer(), request))
             .let { json.decodeFromString(InventoryResponse.serializer(), it).apps }
+
+    /** FR-31.5. Answers how many the server stored NEW, which is 0 for a re-send — still delivered. */
+    fun reportRejectedCalls(request: RejectedCallsRequest): Int =
+        post("/api/v1/device/rejected-calls", json.encodeToString(RejectedCallsRequest.serializer(), request))
+            .let { json.decodeFromString(RejectedCallsResponse.serializer(), it).accepted }
 
     fun reportUsage(request: UsageRequest): UsageResponse =
         post("/api/v1/device/usage", json.encodeToString(UsageRequest.serializer(), request))
