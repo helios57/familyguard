@@ -29,22 +29,26 @@ interface RejectedCallStore {
  */
 class RejectedCallLog(private val store: RejectedCallStore, private val newId: () -> String) {
 
-    @Synchronized
     fun add(number: String, atMillis: Long) {
-        store.save((store.load() + RejectedCall(newId(), number, atMillis)).takeLast(MAX))
+        synchronized(LOCK) { store.save((store.load() + RejectedCall(newId(), number, atMillis)).takeLast(MAX)) }
     }
 
-    @Synchronized
-    fun pending(): List<RejectedCall> = store.load()
+    fun pending(): List<RejectedCall> = synchronized(LOCK) { store.load() }
 
-    @Synchronized
     fun acknowledge(ids: Collection<String>) {
         if (ids.isEmpty()) return
         val gone = ids.toSet()
-        store.save(store.load().filterNot { it.id in gone })
+        synchronized(LOCK) { store.save(store.load().filterNot { it.id in gone }) }
     }
 
     companion object {
         const val MAX = 500
+
+        /**
+         * One lock for every instance, not one each: the screening service and the synchroniser each
+         * build a log over the same file, and a load-then-save under two different locks loses the
+         * call rejected in between.
+         */
+        private val LOCK = Any()
     }
 }

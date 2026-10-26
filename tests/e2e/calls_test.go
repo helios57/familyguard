@@ -79,8 +79,12 @@ func TestFamilyNumbersAreNormalisedAndAdminOnly(t *testing.T) {
 		{"12"},
 		{"+1 555"},
 		{"0"},
-		{"+41 79 123 45 67 89 01 23"},
-		{"079 123 45 67 ext 2"},
+		{"+41 79 000 00 01 89 01 23"},
+		{"079 000 00 01 ext 2"},
+		// A Swiss number has nine digits after the 0 or the +41; a German mobile typed in its own
+		// national form has ten, and read as Swiss it would be a number nobody has.
+		{"0171 1234567"},
+		{"+41 79 000 00 0"},
 		{""},
 		{"+15550101", "+15550102", "+15550103", "+15550104", "+15550105", "+15550106",
 			"+15550107", "+15550108", "+15550109", "+15550110", "+15550111"},
@@ -90,18 +94,18 @@ func TestFamilyNumbersAreNormalisedAndAdminOnly(t *testing.T) {
 
 	var put familyNumbersDTO
 	h.putFamilyNumbers(f.parent.Token,
-		"079 123 45 67", "0041 79 123 45 67", "+1 (555) 010-1", " +1.555.0102 ").
+		"079 000 00 01", "0041 79 000 00 01", "+1 (555) 010-1", " +1.555.0102 ", "+41 (0)79 000 00 03").
 		expect(http.StatusOK).decode(&put)
-	want := []string{"+41791234567", "+15550101", "+15550102"}
+	want := []string{"+41790000001", "+15550101", "+15550102", "+41790000003"}
 	if !slices.Equal(put.Numbers, want) {
-		t.Fatalf("stored %v, want %v: national 0 read as +41, 00 as +, separators gone, the duplicate once", put.Numbers, want)
+		t.Fatalf("stored %v, want %v: national 0 read as +41, 00 as +, the (0) of +41 (0)79 dropped, separators gone, the duplicate once", put.Numbers, want)
 	}
 	if got := h.familyNumbers(f.parent.Token); !slices.Equal(got.Numbers, want) {
 		t.Errorf("read back %v, want %v", got.Numbers, want)
 	}
 
 	// The change reaches the phone with its next policy.
-	if _, numbers := h.phoneCallSettings(f.deviceToken()); !slices.Equal(numbers, []string{"+15550101", "+15550102", "+41791234567"}) {
+	if _, numbers := h.phoneCallSettings(f.deviceToken()); !slices.Equal(numbers, []string{"+15550101", "+15550102", "+41790000001", "+41790000003"}) {
 		t.Errorf("the phone is sent %v, want the family numbers sorted", numbers)
 	}
 
@@ -267,10 +271,12 @@ func TestCallScreeningHeldIsRememberedOnceSeen(t *testing.T) {
 	if st := state(); string(st["call_screening"]) != "false" || string(st["call_screening_held_at"]) != string(held) {
 		t.Fatalf("taken away: call_screening=%s held_at=%s, want false and the first time %s kept", st["call_screening"], st["call_screening_held_at"], held)
 	}
-	// Silence keeps what was said.
+	// Silence is what a phone says while the switch is off: nothing to report, so nothing is shown —
+	// a stale true kept through it would read "Anrufschutz an" the moment the switch goes back on.
+	beat(map[string]any{"call_screening": true})
 	beat(map[string]any{})
-	if st := state(); string(st["call_screening"]) != "false" {
-		t.Fatalf("a heartbeat that said nothing changed call_screening to %s", st["call_screening"])
+	if st := state(); st["call_screening"] != nil || string(st["call_screening_held_at"]) != string(held) {
+		t.Fatalf("a heartbeat that said nothing left call_screening=%s held_at=%s, want null and the first time kept", st["call_screening"], st["call_screening_held_at"])
 	}
 	beat(map[string]any{"call_screening": true})
 	if st := state(); string(st["call_screening_held_at"]) != string(held) {

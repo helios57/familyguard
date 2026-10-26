@@ -9729,8 +9729,7 @@ phone app's own switch is a setup step, and the console says *nicht prüfbar*), 
 
 ### 62.1 — tests and calibration
 
-Server: `calls_test.go` (normalising, admins only, the 409 by build, idempotent upload, held_at kept,
-retention), `calls_cli_test.go` (fgctl + MCP), `calls_console_test.go` (360 and 1440 px), audit and
+Server: `calls_test.go` (normalising, admins only, the 409 by build, idempotent upload, held_at kept), `calls_cli_test.go` (fgctl + MCP), `calls_console_test.go` (360 and 1440 px), audit and
 emptiness additions; 88 shared vectors. Phone: `CallDecisionTest` (8), `RejectedCallLogTest` (4),
 `CallGuardRestrictionTest` (10), 6 new `SynchronizerTest` cases; 1099 unit tests. On a device:
 `tests/android/calls.sh` — a contact rings, a stranger is rejected (RINGING never seen in Telecom's
@@ -9741,7 +9740,7 @@ the switch off lets a stranger ring, and the role is reported not held → held 
 
 | probe | test | result |
 |---|---|---|
-| a national `0` kept after `+41` | `calls_test.go` | **red**: *stored [+410791234567 …]* |
+| a national `0` kept after `+41` | `calls_test.go` | **red**: *stored [+410790000001 …]* |
 | a re-sent call updated instead of ignored (`DO UPDATE`) | `calls_test.go` | **red**: *a re-send was accepted as 2 new calls, want 0* |
 | the phone's call id made unique per send | `calls_test.go` | **red**: *stored 4 rejected calls after a re-send, want 2* |
 | `call_screening_held_at` overwritten by every beat | `calls_test.go` | **red**: *taken away: … held_at=null* |
@@ -9759,5 +9758,65 @@ the switch off lets a stranger ring, and the role is reported not held → held 
 
 **15 probes, 14 red, 1 green that is recorded as not binding. Cumulative: 569.**
 
+The one-year retention (`PruneRejectedCalls`) has no test of its own; it runs with the other prunes
+in the server's daily maintenance.
+
 Not measured: a real SIM on a real network, a hidden-number call, and Samsung's own dialer, which
 is the owner's to check on the two phones.
+
+### 62.2 — the whole-branch review, and what it changed
+
+A fresh reviewer read `4dc512b..19aab3b` against the spec and found one way to cut a parent off and
+three ways to lose or mis-handle a call. Each fix was written test-first and watched red, then
+calibrated again by a value probe:
+
+- **`+41 (0)79 …` was stored as `+410790…`**, which no call ever matches — the form a Swiss number
+  takes under an email signature. The `0` after `+41` is now dropped, and a Swiss number must have
+  nine digits after it, so a German `0171 1234567` is refused instead of stored as a Swiss number
+  nobody has.
+- **A phone released by its recovery code still rejected strangers.** `CallScreening` now applies
+  the released state, like every other applier (FR-12.2).
+- **The call was written down before Telecom had its answer.** Encrypted storage is slow on first
+  use and throws when it cannot seal, and the old order turned such a throw into a ring. The answer
+  now goes first; the bookkeeping cannot change it.
+- **The queue could lose a call or never end.** The service and the synchroniser each built a log
+  over the one file under its own lock, so a call rejected during an acknowledgement could vanish;
+  the lock is now shared. An acknowledgement that does not take (a full disk) ended in an endless
+  re-send; the upload now stops and keeps the calls.
+- **A stale `true` survived the switch going off**, so turning it back on read *Anrufschutz an*
+  before the phone had said anything. The server now stores what the last heartbeat said.
+- **Emergency call-backs.** The spec said *"to be measured, not assumed"*, and the plan had not
+  carried that over. Telecom skips screening apps only in emergency call-back mode, which is up to
+  the network. An outgoing 911 on the API 37 emulator was passed to FamilyGuard's service
+  (`BIND_SCREENING`), so the phone now lets every call ring for two hours after the child dials an
+  emergency number — Android's own rule for its blocked numbers (carrier default 7200 s). The
+  emulator cannot end an emergency call (its modem keeps it `ACTIVE`, and Telecom refuses every
+  incoming call meanwhile with `IN_EMERGENCY_CALL`), so the call-back itself is measured only in
+  `CallScreeningTest`.
+- Real-looking Swiss numbers in tests and docs became `079 000 00 0x`.
+
+| probe | test | result |
+|---|---|---|
+| the `0` after `+41` kept (`n = n[:]`) | `calls_test.go` | **red**: *expected 200, got 400* — the nine-digit rule refuses `+410…` on its own, so both guards bind |
+| the nine-digit rule widened to 12 | `calls_test.go` | **red**: *expected 400, got 200* |
+| the emergency window set to 0 | `CallScreeningTest` | **red** |
+| the recovery check never true | `CallScreeningTest` | **red**: *answered REJECT* for a released phone |
+| `add` locks its own instance | `RejectedCallLogTest` | **red**: *expected [+15550188] but was []* |
+| the stuck-queue guard compares nothing | `SynchronizerTest` | **red**: timed out after 20 s |
+| the national suffix match never true | `CallDecisionTest` | **red** |
+
+**7 probes, 7 red. Cumulative: 576.** android-unit 1108/1108, lint clean, the full e2e suite green
+(488 s), and `tests/android/calls.sh` green again on API 37 (160 s) and API 33 (180 s) with the fixed
+service.
+
+One API 33 run before that went red **before any call was made**, and it is recorded here because it
+is not explained. The server accepted the enrolment (`POST /enroll` 200), the instrumentation saw the
+credential, and after the harness's `adb reboot` 24 s later the credential file held exactly the
+empty map that `ServerDrivenEnrollmentTest`'s own `store.clear()` writes. That fits
+SharedPreferences restoring its backup file after a write that did not survive the reboot, but it was
+not proven. It did not reproduce on a fresh boot, and nothing in this phase touches enrolment. If it
+returns, start from the credential file's key count (`run-as … cat shared_prefs/…` piped to `grep -c`,
+never printed). Deferred (minor): rejected
+calls grouped by the browser's time zone rather than the child's; retention reads the phone's
+`rejected_at`, so a phone with a wrong clock shifts its own year; `disallow_config_default_apps` is
+cleared whenever it is in effect, which only matters if something else ever sets it.

@@ -948,6 +948,25 @@ class SynchronizerTest {
         assertTrue(store.calls.isEmpty())
     }
 
+    @Test(timeout = 20_000)
+    fun `a queue that cannot be emptied ends the upload instead of re-sending it forever`() {
+        answerCalls(200, """{"accepted":1}""")
+        val store = CallMemory()
+        callLog(store).add("+15550199", 1_000L)
+        // Disk full: the acknowledgement's save does not take.
+        val stuck = object : io.github.helios57.familyguard.calls.RejectedCallStore {
+            override fun load() = store.calls
+            override fun save(calls: List<io.github.helios57.familyguard.calls.RejectedCall>) = Unit
+        }
+        val result = Synchronizer(
+            api, cache, applier, recovery, telemetry = { TELEMETRY }, now = { DEVICE_NOW },
+            rejectedCalls = io.github.helios57.familyguard.calls.RejectedCallLog(stuck) { "x" },
+        ).sync()
+        assertTrue("$result", result is SyncResult.Applied)
+        assertEquals(1, server.requests.count { it.path.endsWith("/rejected-calls") })
+        assertEquals(1, store.calls.size)
+    }
+
     @Test
     fun `the heartbeat carries call_screening only when the phone reports it`() {
         Synchronizer(api, cache, applier, recovery, telemetry = { TELEMETRY.copy(callScreening = false) }, now = { DEVICE_NOW }).sync()

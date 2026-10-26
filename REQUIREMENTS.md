@@ -1057,18 +1057,26 @@ any way"*, *"It's fine if the kids add it, I just don't want strangers to call t
 - FR-31.2 **A call from a stranger does not ring.** While the switch is on, the phone rejects every
   incoming call from a number that is not one of its own contacts: no ring, no missed call and no
   missed-call notification. Android itself still records the call in the call log as *blocked*,
-  whatever the screening app asks (measured on the emulator, 2026-10-26). The contacts are the phone's own, which the child may edit; FamilyGuard
-  never reads them — the platform passes only non-contacts to it. Outgoing calls are never touched,
-  and a call is let through whenever the phone cannot decide (no policy yet, no number, an error).
+  whatever the screening app asks (measured on the emulator, 2026-10-26). The contacts are the
+  phone's own, which the child may edit; FamilyGuard never reads them — the platform passes only
+  non-contacts to it. Outgoing calls are never touched, and a call is let through whenever the phone
+  cannot decide (no policy yet, no number, an error) and while the phone is released by a recovery
+  code (FR-12.2). **For two hours after the child dials an emergency number, every call rings**: the
+  call-back from the emergency centre comes from a number nobody has saved. Two hours is Android's own
+  rule for its blocked numbers; Telecom skips screening apps by itself only in emergency call-back
+  mode, which not every network enters.
 - FR-31.3 **Family numbers always get through**, even when a child has deleted or never saved them:
   one list per family, at most 10, set and read by an admin through the API, `fgctl`, MCP and the
-  console's Familie page. Stored as E.164; `079…`, `0041…` and `+41…` are accepted, a leading single
-  `0` read as Switzerland. Audited as `FAMILY_NUMBERS_UPDATED`, and every phone is woken to fetch it.
+  console's Familie page. Stored as E.164; `079…`, `0041…`, `+41…` and `+41 (0)79…` are accepted, a
+  leading single `0` read as Switzerland, and a Swiss number must have nine digits after the `0` or
+  the `+41` — a foreign number typed in its own national form is refused rather than stored as a
+  Swiss number nobody has. Audited as `FAMILY_NUMBERS_UPDATED`, and every phone is woken to fetch it.
 - FR-31.4 **The protection is real or it says so.** The phone needs the call-screening role, which
   only a person on the phone can grant: while the switch is on and the role is not held, the phone
   shows *Anrufschutz einrichten*, which opens the system dialog. The phone reports whether it holds
-  the role; the console shows *Anrufschutz: wartet auf Freigabe am Handy* (amber) until it has been
-  held once, and *Anrufschutz aus* (red) when it was held and is not any more. From Android 14 the
+  the role, and says nothing while the switch is off; the console shows *Anrufschutz: wartet auf
+  Freigabe am Handy* (amber) until the phone has reported it held, and *Anrufschutz aus* (red) when it
+  was held once and is not any more. From Android 14 the
   phone also stops the child from changing default apps while the role is held, so it cannot be taken
   away from the phone's settings.
 - FR-31.5 **What was rejected is shown.** The phone reports each rejected call (number and time),

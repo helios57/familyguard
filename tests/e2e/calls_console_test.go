@@ -78,9 +78,9 @@ func TestConsoleContactsOnlyCalls(t *testing.T) {
 	b.openTab("family")
 	b.waitFor(`!!document.querySelector('#view [data-family-numbers="input"]')`, 15*time.Second, "the number field")
 	b.eval(`(() => { const i = document.querySelector('#view [data-family-numbers="input"]');
-	  i.value = '079 123 45 67\n+1 555 0101'; i.dispatchEvent(new Event('input'));
+	  i.value = '079 000 00 01\n+1 555 0101'; i.dispatchEvent(new Event('input'));
 	  document.querySelector('#view [data-family-numbers="save"]').click(); })()`, nil)
-	want := []string{"+41791234567", "+15550101"}
+	want := []string{"+41790000001", "+15550101"}
 	deadline := time.Now().Add(10 * time.Second)
 	for !slices.Equal(h.familyNumbers(f.parent.Token).Numbers, want) {
 		if time.Now().After(deadline) {
@@ -88,7 +88,7 @@ func TestConsoleContactsOnlyCalls(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	b.waitFor(`!!document.querySelector('#view [data-family-number="+41791234567"]')`, 10*time.Second, "the saved number in the list")
+	b.waitFor(`!!document.querySelector('#view [data-family-number="+41790000001"]')`, 10*time.Second, "the saved number in the list")
 
 	// The switch, from the page, both ways.
 	policyOn := func() bool {

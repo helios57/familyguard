@@ -13,7 +13,7 @@ import org.junit.Test
  */
 class CallDecisionTest {
 
-    private val on = DesiredState(callsContactsOnly = true, familyNumbers = listOf("+41791234567", "+15550101"))
+    private val on = DesiredState(callsContactsOnly = true, familyNumbers = listOf("+41790000001", "+15550101"))
 
     /** A stand-in for PhoneNumberUtils with the SIM in Switzerland. */
     private val swiss: (String) -> String? = { raw ->
@@ -48,8 +48,8 @@ class CallDecisionTest {
 
     @Test
     fun familyNumberInNationalFormPasses() {
-        assertEquals(Verdict.ALLOW, CallDecision.decide(on, true, "079 123 45 67", swiss))
-        assertEquals(Verdict.ALLOW, CallDecision.decide(on, true, "0041791234567", swiss))
+        assertEquals(Verdict.ALLOW, CallDecision.decide(on, true, "079 000 00 01", swiss))
+        assertEquals(Verdict.ALLOW, CallDecision.decide(on, true, "0041790000001", swiss))
         assertEquals(Verdict.ALLOW, CallDecision.decide(on, true, "+1 555 0101", swiss))
     }
 
@@ -63,7 +63,7 @@ class CallDecisionTest {
     @Test
     fun `a number the normaliser cannot read is compared as it arrived`() {
         val noRead: (String) -> String? = { null }
-        assertEquals(Verdict.ALLOW, CallDecision.decide(on, true, "+41791234567", noRead))
+        assertEquals(Verdict.ALLOW, CallDecision.decide(on, true, "+41790000001", noRead))
         assertEquals(Verdict.REJECT, CallDecision.decide(on, true, "+15550199", noRead))
     }
 
@@ -71,5 +71,14 @@ class CallDecisionTest {
     fun `a normaliser that throws lets the call through`() {
         val broken: (String) -> String? = { error("no telephony") }
         assertEquals(Verdict.ALLOW, CallDecision.decide(on, true, "+15550199", broken))
+    }
+
+    @Test
+    fun `a national number the platform cannot read still matches its family number`() {
+        val unreadable: (String) -> String? = { null }
+        assertEquals(Verdict.ALLOW, CallDecision.decide(on, true, "079 000 00 01", unreadable))
+        assertEquals(Verdict.REJECT, CallDecision.decide(on, true, "079 000 00 09", unreadable))
+        // Too short to say whose it is: four digits must not match the end of every family number.
+        assertEquals(Verdict.REJECT, CallDecision.decide(on, true, "0001", unreadable))
     }
 }

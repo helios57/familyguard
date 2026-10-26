@@ -287,7 +287,7 @@ function familyNumbersCard(data) {
   const numbers = data.familyNumbers.numbers || [];
   const input = el('textarea', {
     rows: '3', 'data-family-numbers': 'input', 'aria-label': 'Nummern, eine pro Zeile', inputmode: 'tel',
-    autocomplete: 'off', spellcheck: 'false', placeholder: 'z. B. 079 123 45 67',
+    autocomplete: 'off', spellcheck: 'false', placeholder: 'z. B. 079 000 00 01',
   });
   input.value = numbers.join('\n');
   const save = el('button', { class: 'btn btn-primary', type: 'button', text: 'Nummern speichern', 'data-family-numbers': 'save', disabled: true });

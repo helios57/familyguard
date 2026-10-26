@@ -384,6 +384,9 @@ class Synchronizer(
                 return
             }
             log.acknowledge(batch.map { it.id })
+            // An acknowledgement that did not take (a full disk) would hand back the same batch for
+            // ever, with the sync waiting on it. The calls stay queued for the next sync instead.
+            if (log.pending().any { it.id == batch.first().id }) return
         }
     }
 

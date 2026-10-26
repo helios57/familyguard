@@ -266,9 +266,12 @@ func (s *Store) TouchDevice(ctx context.Context, deviceID uuid.UUID, st DeviceSt
 		     exact_alarms   = COALESCE(EXCLUDED.exact_alarms, device_state.exact_alarms),
 		     -- FR-23.4, the same rule: an older build's silence must not clear a measured false.
 		     alarm_full_screen = COALESCE(EXCLUDED.alarm_full_screen, device_state.alarm_full_screen),
-		     -- FR-31.4, the same rule; and held_at is set by the first yes and never moved or cleared,
-		     -- because it is what tells "taken away" from "not granted yet".
-		     call_screening = COALESCE(EXCLUDED.call_screening, device_state.call_screening),
+		     -- FR-31.4 is the exception to that rule. A build that can screen says nothing exactly
+		     -- while the parent's switch is off, and a build that cannot is refused the switch, so
+		     -- silence here means "not watching" — kept, a true from last week would read
+		     -- "Anrufschutz an" the moment the switch goes back on. held_at is set by the first yes
+		     -- and never moved or cleared, because it is what tells "taken away" from "not granted yet".
+		     call_screening = EXCLUDED.call_screening,
 		     call_screening_held_at = COALESCE(device_state.call_screening_held_at, EXCLUDED.call_screening_held_at),
 		     -- Same COALESCE rule again. A zero here is a real measurement — a phone whose filter
 		     -- is on and whose list compiled to nothing — and it must survive an older build's

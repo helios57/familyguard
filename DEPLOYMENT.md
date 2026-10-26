@@ -1050,7 +1050,7 @@ most 10, admins only:
 
 ```bash
 fgctl family-numbers                               # the list, as stored (E.164)
-fgctl family-numbers --set "+41 79 123 45 67,079 765 43 21"
+fgctl family-numbers --set "+41 79 000 00 01,079 000 00 02"   # +41 (0)79 … works too
 fgctl family-numbers --clear
 fgctl rejected-calls <device-id> [days]           # what the phone rejected, newest first
 ```
@@ -1077,6 +1077,11 @@ are not contacts. A rejected call does not ring and leaves no missed call and no
 notification — Android still lists it in the phone app's call log as *blocked*, which no app can
 prevent; it is listed on *Aktivität → Abgewiesene Anrufe* within seconds when the phone is
 online, and otherwise at its next sync.
+
+**Two exceptions, on purpose.** For two hours after the child dials an emergency number (117, 118,
+144, 112 …) every call rings, because the emergency centre calls back from a number nobody has
+saved. And a phone released with its recovery code rejects nothing, like everything else it stops
+enforcing.
 
 ## Push: waking a resting phone (FR-26.3)
 

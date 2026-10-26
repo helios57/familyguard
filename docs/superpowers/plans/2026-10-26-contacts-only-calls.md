@@ -77,7 +77,7 @@ hidden numbers (phone app switch, *nicht prüfbar*), SMS and WhatsApp (owner, 20
 - `rejected_calls(id, device_id → devices ON DELETE CASCADE, client_id TEXT, number TEXT, rejected_at TIMESTAMPTZ, UNIQUE(device_id, client_id))`; `POST /device/rejected-calls` body `{"calls":[{"id","number","at"}]}` (≤100 per request) → `{"accepted":n}`; `GET /devices/:id/rejected-calls?days=N` (everyone who sees Aktivität) → `{"calls":[{"number","at"}]}`; `Store.PruneRejectedCalls(ctx, olderThan)`, run with the location prune at 365 days.
 - 409 `devices_outdated` when PATCH sets `calls_contacts_only: true` and a phone of the child reports `0 < app_version_code < 56` (`firstBuildWithCallScreening = 56`).
 
-- [ ] e2e tests first: `TestFamilyNumbersAreNormalisedAndAdminOnly` (`079 123 45 67`→`+41791234567`, `0041 79…`, `+1 555 0101`; `12`, 11 numbers → 400; guardian 403), `TestContactsOnlySwitchReachesThePhone` (PATCH → desired state carries `calls_contacts_only` and `family_numbers`), `TestContactsOnlyIsRefusedWhileAPhoneIsOutdated`, `TestRejectedCallReportIsIdempotent`, `TestCallScreeningHeldIsRememberedOnceSeen`.
+- [ ] e2e tests first: `TestFamilyNumbersAreNormalisedAndAdminOnly` (`079 000 00 01`→`+41790000001`, `0041 79…`, `+1 555 0101`; `12`, 11 numbers → 400; guardian 403), `TestContactsOnlySwitchReachesThePhone` (PATCH → desired state carries `calls_contacts_only` and `family_numbers`), `TestContactsOnlyIsRefusedWhileAPhoneIsOutdated`, `TestRejectedCallReportIsIdempotent`, `TestCallScreeningHeldIsRememberedOnceSeen`.
 - [ ] Run → red. Implement. Green. Calibrate: normaliser keeps a leading `0`; `ON CONFLICT DO NOTHING` removed; `held_at` overwritten with NULL — each reddens its test.
 
 ### Task 3: Engines pass the two fields through

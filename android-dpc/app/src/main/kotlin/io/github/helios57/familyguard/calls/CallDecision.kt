@@ -24,7 +24,23 @@ object CallDecision {
         val e164 = runCatching { normalise(raw) }.getOrElse { return Verdict.ALLOW }
         // Unreadable by the platform is compared as it arrived, digits only: a family number the SIM's
         // country rules cannot parse must still match itself.
-        val candidates = setOfNotNull(e164, raw.filter { it.isDigit() || it == '+' }.ifEmpty { null })
-        return if (candidates.any { it in state.familyNumbers }) Verdict.ALLOW else Verdict.REJECT
+        val digits = raw.filter { it.isDigit() || it == '+' }
+        val candidates = setOfNotNull(e164, digits.ifEmpty { null })
+        if (candidates.any { it in state.familyNumbers }) return Verdict.ALLOW
+        if (e164 == null && nationalMatch(digits, state.familyNumbers)) return Verdict.ALLOW
+        return Verdict.REJECT
+    }
+
+    /**
+     * A national number (`079…`) the platform could not turn into E.164 is the family number whose
+     * E.164 form ends in the same digits after the 0, behind a one- to three-digit country code. That
+     * can let a stranger in another country with the same national digits ring; it cannot cut a parent
+     * off, which is the mistake that matters. Fewer than eight digits say too little to compare.
+     */
+    private fun nationalMatch(digits: String, family: List<String>): Boolean {
+        if (!digits.startsWith("0") || digits.startsWith("00")) return false
+        val national = digits.drop(1)
+        if (national.length < 8) return false
+        return family.any { it.startsWith("+") && it.endsWith(national) && it.length - national.length in 2..4 }
     }
 }

@@ -45,7 +45,14 @@ arrives, and the first breaks on every WhatsApp update. Both are rejected, under
   who cannot reach their child because a contact was deleted, which is the one failure this feature
   must never cause.
 - **Emergency callbacks always pass.** The platform does not screen in emergency-callback mode. This
-  is to be measured, not assumed.
+  is to be measured, not assumed. *Measured 2026-10-26, and it is not enough on its own:* Telecom's
+  `CallsManager` skips screening only for a call carrying `PROPERTY_EMERGENCY_CALLBACK_MODE` or
+  marked by the network as an emergency call, and call-back mode is a network and carrier matter.
+  On the API 37 emulator an outgoing 911 *was* passed to FamilyGuard's screening service
+  (`BIND_SCREENING`), so the phone itself knows. *Built:* for two hours after an outgoing emergency
+  call every incoming call rings — Android's own rule for its blocked numbers
+  (`KEY_DURATION_BLOCKING_DISABLED_AFTER_EMERGENCY_INT`, carrier default 7200 s). Not measured: a
+  real call-back on a real network.
 - **What parents see:** each rejected call is reported to the server as number and time, and the
   console's Aktivität shows "Abgewiesene Anrufe" per day. *My call:* without it, a feature that
   silently drops calls has no visible proof that it works, and a parent cannot spot a wrongly

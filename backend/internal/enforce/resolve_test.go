@@ -687,13 +687,13 @@ func ptr[T any](v T) *T { return &v }
 func TestContactsOnlyReachesTheEngine(t *testing.T) {
 	f := baseSource()
 	f.policy.CallsContactsOnly = true
-	f.familyNumbers = []string{"+41791234567", "+15550101"}
+	f.familyNumbers = []string{"+41790000001", "+15550101"}
 
 	got, in := resolve(t, f, time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC))
 	if !in.Settings.CallsContactsOnly || !slices.Equal(in.Settings.FamilyNumbers, f.familyNumbers) {
 		t.Errorf("settings carry switch %v and numbers %v", in.Settings.CallsContactsOnly, in.Settings.FamilyNumbers)
 	}
-	if !got.CallsContactsOnly || !slices.Equal(got.FamilyNumbers, []string{"+15550101", "+41791234567"}) {
+	if !got.CallsContactsOnly || !slices.Equal(got.FamilyNumbers, []string{"+15550101", "+41790000001"}) {
 		t.Errorf("the phone is told switch %v and numbers %v", got.CallsContactsOnly, got.FamilyNumbers)
 	}
 

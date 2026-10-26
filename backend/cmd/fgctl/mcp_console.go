@@ -87,7 +87,7 @@ type learningAppsArgs struct {
 }
 
 type familyNumbersArgs struct {
-	Numbers []string `json:"numbers" jsonschema:"the numbers that always get through, such as +41 79 123 45 67 or 079 123 45 67 (read as Switzerland); an empty list removes them all. At most 10"`
+	Numbers []string `json:"numbers" jsonschema:"the numbers that always get through, such as +41 79 000 00 01 or 079 000 00 01 (read as Switzerland); an empty list removes them all. At most 10"`
 }
 
 type addDeviceArgs struct {

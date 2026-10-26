@@ -18,14 +18,14 @@ import (
 
 const (
 	maxFamilyNumbers       = 10
-	familyNumberProblemMsg = "each number must be a phone number — +41 79 123 45 67, 0041 79 123 45 67 or " +
-		"079 123 45 67 (read as Switzerland) — with 8 to 15 digits, and there may be at most 10"
+	familyNumberProblemMsg = "each number must be a phone number — +41 79 000 00 01, 0041 79 000 00 01 or " +
+		"079 000 00 01 (read as Switzerland, nine digits after the 0) — with 8 to 15 digits, and there may be at most 10"
 	maxRejectedCallsPerReport = 100
 	maxRejectedCallNumber     = 64
 )
 
 // normalizeFamilyNumber turns what a parent types into E.164: spaces, dashes, dots and parentheses
-// go, a leading 00 becomes +, and a single leading 0 is a Swiss national number (the family has no
+// go, a leading 00 becomes +, a single leading 0 is a Swiss national number (the family has no
 // country of its own, and the only family this serves is Swiss). Anything else — letters, an
 // extension, too few or too many digits — is refused rather than guessed at, because a family
 // number stored wrong is a parent whose call the phone rejects.
@@ -52,8 +52,18 @@ func normalizeFamilyNumber(raw string) (string, bool) {
 	default:
 		return "", false
 	}
+	// "+41 (0)79 …" is how a Swiss number is printed under an email signature, and the 0 in it is the
+	// national prefix that E.164 does not carry. Kept, it is a number the phone never sees ring.
+	if strings.HasPrefix(n, "+410") {
+		n = "+41" + n[4:]
+	}
 	digits := n[1:]
 	if len(digits) < 8 || len(digits) > 15 || digits[0] == '0' {
+		return "", false
+	}
+	// A Swiss number is nine digits after +41. Anything else under +41 is a foreign number typed in
+	// its own national form and read as Swiss, which is a number nobody has.
+	if strings.HasPrefix(n, "+41") && len(n) != len("+41")+9 {
 		return "", false
 	}
 	return n, true

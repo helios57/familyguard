@@ -3,6 +3,9 @@ package io.github.helios57.familyguard.calls
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 /**
  * FR-31.5: the rejected calls waiting to reach the server. Like a sitting, a rejected call is an
@@ -52,5 +55,41 @@ class RejectedCallLogTest {
         val pending = log.pending()
         assertEquals(RejectedCallLog.MAX, pending.size)
         assertTrue(pending.first().atMillis == 5L && pending.last().atMillis == (RejectedCallLog.MAX + 4).toLong())
+    }
+
+    @Test(timeout = 10_000)
+    fun `a call rejected while the synchroniser acknowledges is not lost`() {
+        // The screening service and the synchroniser each hold a log over the one encrypted file.
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val shared = object : RejectedCallStore {
+            @Volatile var calls: List<RejectedCall> = emptyList()
+            @Volatile var holdNextSave = false
+            override fun load() = calls
+            override fun save(calls: List<RejectedCall>) {
+                if (holdNextSave) {
+                    holdNextSave = false
+                    entered.countDown()
+                    release.await(2, TimeUnit.SECONDS)
+                }
+                this.calls = calls
+            }
+        }
+        val synchroniser = RejectedCallLog(shared) { "s-${++next}" }
+        val service = RejectedCallLog(shared) { "c-${++next}" }
+        synchroniser.add("+15550199", 1_000L)
+        val sent = synchroniser.pending()
+
+        shared.holdNextSave = true
+        val ack = thread { synchroniser.acknowledge(sent.map { it.id }) }
+        entered.await()
+        val add = thread {
+            service.add("+15550188", 2_000L)
+            release.countDown()
+        }
+        add.join()
+        ack.join()
+
+        assertEquals(listOf("+15550188"), shared.calls.map { it.number })
     }
 }

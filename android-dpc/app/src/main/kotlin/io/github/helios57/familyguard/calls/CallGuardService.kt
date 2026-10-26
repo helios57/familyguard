@@ -7,6 +7,8 @@ import android.telephony.PhoneNumberUtils
 import android.telephony.TelephonyManager
 import android.util.Log
 import io.github.helios57.familyguard.enforce.EnforcementEngine
+import io.github.helios57.familyguard.recovery.AndroidRecoveryStore
+import io.github.helios57.familyguard.recovery.RecoveryMode
 import io.github.helios57.familyguard.sync.ConnectionService
 import io.github.helios57.familyguard.sync.EncryptedPolicyCache
 import java.util.Locale
@@ -29,34 +31,33 @@ class CallGuardService : CallScreeningService() {
 
     override fun onScreenCall(details: Call.Details) {
         worker.execute {
-            val verdict = runCatching { screen(details) }
-                .onFailure { Log.w(TAG, "screening failed, letting the call through", it) }
-                .getOrDefault(Verdict.ALLOW)
-            respond(details, verdict)
+            CallScreening(
+                policy = { EncryptedPolicyCache(this).load()?.let { EnforcementEngine.compute(it) } },
+                released = { RecoveryMode(AndroidRecoveryStore(this).mode).active() },
+                normalise = { PhoneNumberUtils.formatNumberToE164(it, simCountry(this)) },
+                record = { number ->
+                    val shown = runCatching { PhoneNumberUtils.formatNumberToE164(number, simCountry(this)) }.getOrNull() ?: number
+                    rejectedCalls(this).add(shown, System.currentTimeMillis())
+                    // A sync now, so the parent sees the call in seconds rather than at the next interval. A
+                    // device owner may start its foreground service from here; if the platform refuses, the
+                    // call waits in the queue for the next sync, which is all it would have done anyway.
+                    runCatching { ConnectionService.wake(this, ConnectionService.ACTION_CALL_GUARD) }
+                },
+                warn = { message, e -> Log.w(TAG, message, e) },
+                isEmergency = { getSystemService(TelephonyManager::class.java)?.isEmergencyNumber(it) == true },
+                emergency = PreferencesEmergencyMark(this),
+            ).screen(
+                incoming = details.callDirection == Call.Details.DIRECTION_INCOMING,
+                number = details.handle?.schemeSpecificPart,
+            ) { respond(details, it) }
         }
-    }
-
-    private fun screen(details: Call.Details): Verdict {
-        val state = EncryptedPolicyCache(this).load()?.let { EnforcementEngine.compute(it) }
-        val number = details.handle?.schemeSpecificPart
-        val incoming = details.callDirection == Call.Details.DIRECTION_INCOMING
-        val country = simCountry(this)
-        val verdict = CallDecision.decide(state, incoming, number) { PhoneNumberUtils.formatNumberToE164(it, country) }
-        if (verdict == Verdict.REJECT && number != null) {
-            val shown = runCatching { PhoneNumberUtils.formatNumberToE164(number, country) }.getOrNull() ?: number
-            rejectedCalls(this).add(shown, System.currentTimeMillis())
-            // A sync now, so the parent sees the call in seconds rather than at the next interval. A
-            // device owner may start its foreground service from here; if the platform refuses, the
-            // call waits in the queue for the next sync, which is all it would have done anyway.
-            runCatching { ConnectionService.wake(this, ConnectionService.ACTION_CALL_GUARD) }
-        }
-        return verdict
     }
 
     private fun respond(details: Call.Details, verdict: Verdict) {
         val response = if (verdict == Verdict.REJECT) {
-            // No ring, no entry in the call log, no missed-call notification: a stranger's call simply
-            // did not happen on this phone. The console is where it is visible (FR-31.5).
+            // No ring and no missed-call notification. Android lists the call in the call log as
+            // blocked whatever setSkipCallLog says (measured, FR-31.2); the console is where the parent
+            // sees it (FR-31.5).
             CallResponse.Builder()
                 .setDisallowCall(true)
                 .setRejectCall(true)
@@ -83,6 +84,17 @@ class CallGuardService : CallScreeningService() {
             val iso = tm?.simCountryIso?.takeIf { it.isNotBlank() } ?: tm?.networkCountryIso?.takeIf { it.isNotBlank() }
             return (iso ?: "ch").uppercase(Locale.ROOT)
         }
+
+        /** Plain preferences: an instant is not sensitive, and this must be readable within Telecom's five seconds. */
+        private class PreferencesEmergencyMark(context: Context) : EmergencyMark {
+            private val prefs = context.applicationContext.getSharedPreferences("call_guard", Context.MODE_PRIVATE)
+            override fun last(): Long? = prefs.getLong(KEY_EMERGENCY_AT, -1L).takeIf { it >= 0 }
+            override fun set(atMillis: Long) {
+                prefs.edit().putLong(KEY_EMERGENCY_AT, atMillis).commit()
+            }
+        }
+
+        private const val KEY_EMERGENCY_AT = "emergency_dialled_at"
 
         fun rejectedCalls(context: Context) = RejectedCallLog(EncryptedRejectedCallStore(context.applicationContext)) {
             UUID.randomUUID().toString()
