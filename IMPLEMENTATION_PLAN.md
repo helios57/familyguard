@@ -9691,3 +9691,73 @@ plus 1m30s. Green on API 37 (3m3s on 2 learned minutes) and API 33 (3m2s).
 | the pacing returns the cadence again (`return every`) | emulator learning (API 37) | **red**: *ran 5m2s on 2m0s learned: … 3m2s late* |
 
 **2 probes, 2 red. Cumulative: 554.**
+
+## Phase 62 — only contacts may call (0.6.47, FR-31)
+
+The owner wanted strangers unable to call the children (*"I just don't want strangers to call
+them"*), the children free to add contacts, and the family's own numbers always through. Design:
+`docs/superpowers/specs/2026-10-25-contacts-only-blocker-design.md`; plan:
+`docs/superpowers/plans/2026-10-26-contacts-only-calls.md`.
+
+**The server.** A per-child switch `calls_contacts_only` (off; refused with 409 `devices_outdated`
+while a phone of the child reports a build before 56), a per-family list of up to 10 family numbers
+stored as E.164 (`079…` read as Switzerland), `POST /device/rejected-calls` (idempotent on the
+phone's own id; the answer counts new rows only), a heartbeat `call_screening` that keeps the first
+time it was true, and one year of rejected calls. Console: the switch and what it cannot check on
+*Regeln › Schutz*, the numbers on *Familie*, *Abgewiesene Anrufe* on *Aktivität*, amber/red on the
+phone row. `fgctl family-numbers`, `fgctl rejected-calls`, MCP `get/set_family_numbers`,
+`get_rejected_calls`.
+
+**The phone.** `CallGuardService` is the platform's `CallScreeningService`; Telecom asks it only
+about numbers that are not contacts, so the phone never reads the contacts. `CallDecision` rejects
+an incoming call while the switch is on unless the number is a family number in any spelling the
+SIM's country reads, and lets everything it cannot decide through. A rejected call is queued
+encrypted and reported after the next heartbeat; a rejection also wakes a sync. While the switch is
+on and the role is not held the phone shows *Anrufschutz einrichten*, which opens the role dialog;
+from Android 14 a held role is locked with `disallow_config_default_apps`, never before it is held.
+
+**What a device showed that the plan had wrong.** Android logs every call a screening app rejects
+in the call log as **BLOCKED** (type 6), whatever `setSkipCallLog` says — the platform documents
+that, and the API 37 emulator did it. FR-31.2 said *no call-log entry*; it now says no missed call
+and no missed-call notification, and that the call is listed as blocked. And `setSkipNotification`
+does not bind on this dialer: a blocked call posted no missed-call notification with the flag
+`false` either (probe below), so the emulator test measures the child's outcome, not the flag.
+
+Not built, by ruling (see the plan's ledger): hidden numbers (they never reach a screening app; the
+phone app's own switch is a setup step, and the console says *nicht prüfbar*), SMS and WhatsApp
+(set by hand on both phones, owner 2026-10-26), and a "the service last answered" signal.
+
+### 62.1 — tests and calibration
+
+Server: `calls_test.go` (normalising, admins only, the 409 by build, idempotent upload, held_at kept,
+retention), `calls_cli_test.go` (fgctl + MCP), `calls_console_test.go` (360 and 1440 px), audit and
+emptiness additions; 88 shared vectors. Phone: `CallDecisionTest` (8), `RejectedCallLogTest` (4),
+`CallGuardRestrictionTest` (10), 6 new `SynchronizerTest` cases; 1099 unit tests. On a device:
+`tests/android/calls.sh` — a contact rings, a stranger is rejected (RINGING never seen in Telecom's
+call list, logged only as BLOCKED, no missed-call notification while the family number's unanswered
+call adds one, listed on the console), a family number that is not a contact rings in national form,
+the switch off lets a stranger ring, and the role is reported not held → held → lost, with
+`disallow_config_default_apps` following it on API 34+. Green on API 37 (175 s) and API 33 (150 s).
+
+| probe | test | result |
+|---|---|---|
+| a national `0` kept after `+41` | `calls_test.go` | **red**: *stored [+410791234567 …]* |
+| a re-sent call updated instead of ignored (`DO UPDATE`) | `calls_test.go` | **red**: *a re-send was accepted as 2 new calls, want 0* |
+| the phone's call id made unique per send | `calls_test.go` | **red**: *stored 4 rejected calls after a re-send, want 2* |
+| `call_screening_held_at` overwritten by every beat | `calls_test.go` | **red**: *taken away: … held_at=null* |
+| the first build that can screen lowered to 55 | `calls_test.go` | **red**: *expected 409, got 200* |
+| the amber line shown only once held | `calls_console_test.go` | **red**: *the phone row's warning never happened* |
+| outgoing calls screened too | `CallDecisionTest` | **red** |
+| the SIM's normaliser ignored | `CallDecisionTest` | **red**: the national family number |
+| no policy rejects | `CallDecisionTest` | **red** |
+| the default-apps lock from API 33 | `CallGuardRestrictionTest` | **red** |
+| the lock's key misspelt | `RestrictionKeysMatchThePlatformTest` | **red** |
+| the heartbeat's `call_screening` dropped | `SynchronizerTest` | **red** |
+| a 400 keeps the batch | `SynchronizerTest` | **red**: *malformed is dropped* |
+| `CallDecision` lets strangers through | emulator calls (API 37) | **red**: *a stranger's call: rang, want it rejected* |
+| `setSkipNotification(false)` | emulator calls (API 37) | **green** — the dialer posts no missed-call notification for a blocked call either way; the assertion binds to the outcome, not the flag |
+
+**15 probes, 14 red, 1 green that is recorded as not binding. Cumulative: 569.**
+
+Not measured: a real SIM on a real network, a hidden-number call, and Samsung's own dialer, which
+is the owner's to check on the two phones.

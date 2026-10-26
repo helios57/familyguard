@@ -2253,7 +2253,7 @@ class ConnectionService : Service() {
         /** FR-26.3: a new push token; sync so the heartbeat carries it. */
         const val ACTION_PUSH_TOKEN = "io.github.helios57.familyguard.PUSH_TOKEN"
 
-        /** FR-31.4: the call-screening role dialog closed; sync so the console sees the answer. */
+        /** FR-31: the role dialog closed, or a call was rejected; sync so the console sees it. */
         const val ACTION_CALL_GUARD = "io.github.helios57.familyguard.CALL_GUARD"
 
         /** Starts the service for one of the wake-ups above. */

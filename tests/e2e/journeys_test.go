@@ -72,6 +72,9 @@ type deviceStateDTO struct {
 	ExactAlarms *bool `json:"exact_alarms"`
 	// FR-23.4: whether the phone may show the alarm over the lock screen.
 	AlarmFullScreen *bool `json:"alarm_full_screen"`
+	// FR-31.4: whether the phone holds the call-screening role, and when it first said so.
+	CallScreening       *bool      `json:"call_screening"`
+	CallScreeningHeldAt *time.Time `json:"call_screening_held_at"`
 
 	// Why the last self-update did not install anything, in the platform's own words (FR-15.7).
 	// Empty is "nothing to report", which is also what an older DPC that cannot report sends.

@@ -1055,8 +1055,9 @@ any way"*, *"It's fine if the kids add it, I just don't want strangers to call t
   so turning it on is refused (409 `devices_outdated`, naming the phone) while any of the child's
   phones reports such a build; a phone that has not reported its build yet does not block it.
 - FR-31.2 **A call from a stranger does not ring.** While the switch is on, the phone rejects every
-  incoming call from a number that is not one of its own contacts: no ring, no call-log entry, no
-  missed-call notification. The contacts are the phone's own, which the child may edit; FamilyGuard
+  incoming call from a number that is not one of its own contacts: no ring, no missed call and no
+  missed-call notification. Android itself still records the call in the call log as *blocked*,
+  whatever the screening app asks (measured on the emulator, 2026-10-26). The contacts are the phone's own, which the child may edit; FamilyGuard
   never reads them — the platform passes only non-contacts to it. Outgoing calls are never touched,
   and a call is let through whenever the phone cannot decide (no policy yet, no number, an error).
 - FR-31.3 **Family numbers always get through**, even when a child has deleted or never saved them:

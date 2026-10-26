@@ -7,6 +7,7 @@ import android.telephony.PhoneNumberUtils
 import android.telephony.TelephonyManager
 import android.util.Log
 import io.github.helios57.familyguard.enforce.EnforcementEngine
+import io.github.helios57.familyguard.sync.ConnectionService
 import io.github.helios57.familyguard.sync.EncryptedPolicyCache
 import java.util.Locale
 import java.util.UUID
@@ -44,6 +45,10 @@ class CallGuardService : CallScreeningService() {
         if (verdict == Verdict.REJECT && number != null) {
             val shown = runCatching { PhoneNumberUtils.formatNumberToE164(number, country) }.getOrNull() ?: number
             rejectedCalls(this).add(shown, System.currentTimeMillis())
+            // A sync now, so the parent sees the call in seconds rather than at the next interval. A
+            // device owner may start its foreground service from here; if the platform refuses, the
+            // call waits in the queue for the next sync, which is all it would have done anyway.
+            runCatching { ConnectionService.wake(this, ConnectionService.ACTION_CALL_GUARD) }
         }
         return verdict
     }

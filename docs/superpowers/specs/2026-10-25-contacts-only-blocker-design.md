@@ -37,7 +37,9 @@ arrives, and the first breaks on every WhatsApp update. Both are rejected, under
 - A new per-child policy switch **"Nur Kontakte dürfen anrufen"**, off by default. It is set through
   the console (child page), the API and MCP `set_policy`, like every other policy field.
 - When it is on, the DPC holds the call-screening role and **rejects every incoming call that is not
-  from a contact**: no ring, no call-log entry, no missed-call notification for the child.
+  from a contact**: no ring, no missed call, no missed-call notification for the child.
+  *(Corrected 2026-10-26: "no call-log entry" cannot hold — Android logs every screened-out call
+  as BLOCKED whatever `setSkipCallLog` says; measured on the API 37 emulator.)*
 - **Family numbers always pass.** A family-wide list of numbers (the parents', set by an admin) is
   allowed even when the child has deleted or never saved them. *My call:* the alternative is a parent
   who cannot reach their child because a contact was deleted, which is the one failure this feature
@@ -118,7 +120,7 @@ The emulator has a real Telecom stack and a simulated modem:
   `dumpsys telecom`, never from the app's own claim.
 - Cases:
   - a contact rings;
-  - a stranger does not ring and leaves no call-log entry;
+  - a stranger does not ring, is logged only as blocked, and leaves no missed-call notification;
   - a family number that is not a contact rings;
   - switch off: a stranger rings (the negative control);
   - role removed on API 33: the phone reports it.

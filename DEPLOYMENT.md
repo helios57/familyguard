@@ -1039,6 +1039,45 @@ The phone measures the minutes itself, so they count offline, but only with **us
 (see [the grants Device Owner does not give you](#the-grants-device-owner-does-not-give-you)): a
 phone without it learns nothing and says *screen time NOT MEASURED* in its log.
 
+## Only contacts may call (FR-31)
+
+The switch is per child and off by default: console *Regeln → Schutz → Nur Kontakte dürfen anrufen*,
+or `set_policy {"child_id": …, "calls_contacts_only": true}`. It is refused (409 `devices_outdated`)
+while one of the child's phones still runs a build before 0.6.47 — update the phone first.
+
+**Family numbers** get through even when a child has deleted the contact. One list per family, at
+most 10, admins only:
+
+```bash
+fgctl family-numbers                               # the list, as stored (E.164)
+fgctl family-numbers --set "+41 79 123 45 67,079 765 43 21"
+fgctl family-numbers --clear
+fgctl rejected-calls <device-id> [days]           # what the phone rejected, newest first
+```
+
+MCP: `get_family_numbers`, `set_family_numbers {"numbers": [...]}`, `get_rejected_calls`.
+
+**On each phone, once, by a person** — none of this can be set by a device owner:
+
+1. After the switch is turned on, the phone shows *Anrufschutz einrichten*. Tap it and choose
+   FamilyGuard in the dialog. Until then the console's phone row reads *Anrufschutz: wartet auf
+   Freigabe am Handy* (amber); afterwards it is quiet. *Anrufschutz aus* (red) means the role was
+   held and has been taken away: tap the notification again. From Android 14 the phone also locks
+   the default-apps settings while the role is held, so the child cannot take it away there.
+2. In the phone app's settings, switch on blocking of unknown / private numbers (on Samsung under
+   *Nummern blockieren*; the wording differs between versions). Calls from a hidden number never
+   reach FamilyGuard; this switch is the only thing that stops them, and FamilyGuard cannot read
+   whether it is on.
+3. SMS: the messages app's own blocking and spam protection. WhatsApp: its privacy settings for
+   calls from unknown numbers and for who may add the child to groups. Neither is something
+   FamilyGuard can enforce or read.
+
+The phone never reads the contacts: Android hands the screening app only calls from numbers that
+are not contacts. A rejected call does not ring and leaves no missed call and no missed-call
+notification — Android still lists it in the phone app's call log as *blocked*, which no app can
+prevent; it is listed on *Aktivität → Abgewiesene Anrufe* within seconds when the phone is
+online, and otherwise at its next sync.
+
 ## Push: waking a resting phone (FR-26.3)
 
 With the screen off a phone lets go of its connection and checks in every 5 minutes (FR-26.2). With
