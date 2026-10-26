@@ -63,6 +63,8 @@ func commands() []command {
 		{"apps", "", "the APKs this deployment hosts", true, cmdApps},
 		{"blocklist", "", "the family-wide blocked packages", true, cmdBlocklist},
 		{"learning-apps", "[--set prefix,prefix | --clear]", "the package prefixes whose apps are free and earn Bonuszeit", true, cmdLearningApps},
+		{"family-numbers", "[--set number,number | --clear]", "the numbers that always get through (only contacts may call)", true, cmdFamilyNumbers},
+		{"rejected-calls", "<device-id> [days]", "calls the phone rejected: neither a contact nor a family number", true, cmdRejectedCalls},
 		{"usage", "<device-id>", "reported screen time", true, cmdUsage},
 		{"locations", "<device-id>", "reported locations", true, cmdLocations},
 		{"live", "<device-id> [--start [--minutes N] | --stop]", "Live: the phone stays connected and reports its position every 10 s (default 30 min)", true, cmdLive},
@@ -448,6 +450,7 @@ func cmdPolicy(ctx context.Context, env *environment, args []string) error {
 		fmt.Fprintf(w, "bedtime\t%s\n", bedtime)
 		fmt.Fprintf(w, "timezone\t%s\n", pol.Timezone)
 		fmt.Fprintf(w, "YouTube blocked\t%v\n", pol.YouTubeBlocked)
+		fmt.Fprintf(w, "only contacts may call\t%v\n", pol.CallsContactsOnly)
 		fmt.Fprintf(w, "child installs\t%v\n", pol.AllowChildInstalls)
 		fmt.Fprintf(w, "debugging allowed\t%v\n", pol.AllowDebugging)
 		fmt.Fprintf(w, "uninstall allowed\t%v\n", pol.AllowUninstall)
@@ -570,6 +573,74 @@ func cmdLearningApps(ctx context.Context, env *environment, args []string) error
 		fmt.Fprintln(w, "PREFIX\tINSTALLED APPS")
 		for _, p := range body.Prefixes {
 			fmt.Fprintf(w, "%s\t%d\n", p, body.Matches[p])
+		}
+	})
+}
+
+// cmdFamilyNumbers reads or replaces the family numbers (FR-31.3).
+func cmdFamilyNumbers(ctx context.Context, env *environment, args []string) error {
+	var body struct {
+		Numbers []string `json:"numbers"`
+	}
+	switch {
+	case len(args) == 0:
+		if err := env.client.Get(ctx, "/api/v1/family/family-numbers", &body); err != nil {
+			return err
+		}
+	case len(args) == 2 && args[0] == "--set", len(args) == 1 && args[0] == "--clear":
+		numbers := []string{}
+		if args[0] == "--set" {
+			numbers = strings.Split(args[1], ",")
+		}
+		if err := env.client.Do(ctx, http.MethodPut, "/api/v1/family/family-numbers",
+			map[string]any{"numbers": numbers}, &body); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("usage: fgctl family-numbers [--set number,number | --clear]")
+	}
+	return env.emit(body, func(w *tabwriter.Writer) {
+		if len(body.Numbers) == 0 {
+			fmt.Fprintln(w, "no family numbers")
+			return
+		}
+		fmt.Fprintln(w, "NUMBER")
+		for _, n := range body.Numbers {
+			fmt.Fprintln(w, n)
+		}
+	})
+}
+
+// cmdRejectedCalls lists the calls a phone rejected (FR-31.5), newest first.
+func cmdRejectedCalls(ctx context.Context, env *environment, args []string) error {
+	if len(args) < 1 || len(args) > 2 {
+		return fmt.Errorf("usage: fgctl rejected-calls <device-id> [days]")
+	}
+	days := 7
+	if len(args) == 2 {
+		n, err := strconv.Atoi(args[1])
+		if err != nil || n < 1 || n > 365 {
+			return fmt.Errorf("days must be a number from 1 to 365")
+		}
+		days = n
+	}
+	var body struct {
+		Calls []struct {
+			Number string `json:"number"`
+			At     string `json:"at"`
+		} `json:"calls"`
+	}
+	if err := env.client.Get(ctx, fmt.Sprintf("/api/v1/devices/%s/rejected-calls?days=%d", args[0], days), &body); err != nil {
+		return err
+	}
+	return env.emit(body, func(w *tabwriter.Writer) {
+		if len(body.Calls) == 0 {
+			fmt.Fprintln(w, "no rejected calls")
+			return
+		}
+		fmt.Fprintln(w, "TIME\tNUMBER")
+		for _, c := range body.Calls {
+			fmt.Fprintf(w, "%s\t%s\n", c.At, c.Number)
 		}
 	})
 }

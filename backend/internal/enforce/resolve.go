@@ -46,6 +46,7 @@ type Source interface {
 	EarnedCredits(ctx context.Context, childID uuid.UUID, since string) ([]earned.Credit, error)
 	EarnedSpentByDay(ctx context.Context, childID uuid.UUID, since string) (map[string]int, error)
 	LearningPrefixes(ctx context.Context) ([]string, error)
+	FamilyNumbers(ctx context.Context) ([]string, error)
 	LearningCredits(ctx context.Context, childID uuid.UUID, since string, excludeDevice uuid.UUID, excludeDay string) ([]earned.Credit, error)
 	LearningMinutesForDay(ctx context.Context, deviceID uuid.UUID, day string) (int, error)
 	HomePackages(ctx context.Context, deviceID uuid.UUID) ([]string, error)
@@ -183,6 +184,10 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 	if err != nil {
 		return nil, nil, fmt.Errorf("learning prefixes: %w", err)
 	}
+	familyNumbers, err := r.src.FamilyNumbers(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("family numbers: %w", err)
+	}
 	bonus, err := r.src.BonusMinutes(ctx, dev.ChildID, day)
 	if err != nil {
 		return nil, nil, fmt.Errorf("bonus: %w", err)
@@ -249,8 +254,11 @@ func (r *Resolver) Resolve(ctx context.Context, deviceID uuid.UUID, now time.Tim
 			EarnedAvailableMinutes: balance.AvailableToday,
 			// FR-30: the family's learning apps, and what this phone has learned today.
 			LearningPrefixes: learningPrefixes,
-			BlockedDomains:   domains,
-			ManagedApps:      r.managedApps(managed),
+			// FR-31: only contacts may call, and the numbers that always get through.
+			CallsContactsOnly: pol.CallsContactsOnly,
+			FamilyNumbers:     familyNumbers,
+			BlockedDomains:    domains,
+			ManagedApps:       r.managedApps(managed),
 		},
 		Installed:            installedApps(apps),
 		UsedMinutesByPackage: usedByPackage,

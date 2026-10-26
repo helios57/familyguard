@@ -259,6 +259,8 @@ type patchPolicyRequest struct {
 	AdFilter          *bool   `json:"ad_filter"`
 	AdFilterListURL   *string `json:"ad_filter_list_url"`
 	Timezone          *string `json:"timezone"`
+	// CallsContactsOnly is FR-31's switch: only contacts and family numbers may call.
+	CallsContactsOnly *bool `json:"calls_contacts_only"`
 }
 
 func (s *Server) patchPolicy(c *gin.Context) {
@@ -325,6 +327,17 @@ func (s *Server) patchPolicy(c *gin.Context) {
 			return
 		}
 	}
+	if req.CallsContactsOnly != nil && *req.CallsContactsOnly {
+		if stale, err := s.phonesBefore(c.Request.Context(), childID, firstBuildWithCallScreening); err != nil {
+			s.fail(c, err)
+			return
+		} else if len(stale) > 0 {
+			failWith(c, http.StatusConflict, "devices_outdated",
+				"only contacts may call needs FamilyGuard 0.6.47 or later on every phone, and "+
+					strings.Join(stale, ", ")+" runs an older build that lets every call through — update it first")
+			return
+		}
+	}
 	pol, err := s.store.UpdatePolicy(c.Request.Context(), childID, store.PolicyUpdate{
 		TrackingOnly:       req.TrackingOnly,
 		AllowChildInstalls: req.AllowChildInstalls,
@@ -340,6 +353,7 @@ func (s *Server) patchPolicy(c *gin.Context) {
 		AdFilter:           req.AdFilter,
 		AdFilterListURL:    req.AdFilterListURL,
 		Timezone:           req.Timezone,
+		CallsContactsOnly:  req.CallsContactsOnly,
 	})
 	if err != nil {
 		s.fail(c, err)
@@ -608,13 +622,24 @@ func (s *Server) phonesReadingZeroAsNoLimit(ctx context.Context, childID uuid.UU
 	if !on || limit != 0 {
 		return nil, nil
 	}
+	return s.phonesBefore(ctx, childID, firstBuildWithOnAtZero)
+}
+
+// firstBuildWithCallScreening is the DPC build (0.6.47) that screens calls (FR-31.1). Before it the
+// switch is a setting no phone acts on.
+const firstBuildWithCallScreening = 56
+
+// phonesBefore names the child's phones that reported a build older than build, as "name (version)".
+// A phone that has not reported its build yet is not named, for the reason phonesReadingZeroAsNoLimit
+// gives.
+func (s *Server) phonesBefore(ctx context.Context, childID uuid.UUID, build int64) ([]string, error) {
 	devices, err := s.store.ListDevices(ctx, &childID, s.cfg.DeviceOfflineAfter)
 	if err != nil {
 		return nil, err
 	}
 	var stale []string
 	for _, d := range devices {
-		if code := d.State.AppVersionCode; code > 0 && code < firstBuildWithOnAtZero {
+		if code := d.State.AppVersionCode; code > 0 && code < build {
 			stale = append(stale, fmt.Sprintf("%s (%s)", d.Name, d.State.AppVersionName))
 		}
 	}

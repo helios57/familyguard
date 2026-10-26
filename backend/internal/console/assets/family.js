@@ -7,7 +7,7 @@
 
 async function loadFamily() {
   const isPrimary = state.parent && state.parent.role === 'PRIMARY_ADMIN';
-  const [parents, keys, cli, holidays, signIns, learning] = await Promise.all([
+  const [parents, keys, cli, holidays, signIns, learning, familyNumbers] = await Promise.all([
     api('/parents'),
     // Only a primary admin may list keys, so anyone else gets a 403 rather than an empty list. The
     // catch keeps the whole page from failing on a call the reader was never entitled to make.
@@ -22,17 +22,19 @@ async function loadFamily() {
     api('/sign-ins'),
     // Admins only (FR-30.1); tolerated as absent so the rest of the page still draws.
     isAdmin() ? api('/family/learning-prefixes').catch(() => null) : Promise.resolve(null),
+    // Admins only (FR-31.3), the same way.
+    isAdmin() ? api('/family/family-numbers').catch(() => null) : Promise.resolve(null),
   ]);
   return {
     parents: parents.parents || [], keys: keys && (keys.api_keys || []), isPrimary, cli,
-    holidays: holidays.holidays || [], signIns: signIns.sign_ins || [], learning,
+    holidays: holidays.holidays || [], signIns: signIns.sign_ins || [], learning, familyNumbers,
   };
 }
 
 function renderFamily(data) {
   return [el('div', { class: 'cols' },
     el('div', { class: 'col' }, peopleCard(data), childrenCard(), youCard(data)),
-    el('div', { class: 'col' }, learningCard(data), holidaysCard(data), apiKeysCard(data), cliCard(data.cli)))];
+    el('div', { class: 'col' }, learningCard(data), familyNumbersCard(data), holidaysCard(data), apiKeysCard(data), cliCard(data.cli)))];
 }
 
 VIEWS.family = {
@@ -272,6 +274,42 @@ function learningCard(data) {
       : el('p', { class: 'muted', text: 'Noch keine Lern-Apps.' }),
     el('label', { for: 'learning-prefixes', text: 'Präfixe, eines pro Zeile' }),
     Object.assign(input, { id: 'learning-prefixes' }),
+    el('div', { class: 'row' }, el('span'), save));
+}
+
+/* ---- family numbers (FR-31.3) --------------------------------------------- */
+
+/* The numbers that always get through to every child, even with "Nur Kontakte dürfen anrufen" on and
+ * the number not saved on the phone — a parent's mobile, the grandparents. The server stores them as
+ * +41…, so the list shows what a phone will compare against, not what was typed. */
+function familyNumbersCard(data) {
+  if (!data.familyNumbers) return null;
+  const numbers = data.familyNumbers.numbers || [];
+  const input = el('textarea', {
+    rows: '3', 'data-family-numbers': 'input', 'aria-label': 'Nummern, eine pro Zeile', inputmode: 'tel',
+    autocomplete: 'off', spellcheck: 'false', placeholder: 'z. B. 079 123 45 67',
+  });
+  input.value = numbers.join('\n');
+  const save = el('button', { class: 'btn btn-primary', type: 'button', text: 'Nummern speichern', 'data-family-numbers': 'save', disabled: true });
+  input.addEventListener('input', () => { save.disabled = false; });
+  save.addEventListener('click', async () => {
+    // One number per line: a number may itself contain spaces, so only lines and commas separate.
+    const body = { numbers: input.value.split(/[\n,;]+/).map((n) => n.trim()).filter(Boolean) };
+    const saved = await act('Familien-Nummern gespeichert', () => api('/family/family-numbers', { method: 'PUT', body }));
+    if (!saved) return;
+    if (state.dataView === 'family') state.data.familyNumbers = saved;
+    redraw();
+  });
+  return el('div', { class: 'card family-numbers-card' },
+    el('div', { class: 'card-head' }, el('h2', { text: 'Familien-Nummern' })),
+    help('Diese Nummern kommen immer durch, auch wenn nur Kontakte anrufen dürfen.',
+      'Für jedes Kind, auch wenn die Nummer auf seinem Handy nicht gespeichert oder gelöscht ist. Höchstens 10. 079…, 0041… und +41… gehen alle; eine Nummer mit einer 0 vorne gilt als Schweizer Nummer.'),
+    numbers.length
+      ? el('ul', { class: 'list' }, numbers.map((n) => el('li', { 'data-family-number': n },
+        el('span', { class: 'label' }, el('b', { text: n })))))
+      : el('p', { class: 'muted', text: 'Noch keine Familien-Nummern.' }),
+    el('label', { for: 'family-numbers', text: 'Nummern, eine pro Zeile' }),
+    Object.assign(input, { id: 'family-numbers' }),
     el('div', { class: 'row' }, el('span'), save));
 }
 

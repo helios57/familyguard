@@ -295,6 +295,8 @@ object EnforcementEngine {
             adFilterListUrl = input.settings.adFilterListUrl.trim(),
             allowInstalls = input.settings.allowChildInstalls,
             managedApps = normalizeManagedApps(input.settings.managedApps),
+            callsContactsOnly = input.settings.callsContactsOnly,
+            familyNumbers = input.settings.familyNumbers.map { it.trim() }.filter { it.isNotEmpty() }.toSortedSet().toList(),
             userRestrictions = restrictions.toList(),
             quotaMinutes = quota,
             usedMinutes = input.usedMinutesToday,
@@ -721,6 +723,10 @@ data class Settings(
     @SerialName("daily_limit_enabled") val dailyLimitEnabled: Boolean? = null,
     /** FR-30: the family's learning apps, by package-name prefix. */
     @SerialName("learning_prefixes") val learningPrefixes: List<String> = emptyList(),
+    /** FR-31: reject incoming calls from anyone who is neither a contact nor a family number. */
+    @SerialName("calls_contacts_only") val callsContactsOnly: Boolean = false,
+    /** FR-31.3: the numbers that always get through, E.164. */
+    @SerialName("family_numbers") val familyNumbers: List<String> = emptyList(),
 )
 
 /**
@@ -851,4 +857,8 @@ data class DesiredState(
     @SerialName("learning_packages") val learningPackages: List<String> = emptyList(),
     /** FR-30: whether a daily limit is in force at all; [dailyLimitMinutes] may be 0 with it on. */
     @SerialName("daily_limit_enabled") val dailyLimitEnabled: Boolean = false,
+    /** FR-31: passed through in every mode — a pause or watch-only takes time, not the protection. */
+    @SerialName("calls_contacts_only") val callsContactsOnly: Boolean = false,
+    /** FR-31.3: the family numbers, sorted and distinct. */
+    @SerialName("family_numbers") val familyNumbers: List<String> = emptyList(),
 )

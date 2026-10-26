@@ -608,6 +608,23 @@ function deviceIssues(dev, desired) {
       + 'FamilyGuard kann das nicht selbst einschalten — Android erlaubt das keiner App, auch keinem Geräteinhaber.') });
   }
 
+  /* FR-31.4. Two different states, and the colour is the difference: amber is a phone where nobody
+     has tapped the setup notification yet — expected right after the switch went on, and it lets
+     every call through until then; red is a phone that HAD the role and lost it, which nothing but a
+     person on the phone does. `call_screening_held_at` is the server's memory of "held once", kept
+     even while the phone says false. */
+  if (desired && desired.calls_contacts_only && st.call_screening !== true) {
+    if (st.call_screening === false && st.call_screening_held_at) {
+      issues.push({ short: 'Anrufschutz aus', danger: true, full: () => notice('danger', 'Anrufschutz aus: alle Anrufe kommen durch.',
+        'Auf diesem Handy war der Anrufschutz eingerichtet und ist es nicht mehr — jemand hat FamilyGuard als App zum Filtern von Anrufen abgewählt. '
+        + 'Das Handy zeigt wieder die Mitteilung «Anrufschutz einrichten»; tippe sie an und wähle FamilyGuard.') });
+    } else {
+      issues.push({ short: 'Anrufschutz: wartet auf Freigabe am Handy', full: () => notice('warn', 'Anrufschutz: wartet auf Freigabe am Handy.',
+        'Nur Kontakte dürfen anrufen ist eingeschaltet, aber Android lässt FamilyGuard Anrufe erst prüfen, wenn jemand am Handy zustimmt. '
+        + 'Tippe dort auf die Mitteilung «Anrufschutz einrichten» und wähle FamilyGuard. Bis dahin kommen alle Anrufe durch.') });
+    }
+  }
+
   /* What the phone MEASURED about its filter, which is a different question from what the parent
      asked for. The phone's own reason, verbatim, and the guess only when there is none (FR-6.11): a
      console that guesses at a remedy sends a parent to fix something that is not broken. */
@@ -617,7 +634,8 @@ function deviceIssues(dev, desired) {
         ? 'Das Handy sagt: ' + st.ad_filter_reason + '.'
         : 'Er ist für dieses Kind eingeschaltet, also startet ihn das Handy bei der nächsten Synchronisation. Bleibt er aus, wurde die Liste vielleicht nicht geladen — prüfe die Filterliste unter Regeln › Schutz und ob das Handy online ist.') });
   }
-  return issues;
+  // A lost call protection lets strangers ring: it is the one line on the row worth reading first.
+  return issues.sort((x, y) => (y.danger ? 1 : 0) - (x.danger ? 1 : 0));
 }
 
 /* The phone's badges: short facts and warnings, each only on a measurement. */
@@ -648,7 +666,17 @@ function deviceBadges(dev, desired) {
     st.ad_filter_running === true
       && el('span', { class: 'badge ok', text: 'Werbefilter an' }),
     desired && desired.ad_filter && st.ad_filter_running === false
-      && el('span', { class: 'badge warn', text: 'Werbefilter läuft nicht' }));
+      && el('span', { class: 'badge warn', text: 'Werbefilter läuft nicht' }),
+    // FR-31.4: the same three states as the filter, with red for a role that was held and lost.
+    desired && desired.calls_contacts_only && callBadge(st));
+}
+
+function callBadge(st) {
+  if (st.call_screening === true) return el('span', { class: 'badge ok', 'data-call-screening': 'on', text: 'Anrufschutz an' });
+  if (st.call_screening === false && st.call_screening_held_at) {
+    return el('span', { class: 'badge danger', 'data-call-screening': 'off', text: 'Anrufschutz aus' });
+  }
+  return el('span', { class: 'badge warn', 'data-call-screening': 'waiting', text: 'Anrufschutz: wartet auf Freigabe am Handy' });
 }
 
 function deviceStatusText(dev) {
@@ -675,7 +703,7 @@ function deviceRow(child, entry) {
     el('span', { class: 'grow' },
       el('b', { text: dev.name }),
       el('small', {}, facts),
-      issues.length ? el('small', { class: 'warn', text: issues[0].short + (issues.length > 1 ? ' · +' + (issues.length - 1) : '') }) : null),
+      issues.length ? el('small', { class: issues[0].danger ? 'danger' : 'warn', text: issues[0].short + (issues.length > 1 ? ' · +' + (issues.length - 1) : '') }) : null),
   ];
   const attrs = { class: 'device-row', 'data-device': dev.id, 'data-link': dev.enrolled ? linkState(dev) : 'none' };
   if (!isAdmin()) return el('div', attrs, inner);

@@ -658,6 +658,7 @@ div.device-row > .btn { flex: 1 1 100%; }
 .device-row .grow b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .device-row .grow small { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; color: var(--text-dim); font-size: 0.82rem; }
 .device-row .grow small.warn { color: var(--warn); }
+.device-row .grow small.danger { color: var(--danger); }
 .device-row > .icon:last-child { color: var(--text-dim); }
 
 .tasks { display: grid; gap: 10px; }
@@ -723,7 +724,7 @@ div.device-row > .btn { flex: 1 1 100%; }
 .applist li[data-learning] > .btn { flex: 0 0 auto; min-height: var(--tap); }
 .applist li .learning-note { color: var(--gold); font-weight: 600; }
 .learning-card .list b { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.learning-card textarea { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.learning-card textarea, .family-numbers-card textarea { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* ---- activity ----------------------------------------------------------- */
 

@@ -104,6 +104,11 @@ type deviceArgs struct {
 	DeviceID string `json:"device_id" jsonschema:"the device's UUID, as returned by list_devices"`
 }
 
+type rejectedCallsArgs struct {
+	DeviceID string `json:"device_id" jsonschema:"the device's UUID, as returned by list_devices"`
+	Days     int    `json:"days,omitempty" jsonschema:"how many days back, 1 to 365; default 7"`
+}
+
 type liveArgs struct {
 	DeviceID string `json:"device_id" jsonschema:"the device's UUID, as returned by list_devices"`
 	Minutes  int    `json:"minutes,omitempty" jsonschema:"how long, 1 to 120; default 30"`
@@ -561,6 +566,32 @@ func registerTools(server *mcp.Server, client *fgclient.Client) {
 		func(ctx context.Context, c *fgclient.Client, _ emptyArgs) (any, error) {
 			var body map[string]any
 			if err := c.Get(ctx, "/api/v1/family/learning-prefixes", &body); err != nil {
+				return nil, err
+			}
+			return body, nil
+		})
+
+	add(server, client, "get_family_numbers",
+		"The family numbers: calls from these always get through, even when a child's phone takes calls "+
+			"only from its contacts (FR-31.3).",
+		func(ctx context.Context, c *fgclient.Client, _ emptyArgs) (any, error) {
+			var body map[string]any
+			if err := c.Get(ctx, "/api/v1/family/family-numbers", &body); err != nil {
+				return nil, err
+			}
+			return body, nil
+		})
+
+	add(server, client, "get_rejected_calls",
+		"Calls a phone rejected because the caller was neither a contact nor a family number (FR-31.5), "+
+			"newest first, with the number and the time. days is how far back, 1 to 365, default 7.",
+		func(ctx context.Context, c *fgclient.Client, in rejectedCallsArgs) (any, error) {
+			days := in.Days
+			if days == 0 {
+				days = 7
+			}
+			var body map[string]any
+			if err := c.Get(ctx, fmt.Sprintf("/api/v1/devices/%s/rejected-calls?days=%d", in.DeviceID, days), &body); err != nil {
 				return nil, err
 			}
 			return body, nil

@@ -146,6 +146,9 @@ type heartbeatRequest struct {
 	ExactAlarms *bool `json:"exact_alarms"`
 	// AlarmFullScreen is FR-23.4's report: whether the alarm may take over the lock screen.
 	AlarmFullScreen *bool `json:"alarm_full_screen"`
+	// CallScreening is FR-31.4's report: whether the phone holds the call-screening role. Sent only
+	// while the switch is on.
+	CallScreening *bool `json:"call_screening"`
 
 	// AdFilterRules, AdFilterFetchedAt and AdFilterRunning are what the phone measured about its
 	// own ad filter (FR-6.6) — how many rules it has compiled, when it fetched them, and whether
@@ -335,6 +338,7 @@ func (s *Server) heartbeat(c *gin.Context) {
 		PowerExempt:     req.PowerExempt,
 		ExactAlarms:     req.ExactAlarms,
 		AlarmFullScreen: req.AlarmFullScreen,
+		CallScreening:   req.CallScreening,
 
 		AdFilterRules:     clampRuleCount(req.AdFilterRules),
 		AdFilterFetchedAt: parseReportedTime(req.AdFilterFetchedAt),

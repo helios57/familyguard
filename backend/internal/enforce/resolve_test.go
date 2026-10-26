@@ -51,6 +51,14 @@ type fakeSource struct {
 	learningCredits []earned.Credit
 	excludedDevice  uuid.UUID // the device the resolver asked the store to leave out of the learning credits
 	excludedDay     string
+	familyNumbers   []string
+}
+
+func (f *fakeSource) FamilyNumbers(context.Context) ([]string, error) {
+	if err := f.fail["family_numbers"]; err != nil {
+		return nil, err
+	}
+	return f.familyNumbers, nil
 }
 
 func (f *fakeSource) LearningPrefixes(context.Context) ([]string, error) {
@@ -497,7 +505,7 @@ func TestAppRulesSplitByAction(t *testing.T) {
 // because the response looks entirely normal.
 func TestEveryReadFailureIsReported(t *testing.T) {
 	boom := errors.New("database is down")
-	for _, key := range []string{"device", "policy", "usage", "rules", "domains", "apps", "managed"} {
+	for _, key := range []string{"device", "policy", "usage", "rules", "domains", "apps", "managed", "family_numbers"} {
 		t.Run(key, func(t *testing.T) {
 			f := baseSource()
 			f.fail[key] = boom
@@ -672,3 +680,21 @@ func TestAnAlwaysFreeAppDoesNotSpendTheLimit(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// FR-31: the switch is the child's, the numbers the family's; both reach the engine. A failed read of
+// the numbers is in TestEveryReadFailureIsReported: an empty list would read as "no parent gets
+// through".
+func TestContactsOnlyReachesTheEngine(t *testing.T) {
+	f := baseSource()
+	f.policy.CallsContactsOnly = true
+	f.familyNumbers = []string{"+41791234567", "+15550101"}
+
+	got, in := resolve(t, f, time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC))
+	if !in.Settings.CallsContactsOnly || !slices.Equal(in.Settings.FamilyNumbers, f.familyNumbers) {
+		t.Errorf("settings carry switch %v and numbers %v", in.Settings.CallsContactsOnly, in.Settings.FamilyNumbers)
+	}
+	if !got.CallsContactsOnly || !slices.Equal(got.FamilyNumbers, []string{"+15550101", "+41791234567"}) {
+		t.Errorf("the phone is told switch %v and numbers %v", got.CallsContactsOnly, got.FamilyNumbers)
+	}
+
+}

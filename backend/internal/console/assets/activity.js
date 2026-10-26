@@ -13,10 +13,13 @@ async function loadActivity() {
   const day = state.timelineDay ? '?day=' + encodeURIComponent(state.timelineDay) : '';
   // One timeline request per phone: it answers for ONE day in the child's timezone and carries both
   // halves of the day card — the hours and the app totals.
-  const [timelines, locations, energy] = await Promise.all([
+  const [timelines, locations, energy, calls, policy] = await Promise.all([
     Promise.all(list.map((d) => api('/devices/' + d.id + '/usage/timeline' + day).catch(() => null))),
     Promise.all(list.map((d) => api('/devices/' + d.id + '/locations?limit=5').catch(() => null))),
     Promise.all(list.map((d) => api('/devices/' + d.id + '/energy?hours=24').catch(() => null))),
+    // FR-31.5, admins only like the rest of what a phone reports about other people.
+    isAdmin() ? Promise.all(list.map((d) => api('/devices/' + d.id + '/rejected-calls?days=7').catch(() => null))) : Promise.resolve([]),
+    isAdmin() ? api('/children/' + state.childId + '/policy').catch(() => null) : Promise.resolve(null),
   ]);
   // The server decides what "today" is, in the child's timezone. Asked once, on the first load that
   // did not name a day, and never overwritten — a parent who has stepped back three days must not
@@ -25,7 +28,7 @@ async function loadActivity() {
     const answered = timelines.find((t) => t && t.day);
     if (answered) state.timelineToday = answered.day;
   }
-  return { devices: list, timelines, locations, energy };
+  return { devices: list, timelines, locations, energy, calls, callsOn: !!(policy && policy.calls_contacts_only) };
 }
 
 function renderActivity(data) {
@@ -41,6 +44,7 @@ function renderActivity(data) {
     dayActivityCard(dev, data.timelines[i]),
     el('div', { class: 'col' },
       locationCard(dev, data.locations[i], many),
+      rejectedCallsCard(dev, data.calls[i], data.callsOn, many),
       energyCard(dev, data.energy && data.energy[i], many))));
 }
 
@@ -302,6 +306,32 @@ function locationCard(dev, locs, many) {
           el('span', { class: 'label' }, el('b', { text: line(l) }), el('small', { text: l.latitude.toFixed(5) + ', ' + l.longitude.toFixed(5) })),
           mapLink(l, 'btn-quiet')))))
       : null);
+}
+
+/**
+ * FR-31.5: the calls this phone rejected over the last week, by day, newest first. Shown while the
+ * switch is on — "none" is then an answer — and whenever there is something to show, so turning the
+ * switch off does not hide what was rejected before.
+ */
+function rejectedCallsCard(dev, body, on, many) {
+  const calls = (body && body.calls) || [];
+  if (!body || (!on && !calls.length)) return null;
+  const head = el('div', {}, el('h2', { text: 'Abgewiesene Anrufe' }), many ? el('p', { class: 'muted', text: dev.name }) : null);
+  if (!calls.length) {
+    return el('div', { class: 'card rejected-calls-card' }, head,
+      el('p', { class: 'muted', text: 'In den letzten 7 Tagen hat niemand Fremdes angerufen.' }));
+  }
+  const days = new Map();
+  for (const c of calls) {
+    const key = new Date(c.at).toLocaleDateString('de-CH', { weekday: 'short', day: 'numeric', month: 'numeric' });
+    if (!days.has(key)) days.set(key, []);
+    days.get(key).push(c);
+  }
+  return el('div', { class: 'card rejected-calls-card' }, head,
+    [...days].map(([day, list]) => el('div', { class: 'stack', 'data-rejected-day': day },
+      el('b', { text: day + ' · ' + (list.length === 1 ? '1 Anruf' : list.length + ' Anrufe') }),
+      el('ul', { class: 'list' }, list.map((c) => el('li', { 'data-rejected-call': c.number },
+        el('span', { class: 'label' }, el('b', { text: c.number }), el('small', { text: fmtClock(c.at) }))))))));
 }
 
 /**

@@ -363,6 +363,10 @@ type Settings struct {
 	// LearningPrefixes are the family's learning apps (FR-30): a package whose name starts with one
 	// is always free and earns Bonuszeit minute for minute while it is used, unless it is blocked.
 	LearningPrefixes []string `json:"learning_prefixes"`
+	// CallsContactsOnly and FamilyNumbers are FR-31: with the switch on the phone rejects incoming
+	// calls from anyone who is neither one of its contacts nor a family number (E.164).
+	CallsContactsOnly bool     `json:"calls_contacts_only"`
+	FamilyNumbers     []string `json:"family_numbers"`
 }
 
 // ManagedApp is one entry of that set: which application, which exact build, and everything the
@@ -526,6 +530,10 @@ type DesiredState struct {
 	// DailyLimitEnabled is whether a daily limit is in force at all; DailyLimitMinutes may be 0
 	// with it on.
 	DailyLimitEnabled bool `json:"daily_limit_enabled"`
+	// CallsContactsOnly and FamilyNumbers are passed through (FR-31), the numbers sorted and never
+	// nil. In every mode: a pause or watch-only mode takes time limits, not the protection.
+	CallsContactsOnly bool     `json:"calls_contacts_only"`
+	FamilyNumbers     []string `json:"family_numbers"`
 
 	// FreeByDefault lists the preinstalled apps this state leaves usable because nothing was
 	// decided about them (FR-5.10), sorted and never nil. Reported so a console and the phone can
@@ -588,6 +596,13 @@ func Compute(in Input) (DesiredState, error) {
 	out.BlockedDomains = domains.sorted()
 
 	out.ManagedApps = normalizeManagedApps(in.Settings.ManagedApps)
+
+	out.CallsContactsOnly = in.Settings.CallsContactsOnly
+	numbers := newSet(nil)
+	for _, n := range in.Settings.FamilyNumbers {
+		numbers.add(strings.TrimSpace(n))
+	}
+	out.FamilyNumbers = numbers.sorted()
 
 	// FR-6.6. The list url decides, not just the switch: a filter turned on with nowhere to fetch a
 	// list from would put a tunnel between every app on the phone and the network in exchange for

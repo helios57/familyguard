@@ -183,6 +183,12 @@ type DeviceState struct {
 	// Android 14 and later can withhold it from an app that is not an alarm or calling app; the alarm
 	// then rings as a notification. Nil is a phone that has not said.
 	AlarmFullScreen *bool `json:"alarm_full_screen,omitempty"`
+	// CallScreening is whether the phone holds the call-screening role (FR-31.4), as it last said;
+	// a phone says it only while the switch is on, so nil is "has not said". CallScreeningHeldAt is
+	// the first time it said yes and is never cleared: with it, false reads as "taken away" rather
+	// than "not granted yet".
+	CallScreening       *bool      `json:"call_screening,omitempty"`
+	CallScreeningHeldAt *time.Time `json:"call_screening_held_at,omitempty"`
 	// PushRegistered is whether the phone has a push token the server can wake it with (FR-26.3).
 	// The token itself is never shown.
 	PushRegistered bool `json:"push_registered"`
@@ -262,6 +268,9 @@ type Policy struct {
 	YouTubeBlocked    bool `json:"youtube_blocked"`
 	DailyLimitMinutes int  `json:"daily_limit_minutes"`
 	DailyLimitEnabled bool `json:"daily_limit_enabled"`
+	// CallsContactsOnly makes the phone reject every incoming call from a number that is neither one
+	// of its contacts nor a family number (FR-31.2).
+	CallsContactsOnly bool `json:"calls_contacts_only"`
 	// Paused is a parent's or guardian's pause (FR-21), and PausedAt when it began.
 	Paused         bool       `json:"paused"`
 	PausedAt       *time.Time `json:"paused_at"`

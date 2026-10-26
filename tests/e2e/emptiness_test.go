@@ -304,6 +304,8 @@ func allCollections(childID, deviceID string) []collection {
 		{"/children/" + childID + "/blocked-domains", "domains", "ListBlockedDomains", stageCreated},
 		{"/devices/" + deviceID + "/apps", "apps", "ListInstalledApps", stageCreated},
 		{"/devices/" + deviceID + "/locations", "locations", "ListLocations", stageCreated},
+		// FR-31.5: a phone that has rejected nothing answers an empty list, not null.
+		{"/devices/" + deviceID + "/rejected-calls", "calls", "ListRejectedCalls", stageCreated},
 		// FR-26.5: a phone that has never reported answers an empty list of hours, not null.
 		{"/devices/" + deviceID + "/energy", "hours", "EnergySamples", stageCreated},
 		// FR-27.3: a phone never in Live answers an empty list of session positions, not null.
@@ -334,6 +336,7 @@ func allCollections(childID, deviceID string) []collection {
 		// FR-30.1: a new family has no learning apps; the console's Familie page and the phone's
 		// engine both iterate the list.
 		{"/family/learning-prefixes", "prefixes", "LearningPrefixes", stageFresh},
+		{"/family/family-numbers", "numbers", "FamilyNumbers", stageFresh},
 		{"/device/commands", "commands", "PendingCommands", stageEnrolled},
 	}
 }

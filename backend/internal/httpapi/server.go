@@ -272,6 +272,9 @@ func (s *Server) Router() (*gin.Engine, error) {
 	// FR-30.1: the prefixes that make an app a learning app, for every child at once.
 	p.GET("/family/learning-prefixes", admins, s.getLearningPrefixes)
 	p.PUT("/family/learning-prefixes", admins, s.putLearningPrefixes)
+	// FR-31.3: the numbers that always get through. Admins only, like every family-wide rule.
+	p.GET("/family/family-numbers", admins, s.getFamilyNumbers)
+	p.PUT("/family/family-numbers", admins, s.putFamilyNumbers)
 	p.GET("/parents", admins, s.listParents)
 	// requireInteractiveParent, here and on /api-keys below: these are the routes that hand out or
 	// take away a credential, and an API key that can mint one outlives its own revocation.
@@ -338,6 +341,8 @@ func (s *Server) Router() (*gin.Engine, error) {
 	p.GET("/devices/:id/usage", admins, s.deviceUsage)
 	p.GET("/devices/:id/usage/timeline", admins, s.deviceUsageTimeline)
 	p.GET("/devices/:id/locations", admins, s.deviceLocations)
+	// FR-31.5: usage-class data, like the locations and the usage itself.
+	p.GET("/devices/:id/rejected-calls", admins, s.deviceRejectedCallsView)
 	p.GET("/devices/:id/energy", admins, s.deviceEnergy)
 	// FR-27: Live. Guardians too — the walk home is theirs as often as a parent's.
 	p.GET("/devices/:id/live", everyone, s.getLive)
@@ -407,6 +412,7 @@ func (s *Server) Router() (*gin.Engine, error) {
 	d.POST("/inventory", s.deviceInventory)
 	d.POST("/usage", s.deviceUsageReport)
 	d.POST("/location", s.deviceLocationReport)
+	d.POST("/rejected-calls", s.deviceRejectedCalls)
 	d.POST("/commands/:id/ack", s.ackCommand)
 	d.POST("/recovery-event", s.recoveryEventReport)
 	d.GET("/stream", s.deviceStream)

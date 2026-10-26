@@ -198,12 +198,34 @@ function switchesCard(data) {
     policySwitch(p, 'allow_child_installs', 'Apps installieren lassen',
       'Aus sperrt den Play Store ganz — nichts Neues lässt sich installieren, und was trotzdem ankommt, wartet auf deine Freigabe. Zum Hinzufügen einer App einschalten, danach wieder aus.'),
     policySwitch(p, 'youtube_blocked', 'YouTube sperren', 'Sperrt die App und die Website.'),
+    callsControl(p),
     // FR-5.6 and FR-5.7: the two switches that exist for the adult holding the phone, worded as what
     // they cost — they are the only ones whose "on" makes the phone easier to interfere with.
     policySwitch(p, 'allow_debugging', 'Entwickleroptionen und USB-Debugging erlauben',
       'Für ein Handy, an dem du entwickelst. Aus schaltet adb ab, und ein Handy, das dann den Kontakt zu dieser Konsole verliert, ist auch über USB nicht mehr erreichbar.'),
     policySwitch(p, 'allow_uninstall', 'Apps entfernen erlauben',
       'Einschalten, während du das Handy einrichtest oder ein Backup zurückspielst. Aus heisst: Apps lassen sich nicht deinstallieren — weder vom Kind noch von dir über USB.'));
+}
+
+/* FR-31. The switch, and beside it what it does NOT do, because a parent reads "only contacts may
+   call" as "nobody else reaches my child" — and hidden numbers, SMS and WhatsApp are outside what an
+   app may screen. Those are set by hand once on the phone; FamilyGuard cannot read them, so the list
+   says "nicht prüfbar" rather than ticking anything. */
+function callsControl(p) {
+  return el('div', { class: 'stack', 'data-calls': '' },
+    policySwitch(p, 'calls_contacts_only', 'Nur Kontakte dürfen anrufen',
+      'Wer weder in den Kontakten des Handys noch bei den Familien-Nummern steht, wird abgewiesen, ohne dass es klingelt. Das Kind darf Kontakte selbst hinzufügen. Selbst anrufen geht immer.'),
+    p.calls_contacts_only && el('div', { class: 'notice info', 'data-calls-checklist': '' },
+      icon('info'),
+      el('div', {},
+        el('b', { text: 'Einmal von Hand am Handy einstellen — nicht prüfbar' }),
+        el('ul', { class: 'steps' },
+          el('li', {}, el('b', { text: 'Unterdrückte Nummern' }),
+            el('small', { text: 'Telefon-App → Einstellungen → Nummern blockieren → «Unbekannte/private Nummern blockieren». Solche Anrufe erreichen FamilyGuard nie.' })),
+          el('li', {}, el('b', { text: 'SMS' }),
+            el('small', { text: 'Nachrichten-App → Einstellungen → Spamschutz. FamilyGuard prüft keine SMS.' })),
+          el('li', {}, el('b', { text: 'WhatsApp' }),
+            el('small', { text: 'Einstellungen → Datenschutz: «Unbekannte Anrufer stummschalten», und Gruppen, Profilbild und Info auf «Meine Kontakte». FamilyGuard prüft WhatsApp nicht.' }))))));
 }
 
 function websitesCard(data) {

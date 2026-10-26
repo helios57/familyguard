@@ -52,6 +52,7 @@ type policyArgs struct {
 	AdFilter           *bool   `json:"ad_filter,omitempty" jsonschema:"true runs the phone's own ad filter"`
 	AdFilterListURL    *string `json:"ad_filter_list_url,omitempty" jsonschema:"the filter list's https address; empty for the built-in default"`
 	DNSHost            *string `json:"dns_host,omitempty" jsonschema:"a Private DNS host name, or empty for none"`
+	CallsContactsOnly  *bool   `json:"calls_contacts_only,omitempty" jsonschema:"true: only the phone's contacts and the family numbers may call; every other incoming call is rejected without ringing. Needs FamilyGuard 0.6.47 on every phone of the child, and the call-screening role granted once on the phone"`
 }
 
 type answerArgs struct {
@@ -83,6 +84,10 @@ type familyBlockArgs struct {
 
 type learningAppsArgs struct {
 	Prefixes []string `json:"prefixes" jsonschema:"the package-name prefixes, such as org.example.learn.; an empty list means no learning apps. At most 10"`
+}
+
+type familyNumbersArgs struct {
+	Numbers []string `json:"numbers" jsonschema:"the numbers that always get through, such as +41 79 123 45 67 or 079 123 45 67 (read as Switzerland); an empty list removes them all. At most 10"`
 }
 
 type addDeviceArgs struct {
@@ -197,7 +202,7 @@ func registerConsoleTools(server *mcp.Server, client *fgclient.Client) {
 
 	add(server, client, "set_policy",
 		"Change a child's rules: the Tageszeit (daily limit), bedtime, timezone, YouTube, installs, uninstalls, "+
-			"debugging, watch-only, the ad filter and Private DNS. Send only what changes; the phones apply it "+
+			"debugging, watch-only, the ad filter, Private DNS and who may call. Send only what changes; the phones apply it "+
 			"within seconds. Returns the whole policy. Use adjust_time_today for Extrazeit (today only).",
 		func(ctx context.Context, c *fgclient.Client, in policyArgs) (any, error) {
 			body := map[string]any{}
@@ -209,6 +214,7 @@ func registerConsoleTools(server *mcp.Server, client *fgclient.Client) {
 				"allow_uninstall": in.AllowUninstall, "allow_debugging": in.AllowDebugging,
 				"tracking_only": in.TrackingOnly, "ad_filter": in.AdFilter,
 				"ad_filter_list_url": in.AdFilterListURL, "dns_host": in.DNSHost,
+				"calls_contacts_only": in.CallsContactsOnly,
 			} {
 				if !isNilPointer(value) {
 					body[key] = value
@@ -314,6 +320,18 @@ func registerConsoleTools(server *mcp.Server, client *fgclient.Client) {
 				prefixes = []string{}
 			}
 			return doJSON(ctx, c, "PUT", "/api/v1/family/learning-prefixes", map[string]any{"prefixes": prefixes})
+		})
+
+	add(server, client, "set_family_numbers",
+		"Replace the family numbers (FR-31.3): calls from these always get through to every child, even "+
+			"with only-contacts-may-call on and the number not saved on the phone. Stored as +41…; "+
+			"get_family_numbers reads them.",
+		func(ctx context.Context, c *fgclient.Client, in familyNumbersArgs) (any, error) {
+			numbers := in.Numbers
+			if numbers == nil {
+				numbers = []string{}
+			}
+			return doJSON(ctx, c, "PUT", "/api/v1/family/family-numbers", map[string]any{"numbers": numbers})
 		})
 
 	// ---- phones -----------------------------------------------------------------------------

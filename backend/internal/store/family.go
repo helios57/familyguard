@@ -366,3 +366,37 @@ func (s *Store) LearningPrefixMatches(ctx context.Context, prefixes []string) (m
 	}
 	return out, rows.Err()
 }
+
+// FamilyNumbers is the family's list of numbers that always get through (FR-31.3), E.164, never nil.
+func (s *Store) FamilyNumbers(ctx context.Context) ([]string, error) {
+	var out []string
+	err := s.pool.QueryRow(ctx, `SELECT family_numbers FROM families ORDER BY created_at LIMIT 1`).Scan(&out)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []string{}
+	}
+	return out, nil
+}
+
+// SetFamilyNumbers replaces the family numbers and bumps every policy version in the same
+// transaction, like SetLearningPrefixes. Normalising is the caller's; the list is stored as given.
+func (s *Store) SetFamilyNumbers(ctx context.Context, numbers []string) error {
+	if numbers == nil {
+		numbers = []string{}
+	}
+	return mapErr(s.tx(ctx, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `UPDATE families SET family_numbers = $1`, numbers)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return bumpEveryPolicy(ctx, tx)
+	}))
+}

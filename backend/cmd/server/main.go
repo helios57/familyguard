@@ -361,6 +361,11 @@ func maintain(ctx context.Context, st *store.Store, cfg *config.Config, log *slo
 		if err != nil {
 			log.Error("maintenance: prune locations", "error", err)
 		}
+		// FR-31.5: a rejected call is kept a year, which is the owner's floor for anything kept at all.
+		rejectedCalls, err := st.PruneRejectedCalls(opCtx, 365*24*time.Hour)
+		if err != nil {
+			log.Error("maintenance: prune rejected calls", "error", err)
+		}
 		// A sign-in stays a row for as long as the audit log keeps the entries that name it (FR-29.5).
 		signIns, err := st.PruneSignIns(opCtx, cfg.AuditRetentionDays, cfg.SignInIdleTimeout, time.Now().UTC())
 		if err != nil {
@@ -368,7 +373,7 @@ func maintain(ctx context.Context, st *store.Store, cfg *config.Config, log *slo
 		}
 		log.Info("maintenance",
 			"commands_expired", expired, "audit_pruned", audit, "locations_pruned", locations,
-			"sign_ins_pruned", signIns)
+			"rejected_calls_pruned", rejectedCalls, "sign_ins_pruned", signIns)
 	}
 
 	// Once at startup, so a pod that restarts more often than the interval still sweeps.

@@ -156,6 +156,9 @@ func TestEveryAuditedActionIsWritten(t *testing.T) {
 	// FR-30.1: the learning prefixes, through the same fan-out helper.
 	h.putLearningPrefixes(parent.Token, learnPrefix).expect(http.StatusOK)
 	byParent("LEARNING_APPS_UPDATED", "family", "")
+	// FR-31.3: the family numbers, the same helper again.
+	h.putFamilyNumbers(parent.Token, "+1 555 0101").expect(http.StatusOK)
+	byParent("FAMILY_NUMBERS_UPDATED", "family", "")
 
 	h.call(http.MethodPut, "/children/"+child.ID+"/app-rules", parent.Token,
 		map[string]any{"package_name": pkgGame, "action": "BLOCK"}).expect(http.StatusOK)
